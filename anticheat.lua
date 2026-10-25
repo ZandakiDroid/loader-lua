@@ -1,4 +1,3 @@
-local _RAPZHANGVIP_KEY = "rapzhangvip"
 --[[============================================================================
   AntiCheatUnified.lua — FULL MERGE (tanpa hapus, tanpa ganti)
   ----------------------------------------------------------------------------
