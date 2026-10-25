@@ -1,5 +1,4 @@
 -- ============================================================================
-local _RAPZHANGVIP_KEY = "rapzhangvip"
 _G.RapzhangConfig = _G.RapzhangConfig or {}
 -- Remove legacy slider selections from the shared Rapzhang setting table.
 -- The slider module is no longer present and no SkinSlider_* key is written.
