@@ -1,5 +1,4 @@
--- ========================================== 
-local _RAPZHANGVIP_KEY = "rapzhangvip"
+-- =========================================
 -- *BRPlayerCharacterBase.lua BY RAPZHANG 
 -- FINAL VERSION — ACE SAFE + igfit + Mod Menu Fix + Full Method Class
 -- ========================================== 
