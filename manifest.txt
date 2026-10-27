@@ -1,2 +1,2 @@
-guest.lua
 anticheat.lua
+guest.lua
