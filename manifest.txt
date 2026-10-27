@@ -1,2 +1,2 @@
-anticheat.lua
 guest.lua
+anticheat.lua
