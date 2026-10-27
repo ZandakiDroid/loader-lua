@@ -1,3 +1,83 @@
+-- SKUY_EIGENFIX_v4: _SKUY_HOOK registry-based hook (idempotent + traceable).
+-- Primary eigeninfo spoof layer: hook LobbySystem.SendEigeninfo, clean table,
+-- call original. EIGEN_SPOOF v5 at Tss layer remains as defense-in-depth.
+-- ============================================================================
+pcall(function()
+    local _pcall = pcall
+    local _HookRegistry = {}
+    local function _SKUY_HOOK(tbl, key, wrapperFactory)
+        if type(tbl) ~= "table" then return end
+        local orig = tbl[key]
+        if orig and _HookRegistry[orig] then return end
+        local newFn = wrapperFactory(orig)
+        if type(orig) == "function" then
+            _HookRegistry[newFn] = _HookRegistry[orig] or orig
+        end
+        tbl[key] = newFn
+    end
+    local SPOOF_PATTERNS = { "mrpcs", "_al64_", "_al32_", "al64_", "al32_" }
+    local cleanCache = {}
+    local function getCleanBlob(len)
+        local L = tonumber(len) or 120833
+        if L <= 0 then L = 1 end
+        if L > 200000 then L = 200000 end
+        if not cleanCache[L] then cleanCache[L] = string.rep("0", L) end
+        return cleanCache[L], L
+    end
+    local function shouldSpoof(infoName)
+        local n = tostring(infoName or ""):lower()
+        for _, pat in ipairs(SPOOF_PATTERNS) do
+            if n:find(pat, 1, true) then return true end
+        end
+        return false
+    end
+    local function cleanEigeninfoTable(eigeninfo)
+        if type(eigeninfo) ~= "table" then return eigeninfo end
+        local cleaned = {}
+        for k, v in pairs(eigeninfo) do
+            if type(v) == "table" and v.file_name ~= nil and v.eigenvalue ~= nil then
+                if shouldSpoof(v.file_name) then
+                    local ev = tostring(v.eigenvalue)
+                    local cleanBlob, cleanLen = getCleanBlob(#ev)
+                    cleaned[k] = { file_name = v.file_name, eigenvalue = cleanBlob, crc = v.crc }
+                else
+                    cleaned[k] = v
+                end
+            else
+                cleaned[k] = v
+            end
+        end
+        return cleaned
+    end
+    local function install()
+        local LS = rawget(_G, "LobbySystem") or package.loaded["client.logic.login.logic_lobby"]
+        if type(LS) ~= "table" then return false end
+        if type(LS.SendEigeninfo) ~= "function" then return false end
+        _SKUY_HOOK(LS, "SendEigeninfo", function(orig)
+            return function(eigeninfo, call_from_type)
+                local ok, cleaned = _pcall(cleanEigeninfoTable, eigeninfo)
+                if not ok then cleaned = eigeninfo end
+                return orig(cleaned, call_from_type)
+            end
+        end)
+        return true
+    end
+    if not install() then
+        _pcall(function()
+            local tt = package.loaded["common.time_ticker"]
+            if tt and type(tt.AddTimerLoop) == "function" then
+                local tries = 0
+                local h = tt.AddTimerLoop(0, function()
+                    tries = tries + 1
+                    if install() or tries > 10 then
+                        if tt.RemoveTimer then tt.RemoveTimer(h) end
+                    end
+                end, -1, 0.2)
+            end
+        end)
+    end
+end)
+
 -- ========================================== 
 -- *BRPlayerCharacterBase.lua BY RAPZHANG 
 -- FINAL VERSION — ACE SAFE + igfit + Mod Menu Fix + Full Method Class
@@ -5254,68 +5334,33 @@ do
       local result=logic and logic.GetBattleResultData and logic.GetBattleResultData() or nil
       local like=mod("GameLua.Mod.BaseMod.Client.Like.IngameLikeUtilClient")
       local ps=like and like.GetMyPlayerState and like.GetMyPlayerState() or nil
-      local own=nil
-      local function findOwn(src)
-        if type(src)~="table" then return nil end
-        local list=src.TeammateList or src.BP_ARRAY_TeammateList or src.teammate_list
-        local uid=_G.DataMgr and _G.DataMgr.roleData and tostring(_G.DataMgr.roleData.uid or "") or ""
-        if type(list)=="table" then
-          for _,item in pairs(list) do
-            if type(item)=="table" and uid~="" and tostring(item.UID or item.uid or "") == uid then return item end
-          end
-        end
-        return nil
-      end
-      own=findOwn(AF._lastResultParams) or findOwn(result) or findOwn(br)
-      local sources={own,result,br,rating,ps,AF._lastResultParams}
-      local function usable(v)
-        return v ~= nil and tostring(v) ~= "" and tostring(v) ~= "nil"
-      end
-      local function norm(k)
-        return tostring(k):lower():gsub("[^%a%d]", "")
-      end
-      local function deepVal(src, wanted, depth, seen)
-        if type(src) ~= "table" or depth > 4 then return nil end
-        seen=seen or {}
-        if seen[src] then return nil end
-        seen[src]=true
-        for k,v in pairs(src) do
-          local nk=norm(k)
-          for _,want in ipairs(wanted) do
-            if nk==norm(want) and usable(v) and type(v)~="table" then return v end
-          end
-        end
-        for _,v in pairs(src) do
-          if type(v)=="table" then
-            local found=deepVal(v,wanted,depth+1,seen)
-            if usable(found) then return found end
-          end
-        end
-        return nil
-      end
+      local sources={result,br,rating,ps}
       local function val(...)
         local keys={...}
         for _,src in ipairs(sources) do
-          local found=deepVal(src,keys,0,{})
-          if usable(found) then return found end
+          if type(src)=="table" then
+            for _,key in ipairs(keys) do
+              if src[key]~=nil and tostring(src[key])~="" then return src[key] end
+            end
+          end
         end
         return nil
       end
-      d.kills=tonumber(val("BP_mykill","mykill","Kills","kills","Kill","kill")) or d.kills
-      d.rank=tonumber(val("rank_rating","RankRating","segment_rating","person_rank","team_rank")) or d.rank
+      d.kills=tonumber(val("BP_mykill","mykill","Kills","kills")) or d.kills
+      d.rank=tonumber(val("rank_rating","RankRating","segment_rating")) or d.rank
       d.result=tostring(val("Result","result","BattleResult","battle_result","ResultType") or d.result)
-      d.placement=val("Rank","rank","Placement","placement","FinalRank","final_rank","FinalPlacement","final_placement","PlayerRank","player_rank","TeamRank","team_rank") or d.placement
-      d.teamPlacement=val("TeamRank","team_rank","TeamPlacement","team_placement","SquadRank","squad_rank","TeamPlace","team_place") or d.teamPlacement
-      d.damage=val("Damage","damage","DamageAmount","damage_amount","TotalDamage","total_damage","TotalDamageValue","BP_mydamage","mydamage","MyDamage","BattleDamage","battle_damage") or d.damage
-      d.assists=val("Assists","assists","Assist","assist","AssistCount","assist_count","BP_myassist","myassist","MyAssist","AssistNum") or d.assists
-      d.knockdowns=val("Knockdowns","knockdowns","KnockDowns","knock_downs","KnockoutCount","knockout_count","BP_myknockout","myknockout","Knockout","knockout") or d.knockdowns
-      d.headshots=val("Headshots","headshots","HeadShotCount","head_shot_count","HeadshotCount","headshot_count","HeadShootCount") or d.headshots
-      d.revives=val("Revives","revives","RescueCount","rescue_count","ReviveCount","revive_count","RescueNum") or d.revives
-      d.survival=val("SurvivalTime","survival_time","SurviveTime","survive_time","surviveTime","Survival","survival","AliveTime","alive_time") or d.survival
-      d.duration=val("MatchDuration","match_duration","BattleDuration","battle_duration","Duration","duration","GameDuration","game_duration","TotalTime","total_time") or d.duration
-      d.map=tostring(val("MapName","map_name","MapDisplayName","map_display_name","Map","map","MapID","map_id","BattleMap","battle_map","mapid") or d.map)
-      d.mode=tostring(val("ModeName","mode_name","GameMode","game_mode","GameModeName","game_mode_name","Mode","mode","BattleMode","battle_mode","battle_type","sub_mode") or d.mode)
-      d.perspective=tostring(val("Perspective","perspective","ViewMode","view_mode","CameraMode","camera_mode","TPP","FPP","IsFPP","is_fpp") or d.perspective)
+      d.placement=val("Rank","rank","Placement","placement","FinalRank","final_rank","TeamRank","team_rank") or d.placement
+      d.teamPlacement=val("TeamRank","team_rank","TeamPlacement","team_placement") or d.teamPlacement
+      d.damage=val("Damage","damage","TotalDamage","total_damage","BP_mydamage","mydamage") or d.damage
+      d.assists=val("Assists","assists","AssistCount","assist_count","BP_myassist","myassist") or d.assists
+      d.knockdowns=val("Knockdowns","knockdowns","KnockDowns","knock_downs","BP_myknockout","myknockout") or d.knockdowns
+      d.headshots=val("Headshots","headshots","HeadShotCount","head_shot_count") or d.headshots
+      d.revives=val("Revives","revives","RescueCount","rescue_count") or d.revives
+      d.survival=val("SurvivalTime","survival_time","SurviveTime","survive_time") or d.survival
+      d.duration=val("MatchDuration","match_duration","BattleDuration","battle_duration","Duration","duration") or d.duration
+      d.map=tostring(val("MapName","map_name","Map","map","MapID","map_id") or d.map)
+      d.mode=tostring(val("ModeName","mode_name","GameMode","game_mode","Mode","mode") or d.mode)
+      d.perspective=tostring(val("Perspective","perspective","ViewMode","view_mode","CameraMode","camera_mode") or d.perspective)
       if d.result=="-" or d.result=="nil" or d.result=="" then
         if tonumber(d.placement)==1 then d.result="WIN" else d.result="-" end
       end
@@ -5492,31 +5537,8 @@ do
     if not http or type(http.Post)~="function" then return end
     local d=getFeedbackData(kills, rank, segment, matchID)
     local rankPoints=tonumber(d.rank) or 0
-    local function readable(v)
-      if v == nil then return false end
-      local x=tostring(v)
-      return x ~= "" and x ~= "-" and x ~= "nil" and x ~= "0" and x ~= "false"
-    end
-    local function add(lines,label,value)
-      if readable(value) then lines[#lines+1]=label .. ": " .. tostring(value) end
-    end
-    local lines={"━━━━━━━━━━━━━━━━━━","*•RAPZHANG FEEDBACK•*","━━━━━━━━━━━━━━━━━━","","`"..displayFeedbackName(),"UID: "..displayUID().."`","",detectGameVariant()}
-    add(lines,"Match ID",d.matchID)
-    add(lines,"Placement",d.placement)
-    add(lines,"Team Place",d.teamPlacement)
-    add(lines,"Map",d.map)
-    add(lines,"Mode",d.mode)
-    add(lines,"Perspective",d.perspective)
-    lines[#lines+1]=""; lines[#lines+1]="━━━━━━━━━━━━━━━━━━"; lines[#lines+1]=""; lines[#lines+1]="Combat"
-    add(lines,"Kills",d.kills); add(lines,"Damage",d.damage); add(lines,"Assists",d.assists)
-    add(lines,"Knockdowns",d.knockdowns); add(lines,"Headshots",d.headshots); add(lines,"Revives",d.revives)
-    add(lines,"Survival",d.survival); add(lines,"Duration",d.duration)
-    lines[#lines+1]=""; lines[#lines+1]="Rank"; add(lines,"Tier",rankName(rankPoints)); add(lines,"Points",rankPoints)
-    lines[#lines+1]=""; add(lines,"Active Feature",activeFeatureText()); lines[#lines+1]=""
-    add(lines,"Time",os.date("%H:%M:%S")); add(lines,"Date",os.date("%A, %d %B %Y"))
-    local text=table.concat(lines,"\n")
-    if AF._lastFeedbackText == text then return end
-    AF._lastFeedbackText=text
+    local function out(v) return tostring(v==nil or v=="" and "-" or v) end
+    local text=string.format("━━━━━━━━━━━━━━━━━━\n*•RAPZHANG FEEDBACK•*\n━━━━━━━━━━━━━━━━━━\n\n`%s\nUID: %s`\n\n%s\nMatch ID: %s\nPlacement: %s\nTeam Place: %s\nMap: %s\nMode: %s\nPerspective: %s\n\n━━━━━━━━━━━━━━━━━━\n\nCombat\nKills: %s\nDamage: %s\nAssists: %s\nKnockdowns: %s\nHeadshots: %s\nRevives: %s\nSurvival: %s\nDuration: %s\n\nRank\nTier: %s\nPoints: %s\n\nActive Feature: %s\n\nTime: %s\nDate: %s", displayFeedbackName(), displayUID(), detectGameVariant(), out(d.matchID), out(d.placement), out(d.teamPlacement), out(d.map), out(d.mode), out(d.perspective), out(d.kills), out(d.damage), out(d.assists), out(d.knockdowns), out(d.headshots), out(d.revives), out(d.survival), out(d.duration), rankName(rankPoints), out(rankPoints), activeFeatureText(), os.date("%H:%M:%S"), os.date("%A, %d %B %Y"))
     for _,t in ipairs(cfg.Targets or {}) do
       -- Channel-only routing: reject groups, users, and empty targets.
       local chatId = type(t)=="table" and tostring(t.chat_id or "") or ""
@@ -5539,20 +5561,6 @@ do
   end
   function AF.Install()
     if not (_G.RapzhangConfig and _G.RapzhangConfig.AutoFeedbackEnabled == true) then return end
-    -- Real result hook: network handler -> BattleResult.on_game_result -> BattleResultUI.OnBattleResult.
-    if not AF._battleResultHooked then
-      local battleLogic=mod("client.logic.battle.logic_battleresult")
-      if battleLogic and type(battleLogic.on_game_result)=="function" then
-        local originalBattleResult=battleLogic.on_game_result
-        battleLogic.on_game_result=function(battle_result, result, ...)
-          AF._lastResultParams=battle_result or result
-          local returned=originalBattleResult(battle_result, result, ...)
-          print("[RAPZHANG] real battle-result hook captured battle_id="..tostring((battle_result or {}).battle_id or "unknown"))
-          return returned
-        end
-        AF._battleResultHooked=true
-      end
-    end
     local ui=_G.UIManager
     if not ui or type(ui.ShowUI)~="function" then
       if not AF._installQueued then
@@ -5575,12 +5583,11 @@ do
         )
         -- Auto feedback kembali hanya dikirim untuk kemenangan/placement 1.
         if winner and config==winner and isWinner then
-          AF._lastResultParams=params
           local matchID=tostring((mod("client.logic.battle.logic_complaint") or {}).GetBattleID and (mod("client.logic.battle.logic_complaint"):GetBattleID()) or os.time())
           if AF._lastMatchSent~=matchID then
             AF._lastMatchSent=matchID
             local k,r,seg=getStats()
-            if not addTimerOnce(8.0,function() AF.Send(k,r,seg,matchID) end) then AF.Send(k,r,seg,matchID) end
+            if not addTimerOnce(2.0,function() AF.Send(k,r,seg,matchID) end) then AF.Send(k,r,seg,matchID) end
           end
         end
       end)
@@ -6737,73 +6744,6 @@ function X3ExtraRuntimeInit()
         end
     end
 
-    -- Main graphic preset -> matching resource preset. FPS/view distance are excluded.
-    local QualityResource_SMOOTH = {
-        "r.Fog 0", "r.VolumetricFog 0", "r.LightShaftQuality 0",
-        "r.LensFlareQuality 0", "r.BloomQuality 0", "r.MotionBlurQuality 0",
-        "r.DepthOfFieldQuality 0", "r.ReflectionEnvironment 0", "r.SSR.Quality 0",
-        "r.AmbientOcclusionLevels 0", "r.ParticleLODBias 1", "r.EmitterSpawnRateScale 0.5",
-        "r.Shadow.CSM.MaxMobileCascades 0", "r.Shadow.DistanceScale 0",
-        "r.ShadowQuality 0", "r.ContactShadows 0", "r.MaterialQualityLevel 0",
-        "r.DetailMode 0", "r.StaticMeshForceLODMaterialBias 1"
-    }
-    local QualityResource_BALANCE = {
-        "r.Fog 1", "r.VolumetricFog 0", "r.LightShaftQuality 0",
-        "r.LensFlareQuality 1", "r.BloomQuality 2", "r.MotionBlurQuality 1",
-        "r.DepthOfFieldQuality 1", "r.ReflectionEnvironment 1", "r.SSR.Quality 1",
-        "r.AmbientOcclusionLevels 1", "r.ParticleLODBias 1", "r.EmitterSpawnRateScale 0.75",
-        "r.Shadow.CSM.MaxMobileCascades 1", "r.Shadow.DistanceScale 0.75",
-        "r.ShadowQuality 1", "r.ContactShadows 0", "r.MaterialQualityLevel 1",
-        "r.DetailMode 1", "r.StaticMeshForceLODMaterialBias 0"
-    }
-    local QualityResource_HIGH = {
-        "r.Fog 1", "r.VolumetricFog 1", "r.LightShaftQuality 1",
-        "r.LensFlareQuality 2", "r.BloomQuality 4", "r.MotionBlurQuality 2",
-        "r.DepthOfFieldQuality 2", "r.ReflectionEnvironment 1", "r.SSR.Quality 2",
-        "r.AmbientOcclusionLevels 2", "r.AmbientOcclusionRadiusScale 1",
-        "r.ParticleLODBias 0", "r.EmitterSpawnRateScale 1",
-        "r.Shadow.CSM.MaxMobileCascades 2", "r.Shadow.DistanceScale 1",
-        "r.ShadowQuality 2", "r.ContactShadows 1", "r.MaterialQualityLevel 1",
-        "r.DetailMode 2", "r.StaticMeshForceLODMaterialBias 0",
-        "r.MipLODBiasLowClampSize 0", "r.ForceMipFilterToPoint 0",
-        "s.EnableOverrideVerySmoothMaterial 0"
-    }
-    local function ApplyMainQualityResources(gameInstance, quality)
-        if not gameInstance then return end
-        if XC.LowGraphics == true then
-            ApplySuperDuperCommands(gameInstance, SuperDuper_ON)
-            return
-        end
-        local ERenderQuality=import("ERenderQuality")
-        local commands=QualityResource_HIGH
-        if quality==ERenderQuality.VERYSMOOTH then
-            -- Main menu Very Smooth maps to the extra Super Duper Low resource preset.
-            ApplySuperDuperCommands(gameInstance, SuperDuper_ON)
-            return
-        elseif quality==ERenderQuality.SMOOTH then
-            commands=QualityResource_SMOOTH
-        elseif quality==ERenderQuality.BALANCE then
-            commands=QualityResource_BALANCE
-        end
-        ApplySuperDuperCommands(gameInstance, commands)
-    end
-    local function InstallGraphicQualityHook()
-        local DB=require("client.slua.umg.NewSetting.GraphicsNew.GraphicSettingDB")
-        if not DB or DB._RapzhangQualityHooked or type(DB.SaveChanges)~="function" then return end
-        local originalSaveChanges=DB.SaveChanges
-        DB.SaveChanges=function(self, externalChanges, ...)
-            local ret=originalSaveChanges(self, externalChanges, ...)
-            pcall(function()
-                local Logic=require("client.slua.logic.setting.logic_setting_graphics")
-                local gi=Logic.GetGameInstance and Logic.GetGameInstance()
-                local q=self.GetUIData and self:GetUIData(self.SelectedQuality)
-                ApplyMainQualityResources(gi,q)
-            end)
-            return ret
-        end
-        DB._RapzhangQualityHooked=true
-    end
-
     _G.RapzhangX3.ApplyLowGraphics = function(on)
         local st, now = _G.RapzhangX3._LowGraphicsState, os.clock()
         if st.applied == on and now - (st.last or 0) < 2.0 then return true end
@@ -6845,9 +6785,8 @@ function X3ExtraRuntimeInit()
             local msaaValue = applying.RenderMSAAValue or 0
 
             if on then
-                -- Resource override only: keep the user's main quality choice (HDR/etc.).
-                -- FPS and view distance are deliberately untouched.
-                local activeQuality = (DB.GetUIData and DB:GetUIData(DB.SelectedQuality)) or applying.RenderQualitySetting or Quality.VERYSMOOTH
+                -- Jalur asli Lua: kualitas terendah. FPS/view distance tidak disentuh.
+                if DB.UpdateSelectedQuality then DB:UpdateSelectedQuality(Quality.VERYSMOOTH, true) end
                 if DB.UpdateUIData then
                     DB:UpdateUIData(DB.SelectedShadow, false)
                     DB:UpdateUIData(DB.SelectedWaterReflection, false)
@@ -6856,7 +6795,7 @@ function X3ExtraRuntimeInit()
                     DB:UpdateUIData(DB.RenderMSAAValue, 0)
                 end
                 if DB.SaveChanges then DB:SaveChanges() end
-                if Logic.SetQuality then Logic.SetQuality(gi, activeQuality, style, false, 0) end
+                if Logic.SetQuality then Logic.SetQuality(gi, Quality.VERYSMOOTH, style, false, 0) end
                 ApplySuperDuperCommands(gi, SuperDuper_ON)
             else
                 -- Pulihkan hanya nilai yang disimpan; FPS dan view distance tidak pernah diubah.
@@ -6880,7 +6819,6 @@ function X3ExtraRuntimeInit()
         print("[LOW GRAPHICS LUA] " .. (on and "ON" or "OFF") .. " result=" .. tostring(ok and result))
         return ok and result == true
     end
-    pcall(InstallGraphicQualityHook)
     if XC.LowGraphics == true then pcall(_G.RapzhangX3.ApplyLowGraphics, true) end
 
     _G.RapzhangX3.ApplyPerfBoost = function(on)
