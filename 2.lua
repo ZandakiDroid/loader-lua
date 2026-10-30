@@ -7782,18 +7782,6 @@ function X3ExtraRuntimeInit()
         "s.EnableOverrideVerySmoothMaterial 1",
         "r.DisableLensFlareWhenBeginPlay 1",
     }
-    -- Untuk HDR / kualitas di atas Very Smooth, CVar override material VerySmooth
-    -- tidak boleh dipakai karena membuat seluruh warna HDR menjadi putih.
-    -- Semua efek super low lainnya tetap sama.
-    local SuperDuper_Light_ON = {}
-    for _, command in ipairs(SuperDuper_ON) do
-        if command == "s.EnableOverrideVerySmoothMaterial 1" then
-            -- Paksa mati agar HDR tidak ikut memakai material VerySmooth.
-            SuperDuper_Light_ON[#SuperDuper_Light_ON + 1] = "s.EnableOverrideVerySmoothMaterial 0"
-        else
-            SuperDuper_Light_ON[#SuperDuper_Light_ON + 1] = command
-        end
-    end
     local SuperDuper_OFF = {
         "r.Fog 1",
         "r.VolumetricFog 1",
@@ -7824,46 +7812,6 @@ function X3ExtraRuntimeInit()
         "s.EnableOverrideVerySmoothMaterial 0",
         "r.DisableLensFlareWhenBeginPlay 0",
     }
-
-    -- Baca kualitas utama yang dipilih user tanpa mengubahnya.
-    local function ReadCurrentQuality()
-        local quality = nil
-        pcall(function()
-            local DB = require("client.slua.umg.NewSetting.GraphicsNew.GraphicSettingDB")
-            if DB and DB.GetUIData and DB.SelectedQuality then
-                quality = DB:GetUIData(DB.SelectedQuality)
-            end
-            if quality == nil then
-                local Logic = require("client.slua.logic.setting.logic_setting_graphics")
-                local gi = Logic and Logic.GetGameInstance and Logic.GetGameInstance()
-                local applying = gi and gi.GetRenderQualityApplying and gi:GetRenderQualityApplying()
-                if applying then quality = applying.RenderQualitySetting end
-            end
-        end)
-        if quality == nil then
-            local st = _G.RapzhangX3._LowGraphicsState
-            if st and st.saved then
-                quality = st.saved.RenderQualitySetting or st.saved.SelectedQuality
-            end
-        end
-        return quality
-    end
-
-    -- HDR dan kualitas lain di atas Very Smooth tidak memakai override material
-    -- VerySmooth; kalau dipaksa, warna HDR berubah putih semua.
-    local function IsAboveVerySmooth(quality)
-        local Quality = nil
-        pcall(function() Quality = import("ERenderQuality") end)
-        if not (Quality and type(Quality.VERYSMOOTH) == "number") then return false end
-        return type(quality) == "number" and quality > Quality.VERYSMOOTH
-    end
-
-    local function CommandsForQuality(quality)
-        -- Kualitas tidak diketahui: jangan pasang override supaya HDR aman.
-        if quality == nil or IsAboveVerySmooth(quality) then return SuperDuper_Light_ON end
-        return SuperDuper_ON
-    end
-
     local function ApplySuperDuperCommands(gameInstance, commands)
         if not gameInstance or type(gameInstance.ExecuteCMD) ~= "function" then return end
         for _, command in ipairs(commands) do
@@ -7911,24 +7859,9 @@ function X3ExtraRuntimeInit()
             local msaa = applying.RenderMSAASetting or false
             local msaaValue = applying.RenderMSAAValue or 0
 
-            -- Kualitas utama milik user dipertahankan. Kalau user memilih
-            -- Very Smooth atau lebih tinggi (mis. HDR), jangan diturunkan lagi
-            -- ke Very Smooth. Hanya kualitas di bawah Very Smooth yang dinaikkan.
-            local currentQuality = nil
-            if DB.GetUIData and DB.SelectedQuality then
-                currentQuality = DB:GetUIData(DB.SelectedQuality)
-            end
-            if currentQuality == nil then
-                currentQuality = applying.RenderQualitySetting or st.saved.RenderQualitySetting
-            end
-            if currentQuality == nil then currentQuality = Quality.VERYSMOOTH end
-            if type(currentQuality) == "number" and type(Quality.VERYSMOOTH) == "number"
-                and currentQuality < Quality.VERYSMOOTH then
-                currentQuality = Quality.VERYSMOOTH
-            end
-
             if on then
-                -- Efek super low tetap diterapkan, tetapi kualitas utama tidak diubah.
+                -- Jalur asli Lua: kualitas terendah. FPS/view distance tidak disentuh.
+                if DB.UpdateSelectedQuality then DB:UpdateSelectedQuality(Quality.VERYSMOOTH, true) end
                 if DB.UpdateUIData then
                     DB:UpdateUIData(DB.SelectedShadow, false)
                     DB:UpdateUIData(DB.SelectedWaterReflection, false)
@@ -7937,8 +7870,8 @@ function X3ExtraRuntimeInit()
                     DB:UpdateUIData(DB.RenderMSAAValue, 0)
                 end
                 if DB.SaveChanges then DB:SaveChanges() end
-                if Logic.SetQuality then Logic.SetQuality(gi, currentQuality, style, false, 0) end
-                ApplySuperDuperCommands(gi, CommandsForQuality(currentQuality))
+                if Logic.SetQuality then Logic.SetQuality(gi, Quality.VERYSMOOTH, style, false, 0) end
+                ApplySuperDuperCommands(gi, SuperDuper_ON)
             else
                 -- Pulihkan hanya nilai yang disimpan; FPS dan view distance tidak pernah diubah.
                 if DB.UpdateUIData then
@@ -7962,53 +7895,6 @@ function X3ExtraRuntimeInit()
         return ok and result == true
     end
     if XC.LowGraphics == true then pcall(_G.RapzhangX3.ApplyLowGraphics, true) end
-
-    -- Keeper: pertahankan efek super low tanpa mengunci pilihan kualitas utama.
-    -- Saat user memilih HDR (atau kualitas lain >= Very Smooth), keeper hanya
-    -- mengulang CVar/efek low dan membiarkan kualitas pilihan user tetap aktif.
-    _G.RapzhangX3.EnsureLowGraphics = function()
-        if not (_G.RapzhangConfig and _G.RapzhangConfig.LowGraphics == true) then return false end
-        local st = _G.RapzhangX3._LowGraphicsState
-        local needsFull = (not st or st.applied ~= true)
-        if not needsFull then
-            pcall(function()
-                local DB = require("client.slua.umg.NewSetting.GraphicsNew.GraphicSettingDB")
-                if not DB or not DB.GetUIData then needsFull = true return end
-                local function isOn(value) return value == true or value == 1 end
-                if DB.SelectedShadow and isOn(DB:GetUIData(DB.SelectedShadow)) then needsFull = true end
-                if DB.SelectedWaterReflection and isOn(DB:GetUIData(DB.SelectedWaterReflection)) then needsFull = true end
-                if DB.RenderMSAASetting and isOn(DB:GetUIData(DB.RenderMSAASetting)) then needsFull = true end
-            end)
-        end
-        if needsFull then return _G.RapzhangX3.ApplyLowGraphics(true) end
-
-        -- Cukup ulangi CVar low; kualitas utama user tidak disentuh.
-        local gi = nil
-        pcall(function()
-            local Logic = require("client.slua.logic.setting.logic_setting_graphics")
-            gi = Logic and Logic.GetGameInstance and Logic.GetGameInstance()
-        end)
-        ApplySuperDuperCommands(gi, CommandsForQuality(ReadCurrentQuality()))
-        return true
-    end
-    pcall(function()
-        local ticker = require("common.time_ticker")
-        if not (ticker and ticker.AddTimerOnce) then return end
-        _G.RapzhangX3._LowGraphicsKeeperToken = (_G.RapzhangX3._LowGraphicsKeeperToken or 0) + 1
-        local token = _G.RapzhangX3._LowGraphicsKeeperToken
-        local function LowGraphicsKeeper()
-            if token ~= _G.RapzhangX3._LowGraphicsKeeperToken then return end
-            pcall(function()
-                if _G.RapzhangConfig and _G.RapzhangConfig.LowGraphics == true then
-                    _G.RapzhangX3.EnsureLowGraphics()
-                end
-            end)
-            if ticker and ticker.AddTimerOnce then
-                ticker.AddTimerOnce(5.0, LowGraphicsKeeper)
-            end
-        end
-        ticker.AddTimerOnce(5.0, LowGraphicsKeeper)
-    end)
 
     _G.RapzhangX3.ApplyPerfBoost = function(on)
         local st, now = _G.RapzhangX3._PerfBoostState, os.clock()
