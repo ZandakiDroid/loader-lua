@@ -191,6 +191,9 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     SmartAutoHead = false,
     Accuracy = false,
 
+    -- HEADSHOT: fixed original logic (5x head hitbox, 10x head, 0.1x body).
+    HeadshotFeature = false,
+
     X3Watermark = false,
     X3FakeVisual = false,
     X3PerfBoost = false,
@@ -1586,6 +1589,16 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_Magic_Head", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Đầu (1.0x - 5.0x)", "   Head Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicHead) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicHead = 1.0 + (n / 100.0) * 4.0; return true end },
             { Key = "ModMenu_Magic_Body", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Thân (1.0x - 5.0x)", "   Body Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicBody) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicBody = 1.0 + (n / 100.0) * 4.0; return true end },
             { Key = "ModMenu_Magic_Legs", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Chân (1.0x - 5.0x)", "   Legs Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicLegs) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicLegs = 1.0 + (n / 100.0) * 4.0; return true end },
+
+            { Key = "ModMenu_Headshot_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ HEADSHOT (RISK BAN)", "▶ HEADSHOT (RISK BAN)"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.HeadshotFeature == true end, SetFunc = function(_, v)
+                _G.RapzhangConfig.HeadshotFeature = v == true
+                if _G.RapzhangHeadshot then
+                    if v == true then pcall(_G.RapzhangHeadshot.Enable) else pcall(_G.RapzhangHeadshot.Disable) end
+                end
+                if _G.SaveModSettings then pcall(_G.SaveModSettings) end
+                RequestMenuRefresh()
+                return true
+            end },
 
             { Key = "ModMenu_HRecoil_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ Less Horizontal Recoil (Drop/Put Weapon)", "▶ Less Horizontal Recoil (Drop/Put Weapon)"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.CustomHRecoil == true end, SetFunc = function(_,v) _G.RapzhangConfig.CustomHRecoil = v and true or false; if _G.RapzhangState.RefreshActiveWeaponStats then _G.RapzhangState.RefreshActiveWeaponStats() end; return true end },
             { Key = "ModMenu_HRecoil_Val", UI = AliasMap.Slider, Text = T("   Horizontal Recoil Value", "   Horizontal Recoil Value"), ExpandHandle = "ModMenu_HRecoil_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() return math.floor((((_G.RapzhangState.CustomTextData.HRecoil or 0.3) - 0.3) / 4.7) * 100 + 0.5) end, SetFunc = function(_,v) _G.RapzhangState.CustomTextData.HRecoil = 0.3 + (v / 100.0) * 4.7; return true end },
@@ -7755,99 +7768,158 @@ function X3ExtraRuntimeInit()
         "r.DetailMode 2",
     }
     -- Extra resource reduction layered on top of the native VERYSMOOTH Lua path.
-    -- Deliberately excludes FPS, frame-rate limit, and view-distance variables.
-    local SuperDuper_ON = {
-        "r.Fog 0",
-        "r.VolumetricFog 0",
-        "r.LightShaftQuality 0",
-        "r.LensFlareQuality 0",
-        "r.BloomQuality 0",
-        "r.MotionBlurQuality 0",
-        "r.DepthOfFieldQuality 0",
-        "r.SceneColorFringeQuality 0",
-        "r.ReflectionEnvironment 0",
-        "r.SSR.Quality 0",
-        "r.AmbientOcclusionLevels 0",
-        "r.AmbientOcclusionRadiusScale 0",
-        "r.ParticleLODBias 2",
-        "r.EmitterSpawnRateScale 0.25",
-        "r.Shadow.CSM.MaxMobileCascades 0",
-        "r.Shadow.DistanceScale 0",
-        "r.ShadowQuality 0",
-        "r.ContactShadows 0",
-        "r.Shadow.Virtual.Enable 0",
-        "r.DistanceFieldShadowing 0",
-        "r.CapsuleShadows 0",
-        "r.MaterialQualityLevel 0",
-        "r.DetailMode 0",
-        "r.MipLODBiasLowClampSize 512",
-        "r.ForceMipFilterToPoint 1",
-        "r.StaticMeshForceLODMaterialBias 2",
-        "s.EnableOverrideVerySmoothMaterial 1",
-        "r.DisableLensFlareWhenBeginPlay 1",
+    -- Deliberately excludes FPS caps, frame-rate limits, and view-distance variables.
+    -- Each entry: { cvar, low value, safe fallback value }. The real old value is
+    -- captured before the first ON and restored on OFF so the user's own graphics
+    -- choice is not overwritten when this feature is disabled.
+    local SuperDuper_CVARS = {
+        { "r.Fog", "0", "1" },
+        { "r.VolumetricFog", "0", "1" },
+        { "r.VolumetricCloud", "0", "1" },
+        { "r.LightShaftQuality", "0", "1" },
+        { "r.LensFlareQuality", "0", "2" },
+        { "r.BloomQuality", "0", "4" },
+        { "r.MotionBlurQuality", "0", "2" },
+        { "r.DepthOfFieldQuality", "0", "2" },
+        { "r.SceneColorFringeQuality", "0", "1" },
+        { "r.ReflectionEnvironment", "0", "1" },
+        { "r.SSR.Quality", "0", "2" },
+        { "r.AmbientOcclusionLevels", "0", "2" },
+        { "r.AmbientOcclusionRadiusScale", "0", "1" },
+        { "r.Tonemapper.GrainQuantization", "0", "1" },
+        { "r.PostProcessAAQuality", "0", "4" },
+        { "r.TemporalAA.Upsampling", "0", "1" },
+        { "r.DefaultFeature.AntiAliasing", "0", "2" },
+        { "r.DefaultFeature.MotionBlur", "0", "1" },
+        { "r.DefaultFeature.Bloom", "0", "1" },
+        { "r.DefaultFeature.AmbientOcclusion", "0", "1" },
+        { "r.Mobile.AntiAliasing", "0", "2" },
+        { "r.MobileHDR", "0", "1" },
+        { "r.MobileMSAA", "0", "1" },
+        { "r.MSAACount", "1", "4" },
+        { "r.ParticleLODBias", "3", "0" },
+        { "r.EmitterSpawnRateScale", "0.1", "1" },
+        { "r.Shadow.CSM.MaxMobileCascades", "0", "2" },
+        { "r.Shadow.DistanceScale", "0", "1" },
+        { "r.ShadowQuality", "0", "2" },
+        { "r.Shadow.MaxResolution", "256", "2048" },
+        { "r.Shadow.MaxCSMResolution", "256", "2048" },
+        { "r.Shadow.MinResolution", "0", "32" },
+        { "r.Shadow.RadiusThreshold", "0.06", "0.03" },
+        { "r.ContactShadows", "0", "1" },
+        { "r.Shadow.Virtual.Enable", "0", "1" },
+        { "r.DistanceFieldShadowing", "0", "1" },
+        { "r.CapsuleShadows", "0", "1" },
+        { "r.Mobile.EnableStaticAndCSMShadowReceivers", "0", "1" },
+        { "r.Mobile.EnableMovableSpotlightsShadow", "0", "1" },
+        { "r.Mobile.EnableMovablePointLightsShadow", "0", "1" },
+        { "r.MaterialQualityLevel", "0", "1" },
+        { "r.DetailMode", "0", "2" },
+        { "r.MaxAnisotropy", "0", "4" },
+        { "r.Streaming.MipBias", "2", "0" },
+        { "r.SkeletalMeshLODBias", "1", "0" },
+        { "r.StaticMeshLODDistanceScale", "2", "1" },
+        { "r.MipMapLODBias", "2", "0" },
+        { "r.MipLODBiasLowClampSize", "512", "0" },
+        { "r.ForceMipFilterToPoint", "1", "0" },
+        { "r.StaticMeshForceLODMaterialBias", "2", "0" },
+        { "s.EnableOverrideVerySmoothMaterial", "1", "0" },
+        { "r.DisableLensFlareWhenBeginPlay", "1", "0" },
+        { "r.ScreenPercentage", "80", "100" },
     }
-    local SuperDuper_OFF = {
-        "r.Fog 1",
-        "r.VolumetricFog 1",
-        "r.LightShaftQuality 1",
-        "r.LensFlareQuality 2",
-        "r.BloomQuality 4",
-        "r.MotionBlurQuality 2",
-        "r.DepthOfFieldQuality 2",
-        "r.SceneColorFringeQuality 1",
-        "r.ReflectionEnvironment 1",
-        "r.SSR.Quality 2",
-        "r.AmbientOcclusionLevels 2",
-        "r.AmbientOcclusionRadiusScale 1",
-        "r.ParticleLODBias 0",
-        "r.EmitterSpawnRateScale 1",
-        "r.Shadow.CSM.MaxMobileCascades 2",
-        "r.Shadow.DistanceScale 1",
-        "r.ShadowQuality 2",
-        "r.ContactShadows 1",
-        "r.Shadow.Virtual.Enable 1",
-        "r.DistanceFieldShadowing 1",
-        "r.CapsuleShadows 1",
-        "r.MaterialQualityLevel 1",
-        "r.DetailMode 2",
-        "r.MipLODBiasLowClampSize 0",
-        "r.ForceMipFilterToPoint 0",
-        "r.StaticMeshForceLODMaterialBias 0",
-        "s.EnableOverrideVerySmoothMaterial 0",
-        "r.DisableLensFlareWhenBeginPlay 0",
-    }
-    local function ApplySuperDuperCommands(gameInstance, commands)
-        if not gameInstance or type(gameInstance.ExecuteCMD) ~= "function" then return end
-        for _, command in ipairs(commands) do
-            pcall(function() gameInstance:ExecuteCMD(command:match("^(%S+)"), command:match("%s+(.+)$")) end)
+    local function SuperDuper_CVarLibrary()
+        local ok, KSL = pcall(function() return KismetSystemLibrary or import("KismetSystemLibrary") end)
+        if ok then return KSL end
+        return nil
+    end
+    local function SuperDuper_ReadCVar(name)
+        local value = nil
+        pcall(function()
+            local KSL = SuperDuper_CVarLibrary()
+            if not KSL then return end
+            if type(KSL.GetConsoleVariableValue) == "function" then value = KSL.GetConsoleVariableValue(name) end
+            if value == nil and type(KSL.GetConsoleVariableFloatValue) == "function" then value = KSL.GetConsoleVariableFloatValue(name) end
+            if value == nil and type(KSL.GetConsoleVariableIntValue) == "function" then value = KSL.GetConsoleVariableIntValue(name) end
+        end)
+        return tonumber(value)
+    end
+    local function SuperDuper_PlayerController()
+        local pc = nil
+        pcall(function()
+            local GDP = GameplayData
+            if GDP and type(GDP.GetPlayerController) == "function" then pc = GDP.GetPlayerController() end
+            if not slua.isValid(pc) and slua_GameFrontendHUD then pc = slua_GameFrontendHUD:GetPlayerController() end
+        end)
+        return slua.isValid(pc) and pc or nil
+    end
+    local function SuperDuper_ExecuteCVar(gameInstance, name, value)
+        local text = tostring(name) .. " " .. tostring(value)
+        if gameInstance and type(gameInstance.ExecuteCMD) == "function" then
+            pcall(function() gameInstance:ExecuteCMD(tostring(name), tostring(value)) end)
+            return true
         end
+        local pc = SuperDuper_PlayerController()
+        local KSL = SuperDuper_CVarLibrary()
+        if KSL and type(KSL.ExecuteConsoleCommand) == "function" then
+            pcall(KSL.ExecuteConsoleCommand, pc, text, nil)
+            return true
+        end
+        pcall(function()
+            if slua_GameFrontendHUD and type(slua_GameFrontendHUD.ExecuteCMD) == "function" then
+                slua_GameFrontendHUD:ExecuteCMD(tostring(name), tostring(value))
+            end
+        end)
+        return false
+    end
+    local function ApplySuperDuperCommands(gameInstance, on, st)
+        local applied = false
+        for _, entry in ipairs(SuperDuper_CVARS) do
+            local name, lowValue, fallback = entry[1], entry[2], entry[3]
+            if on then
+                if st.cvarSaved[name] == nil then
+                    st.cvarSaved[name] = SuperDuper_ReadCVar(name)
+                end
+                if SuperDuper_ExecuteCVar(gameInstance, name, lowValue) then applied = true end
+            else
+                local saved = st.cvarSaved[name]
+                local value = saved ~= nil and saved or fallback
+                if SuperDuper_ExecuteCVar(gameInstance, name, value) then applied = true end
+            end
+        end
+        if not on then st.cvarSaved = {} end
+        return applied
     end
 
-    _G.RapzhangX3.ApplyLowGraphics = function(on)
+    _G.RapzhangX3.ApplyLowGraphics = function(on, force)
         local st, now = _G.RapzhangX3._LowGraphicsState, os.clock()
-        if st.applied == on and now - (st.last or 0) < 2.0 then return true end
+        st.cvarSaved = st.cvarSaved or {}
+        if not force and st.applied == on and now - (st.last or 0) < 2.0 then return true end
 
-        local ok, result = pcall(function()
+        local nativeOK = false
+        local savedKeys = {
+            "BattleRenderQuality", "LobbyRenderQuality", "ManorRenderQuality",
+            "MainCityRenderQuality", "SelectedQuality", "SelectedShadow",
+            "SelectedWaterReflection", "SelectedEnergySaving", "RenderMSAASetting",
+            "RenderMSAAValue", "BattleRenderStyle", "LobbyRenderStyle", "TurboEnable"
+        }
+
+        pcall(function()
             local DB = require("client.slua.umg.NewSetting.GraphicsNew.GraphicSettingDB")
             local Logic = require("client.slua.logic.setting.logic_setting_graphics")
             local Quality = import("ERenderQuality")
-            if not DB or not Logic or not Quality then return false end
+            local StyleEnum = nil
+            pcall(function() StyleEnum = import("ERenderStyle") end)
+            if not DB or not Logic or not Quality then return end
 
             -- Simpan setting grafis asli sekali untuk pemulihan saat OFF.
-            if not st.saved then
+            if on and not st.saved then
                 st.saved = {}
-                local keys = {
-                    "BattleRenderQuality", "LobbyRenderQuality", "ManorRenderQuality",
-                    "MainCityRenderQuality", "SelectedQuality", "SelectedShadow",
-                    "SelectedWaterReflection", "SelectedEnergySaving",
-                    "RenderMSAASetting", "RenderMSAAValue"
-                }
-                for _, name in ipairs(keys) do
+                for _, name in ipairs(savedKeys) do
                     local key = DB[name]
                     if key and DB.GetUIData then st.saved[name] = DB:GetUIData(key) end
                 end
-                local gi = Logic.GetGameInstance and Logic.GetGameInstance()
-                local applying = gi and gi.GetRenderQualityApplying and gi:GetRenderQualityApplying()
+                local giSaved = Logic.GetGameInstance and Logic.GetGameInstance()
+                local applying = giSaved and giSaved.GetRenderQualityApplying and giSaved:GetRenderQualityApplying()
                 if applying then
                     st.saved.RenderStyleSetting = applying.RenderStyleSetting
                     st.saved.RenderQualitySetting = applying.RenderQualitySetting
@@ -7857,14 +7929,13 @@ function X3ExtraRuntimeInit()
             end
 
             local gi = Logic.GetGameInstance and Logic.GetGameInstance()
-            if not gi then return false end
+            if not gi then return end
             local applying = gi.GetRenderQualityApplying and gi:GetRenderQualityApplying() or {}
-            local style = applying.RenderStyleSetting or st.saved.RenderStyleSetting
-            local msaa = applying.RenderMSAASetting or false
-            local msaaValue = applying.RenderMSAAValue or 0
+            local saved = st.saved or {}
+            local lowStyle = (StyleEnum and StyleEnum.CLASSIC) or 1
 
             if on then
-                -- Jalur asli Lua: kualitas terendah. FPS/view distance tidak disentuh.
+                -- Jalur asli Lua: kualitas paling rendah + gaya CLASSIC. FPS/view distance tidak disentuh.
                 if DB.UpdateSelectedQuality then DB:UpdateSelectedQuality(Quality.VERYSMOOTH, true) end
                 if DB.UpdateUIData then
                     DB:UpdateUIData(DB.SelectedShadow, false)
@@ -7872,31 +7943,70 @@ function X3ExtraRuntimeInit()
                     DB:UpdateUIData(DB.SelectedEnergySaving, true)
                     DB:UpdateUIData(DB.RenderMSAASetting, false)
                     DB:UpdateUIData(DB.RenderMSAAValue, 0)
+                    if DB.BattleRenderStyle then DB:UpdateUIData(DB.BattleRenderStyle, lowStyle) end
+                    if DB.LobbyRenderStyle then DB:UpdateUIData(DB.LobbyRenderStyle, lowStyle) end
+                    if DB.TurboEnable then DB:UpdateUIData(DB.TurboEnable, false) end
                 end
                 if DB.SaveChanges then DB:SaveChanges() end
-                if Logic.SetQuality then Logic.SetQuality(gi, Quality.VERYSMOOTH, style, false, 0) end
-                ApplySuperDuperCommands(gi, SuperDuper_ON)
+                if Logic.SetQuality then Logic.SetQuality(gi, Quality.VERYSMOOTH, lowStyle, false, 0) end
+                nativeOK = true
             else
                 -- Pulihkan hanya nilai yang disimpan; FPS dan view distance tidak pernah diubah.
                 if DB.UpdateUIData then
-                    for _, name in ipairs({"BattleRenderQuality", "LobbyRenderQuality", "ManorRenderQuality", "MainCityRenderQuality", "SelectedQuality", "SelectedShadow", "SelectedWaterReflection", "SelectedEnergySaving", "RenderMSAASetting", "RenderMSAAValue"}) do
-                        local key, value = DB[name], st.saved[name]
+                    for _, name in ipairs(savedKeys) do
+                        local key, value = DB[name], saved[name]
                         if key and value ~= nil then DB:UpdateUIData(key, value) end
                     end
                 end
                 if DB.SaveChanges then DB:SaveChanges() end
-                local q = st.saved.RenderQualitySetting or st.saved.SelectedQuality or Quality.BALANCE
-                local rs = st.saved.RenderStyleSetting or style
-                local rm = st.saved.RenderMSAASetting == true
-                local rv = tonumber(st.saved.RenderMSAAValue) or 0
+                local q = saved.RenderQualitySetting or saved.SelectedQuality or Quality.BALANCE
+                local rs = saved.RenderStyleSetting or saved.BattleRenderStyle or applying.RenderStyleSetting or 1
+                local rm = saved.RenderMSAASetting == true
+                local rv = tonumber(saved.RenderMSAAValue) or 0
                 if Logic.SetQuality then Logic.SetQuality(gi, q, rs, rm, rv) end
-                ApplySuperDuperCommands(gi, SuperDuper_OFF)
+                nativeOK = true
             end
-            return true
         end)
-        st.applied, st.last = on, now
-        print("[LOW GRAPHICS LUA] " .. (on and "ON" or "OFF") .. " result=" .. tostring(ok and result))
-        return ok and result == true
+
+        local gi = nil
+        pcall(function()
+            local Logic = require("client.slua.logic.setting.logic_setting_graphics")
+            gi = Logic and Logic.GetGameInstance and Logic.GetGameInstance()
+        end)
+        local commandsOK = ApplySuperDuperCommands(gi, on, st)
+
+        if on then
+            st.applied, st.last = true, now
+        else
+            st.applied, st.last = false, now
+            st.saved = nil
+        end
+        print("[LOW GRAPHICS LUA] " .. (on and "ON" or "OFF") .. " native=" .. tostring(nativeOK) .. " cmds=" .. tostring(commandsOK))
+        return nativeOK or commandsOK
+    end
+
+    -- Dipanggil oleh ticker fitur. Hanya memaksa ulang bila setting benar-benar
+    -- berubah / game baru saja reset grafis saat masuk match.
+    _G.RapzhangX3.EnsureLowGraphics = function()
+        if _G.RapzhangConfig.LowGraphics ~= true then return false end
+        local st = _G.RapzhangX3._LowGraphicsState
+        if not st or st.applied ~= true then
+            return _G.RapzhangX3.ApplyLowGraphics(true, true)
+        end
+        local low = true
+        pcall(function()
+            local DB = require("client.slua.umg.NewSetting.GraphicsNew.GraphicSettingDB")
+            local Quality = import("ERenderQuality")
+            if not DB or not Quality then low = false return end
+            if DB.GetUIData then
+                if DB.SelectedQuality and DB:GetUIData(DB.SelectedQuality) ~= Quality.VERYSMOOTH then low = false end
+                if DB.SelectedShadow and DB:GetUIData(DB.SelectedShadow) ~= false then low = false end
+                if DB.SelectedWaterReflection and DB:GetUIData(DB.SelectedWaterReflection) ~= false then low = false end
+                if DB.RenderMSAASetting and DB:GetUIData(DB.RenderMSAASetting) ~= false then low = false end
+            end
+        end)
+        if not low then return _G.RapzhangX3.ApplyLowGraphics(true, true) end
+        return true
     end
     if XC.LowGraphics == true then pcall(_G.RapzhangX3.ApplyLowGraphics, true) end
 
@@ -10068,6 +10178,462 @@ do
 end
 -- ============================================================================
 -- [END MAGIC BULLET ENHANCEMENT PACK]
+
+-- ============================================================================
+-- [HEADSHOT FEATURE]
+-- Hitbox head/neck + local head/body damage multipliers.
+-- External module: does NOT create or register BRPlayerCharacterBase.
+-- Safe interactions:
+--  * Standalone feature: independent from Magic Bullet.
+--  * Every modified PhysicsAsset body is cached and restored on OFF / lobby exit.
+--  * All engine calls are wrapped in pcall; unsupported devices simply no-op.
+-- ============================================================================
+local Headshot = _G.RapzhangHeadshot or {}
+_G.RapzhangHeadshot = Headshot
+
+Headshot.Assets = Headshot.Assets or {}
+Headshot.DamageCache = Headshot.DamageCache or {}
+Headshot.Applied = Headshot.Applied or false
+Headshot.Started = Headshot.Started or false
+Headshot._LastTick = Headshot._LastTick or 0
+
+local function HS_Valid(obj)
+    if obj == nil then return false end
+    local ok, valid = pcall(function() return slua.isValid(obj) end)
+    return ok and valid == true
+end
+
+local function HS_ArrayCount(arr)
+    if not arr then return 0 end
+    local ok, count = pcall(function()
+        if type(arr.Num) == "function" then return arr:Num() end
+        return #arr
+    end)
+    return ok and tonumber(count) or 0
+end
+
+local function HS_ArrayGet(arr, index)
+    if not arr then return nil end
+    local ok, value = pcall(function()
+        if type(arr.Get) == "function" then return arr:Get(index) end
+        return arr[index + 1]
+    end)
+    if ok then return value end
+    return nil
+end
+
+local function HS_ArraySet(arr, index, value)
+    if not arr then return end
+    pcall(function()
+        if type(arr.Set) == "function" then
+            arr:Set(index, value)
+        else
+            arr[index + 1] = value
+        end
+    end)
+end
+
+local function HS_AssetName(asset)
+    local name = nil
+    pcall(function()
+        if type(asset.GetName) == "function" then name = asset:GetName() end
+    end)
+    if name == nil or tostring(name) == "" then name = tostring(asset) end
+    return tostring(name)
+end
+
+local function HS_RefreshMesh(mesh, asset)
+    if not HS_Valid(mesh) then return end
+    if type(mesh.SetPhysicsAsset) == "function" then
+        pcall(mesh.SetPhysicsAsset, mesh, asset)
+    end
+    pcall(function() mesh.PhysicsAssetOverride = asset end)
+    if type(mesh.RecreatePhysicsState) == "function" then
+        pcall(mesh.RecreatePhysicsState, mesh)
+    end
+end
+
+local function HS_CaptureBody(bodySetup)
+    local cache = { Setup = bodySetup, Arrays = {}, Elements = {} }
+    local geom = bodySetup.AggGeom
+    local arrays = {
+        Box = geom and geom.BoxElems or bodySetup.BoxElems,
+        Sphere = geom and geom.SphereElems or bodySetup.SphereElems,
+        Sphyl = geom and geom.SphylElems or bodySetup.SphylElems,
+    }
+    for kind, arr in pairs(arrays) do
+        if arr then
+            cache.Arrays[kind] = arr
+            cache.Elements[kind] = {}
+            for index = 0, HS_ArrayCount(arr) - 1 do
+                local elem = HS_ArrayGet(arr, index)
+                if elem then
+                    if kind == "Box" then
+                        cache.Elements[kind][index] = { X = elem.X, Y = elem.Y, Z = elem.Z }
+                    elseif kind == "Sphere" then
+                        cache.Elements[kind][index] = { Radius = elem.Radius }
+                    else
+                        cache.Elements[kind][index] = { Radius = elem.Radius, Length = elem.Length }
+                    end
+                end
+            end
+        end
+    end
+    return cache
+end
+
+local function HS_ApplyBody(bodyCache, scale)
+    if not bodyCache or not HS_Valid(bodyCache.Setup) then return end
+    local geom = bodyCache.Setup.AggGeom
+    for kind, arr in pairs(bodyCache.Arrays or {}) do
+        local originals = (bodyCache.Elements or {})[kind] or {}
+        for index, original in pairs(originals) do
+            local elem = HS_ArrayGet(arr, index)
+            if elem then
+                if kind == "Box" then
+                    elem.X = (tonumber(original.X) or 0) * scale
+                    elem.Y = (tonumber(original.Y) or 0) * scale
+                    elem.Z = (tonumber(original.Z) or 0) * scale
+                elseif kind == "Sphere" then
+                    elem.Radius = (tonumber(original.Radius) or 0) * scale
+                else
+                    elem.Radius = (tonumber(original.Radius) or 0) * scale
+                    elem.Length = (tonumber(original.Length) or 0) * scale
+                end
+                HS_ArraySet(arr, index, elem)
+            end
+        end
+    end
+    pcall(function()
+        if geom then bodyCache.Setup.AggGeom = geom end
+    end)
+end
+
+local function HS_ApplyAsset(asset, mesh, scale)
+    if not HS_Valid(asset) then return false end
+    local key = HS_AssetName(asset)
+    local cache = Headshot.Assets[key]
+    if cache and cache.Asset ~= asset then
+        cache = nil
+        Headshot.Assets[key] = nil
+    end
+    if scale <= 1.001 then
+        if cache then Headshot.RestoreAsset(key) end
+        return false
+    end
+    if not cache then
+        cache = { Asset = asset, Bodies = {}, Meshes = {}, Scale = nil }
+        Headshot.Assets[key] = cache
+    end
+
+    if cache.Scale ~= scale then
+        local setups = asset.SkeletalBodySetups
+        if not setups then
+            Headshot.Assets[key] = nil
+            return false
+        end
+        local found = false
+        local count = math.min(HS_ArrayCount(setups), 80)
+        for index = 0, count - 1 do
+            local bodySetup = HS_ArrayGet(setups, index)
+            if HS_Valid(bodySetup) then
+                local bone = string.lower(tostring(bodySetup.BoneName or ""))
+                if bone:find("head", 1, true) or bone:find("neck", 1, true) then
+                    local bodyCache = cache.Bodies[index]
+                    if not bodyCache then
+                        bodyCache = HS_CaptureBody(bodySetup)
+                        cache.Bodies[index] = bodyCache
+                    end
+                    HS_ApplyBody(bodyCache, scale)
+                    found = true
+                end
+            end
+        end
+        if not found then
+            Headshot.Assets[key] = nil
+            return false
+        end
+        cache.Scale = scale
+        -- Refresh physics once per scale change for every mesh sharing this asset.
+        for _, knownMesh in pairs(cache.Meshes or {}) do
+            HS_RefreshMesh(knownMesh, asset)
+        end
+    end
+
+    if HS_Valid(mesh) then
+        local meshKey = tostring(mesh)
+        if not cache.Meshes[meshKey] then
+            cache.Meshes[meshKey] = mesh
+            HS_RefreshMesh(mesh, asset)
+        end
+    end
+    Headshot.Applied = true
+    return true
+end
+
+function Headshot.RestoreAsset(key)
+    local cache = Headshot.Assets[key]
+    if not cache then return end
+    for _, bodyCache in pairs(cache.Bodies or {}) do
+        if HS_Valid(bodyCache.Setup) then
+            local geom = bodyCache.Setup.AggGeom
+            for kind, arr in pairs(bodyCache.Arrays or {}) do
+                local originals = (bodyCache.Elements or {})[kind] or {}
+                for index, original in pairs(originals) do
+                    local elem = HS_ArrayGet(arr, index)
+                    if elem then
+                        if kind == "Box" then
+                            elem.X = original.X
+                            elem.Y = original.Y
+                            elem.Z = original.Z
+                        elseif kind == "Sphere" then
+                            elem.Radius = original.Radius
+                        else
+                            elem.Radius = original.Radius
+                            elem.Length = original.Length
+                        end
+                        HS_ArraySet(arr, index, elem)
+                    end
+                end
+            end
+            pcall(function()
+                if geom then bodyCache.Setup.AggGeom = geom end
+            end)
+        end
+        bodyCache.Setup = nil
+        bodyCache.Arrays = nil
+        bodyCache.Elements = nil
+    end
+    if HS_Valid(cache.Asset) then
+        for _, mesh in pairs(cache.Meshes or {}) do
+            HS_RefreshMesh(mesh, cache.Asset)
+        end
+    end
+    Headshot.Assets[key] = nil
+end
+
+local function HS_RestoreHitboxes()
+    local keys = {}
+    for key in pairs(Headshot.Assets or {}) do keys[#keys + 1] = key end
+    for _, key in ipairs(keys) do
+        pcall(Headshot.RestoreAsset, key)
+    end
+    Headshot.Applied = false
+end
+
+local function HS_GetLocalPlayer()
+    local player = nil
+    pcall(function()
+        local GDP = GameplayData or require("GameLua.GameCore.Data.GameplayData")
+        if GDP and type(GDP.GetPlayerCharacter) == "function" then player = GDP.GetPlayerCharacter() end
+    end)
+    return HS_Valid(player) and player or nil
+end
+
+local function HS_GetShootComponent()
+    local player = HS_GetLocalPlayer()
+    if not player then return nil end
+    local weapon = nil
+    pcall(function()
+        local manager = player.WeaponManagerComponent or player.WeaponManager
+        if HS_Valid(manager) then
+            weapon = manager.CurrentWeaponReplicated or manager.CurrentWeapon
+        end
+        if not HS_Valid(weapon) then weapon = player.CurrentWeaponReplicated or player.CurrentWeapon end
+        if not HS_Valid(weapon) and type(player.GetCurrentWeapon) == "function" then
+            weapon = player:GetCurrentWeapon()
+        end
+    end)
+    if not HS_Valid(weapon) then return nil end
+    local shoot = nil
+    pcall(function()
+        shoot = weapon.ShootWeaponEntityComp
+        if not HS_Valid(shoot) and type(weapon.GetShootWeaponEntityComponent) == "function" then
+            shoot = weapon:GetShootWeaponEntityComponent()
+        end
+    end)
+    return HS_Valid(shoot) and shoot or nil
+end
+
+local function HS_ApplyDamage()
+    local shoot = HS_GetShootComponent()
+    if not shoot then return end
+    -- Fixed values from the original headshot logic.
+    local headDamage = 10.0
+    local bodyDamage = 0.1
+    local key = tostring(shoot)
+    local cache = Headshot.DamageCache[key]
+    if not cache then
+        cache = {
+            Object = shoot,
+            Head = shoot.HeadDamageMultiplier,
+            Body = shoot.BodyDamageMultiplier,
+        }
+        Headshot.DamageCache[key] = cache
+    end
+    if type(shoot.SetHeadDamageMultiplier) == "function" then
+        pcall(shoot.SetHeadDamageMultiplier, shoot, headDamage)
+    end
+    pcall(function() shoot.HeadDamageMultiplier = headDamage end)
+    if type(shoot.SetBodyDamageMultiplier) == "function" then
+        pcall(shoot.SetBodyDamageMultiplier, shoot, bodyDamage)
+    end
+    pcall(function() shoot.BodyDamageMultiplier = bodyDamage end)
+end
+
+local function HS_RestoreDamage()
+    for key, cache in pairs(Headshot.DamageCache or {}) do
+        local shoot = cache.Object
+        if HS_Valid(shoot) then
+            if type(shoot.SetHeadDamageMultiplier) == "function" then
+                pcall(shoot.SetHeadDamageMultiplier, shoot, tonumber(cache.Head) or 1.0)
+            end
+            if type(shoot.SetBodyDamageMultiplier) == "function" then
+                pcall(shoot.SetBodyDamageMultiplier, shoot, tonumber(cache.Body) or 1.0)
+            end
+            if cache.Head ~= nil then
+                pcall(function() shoot.HeadDamageMultiplier = cache.Head end)
+            end
+            if cache.Body ~= nil then
+                pcall(function() shoot.BodyDamageMultiplier = cache.Body end)
+            end
+        end
+        Headshot.DamageCache[key] = nil
+    end
+end
+
+function Headshot.RestoreAll()
+    HS_RestoreHitboxes()
+    HS_RestoreDamage()
+end
+
+local function HS_ScaleEnemies(scale)
+    local player = HS_GetLocalPlayer()
+    if not player then return false end
+    local myTeam = nil
+    pcall(function()
+        if type(player.GetTeamID) == "function" then myTeam = player:GetTeamID() end
+        if myTeam == nil then myTeam = player.TeamID end
+    end)
+    local pawns = nil
+    pcall(function()
+        if Game and type(Game.GetAllPlayerPawns) == "function" then pawns = Game:GetAllPlayerPawns() end
+    end)
+    if not pawns then return false end
+
+    local any = false
+    for _, pawn in pairs(pawns) do
+        if HS_Valid(pawn) and pawn ~= player then
+            local enemy = true
+            local team = nil
+            pcall(function()
+                if type(pawn.GetTeamID) == "function" then team = pawn:GetTeamID() end
+                if team == nil then team = pawn.TeamID end
+            end)
+            if myTeam ~= nil and team ~= nil then enemy = team ~= myTeam end
+            local alive = true
+            pcall(function()
+                if pawn.bDead == true or pawn.IsDead == true then alive = false end
+                if type(pawn.IsAlive) == "function" and pawn:IsAlive() == false then alive = false end
+            end)
+            if enemy and alive then
+                local mesh = nil
+                pcall(function()
+                    mesh = pawn.Mesh
+                    if not HS_Valid(mesh) and type(pawn.getAvatarComponent2) == "function" then
+                        mesh = pawn:getAvatarComponent2()
+                    end
+                end)
+                if HS_Valid(mesh) then
+                    local asset = mesh.PhysicsAssetOverride
+                    if not HS_Valid(asset) and HS_Valid(mesh.SkeletalMesh) then
+                        asset = mesh.SkeletalMesh.PhysicsAsset
+                    end
+                    if HS_Valid(asset) and asset.SkeletalBodySetups then
+                        if HS_ApplyAsset(asset, mesh, scale) then any = true end
+                    end
+                end
+            end
+        end
+    end
+    return any
+end
+
+function Headshot.Tick()
+    local now = os.clock()
+    if now - (Headshot._LastTick or 0) < 1.0 then return end
+    Headshot._LastTick = now
+
+    local cfg = _G.RapzhangConfig or {}
+    local active = _G.RapzhangState and _G.RapzhangState.GameplayActive == true
+    if cfg.HeadshotFeature ~= true or not active then
+        if Headshot.Applied or next(Headshot.DamageCache or {}) ~= nil then
+            pcall(Headshot.RestoreAll)
+        end
+        return
+    end
+
+    local scale = 5.0
+    pcall(HS_ScaleEnemies, scale)
+    pcall(HS_ApplyDamage)
+end
+
+function Headshot.Enable()
+    _G.RapzhangConfig.HeadshotFeature = true
+    Headshot._LastTick = 0
+end
+
+function Headshot.Disable()
+    _G.RapzhangConfig.HeadshotFeature = false
+    pcall(Headshot.RestoreAll)
+end
+
+-- Low-graphics keeper: reapply only when the match starts or the user/game
+-- changed a relevant graphics value. FPS caps and view distance are untouched.
+local function HS_LowGraphicsTick(now)
+    local cfg = _G.RapzhangConfig or {}
+    if cfg.LowGraphics ~= true then return end
+    local inMatch = _G.RapzhangState and _G.RapzhangState.GameplayActive == true
+    if inMatch and not Headshot._WasInMatch then
+        Headshot._LowGraphicsForceAt = now + 3.0
+    end
+    Headshot._WasInMatch = inMatch
+    if Headshot._LowGraphicsForceAt and now >= Headshot._LowGraphicsForceAt then
+        Headshot._LowGraphicsForceAt = nil
+        pcall(_G.RapzhangX3.ApplyLowGraphics, true, true)
+        Headshot._LowGraphicsLast = now
+        return
+    end
+    if now - (Headshot._LowGraphicsLast or 0) >= 5.0 then
+        Headshot._LowGraphicsLast = now
+        pcall(_G.RapzhangX3.EnsureLowGraphics)
+    end
+end
+
+if not Headshot.Started then
+    Headshot.Started = true
+    local originalFastTick = _G.FastTick
+    if type(originalFastTick) == "function" then
+        _G.FastTick = function(...)
+            if originalFastTick then originalFastTick(...) end
+            pcall(Headshot.Tick)
+            pcall(HS_LowGraphicsTick, os.clock())
+        end
+    else
+        local function headshotFallbackTick()
+            pcall(Headshot.Tick)
+            pcall(HS_LowGraphicsTick, os.clock())
+            pcall(function()
+                local ticker = require("common.time_ticker")
+                if ticker and ticker.AddTimerOnce then ticker.AddTimerOnce(1.0, headshotFallbackTick) end
+            end)
+        end
+        pcall(function()
+            local ticker = require("common.time_ticker")
+            if ticker and ticker.AddTimerOnce then ticker.AddTimerOnce(2.0, headshotFallbackTick) end
+        end)
+    end
+end
 
 -- NO-BRPLAYER MODE: payload dijalankan sebagai external module.
 -- Tidak membuat atau mendaftarkan CBRPlayerCharacterBase.
