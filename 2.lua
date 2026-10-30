@@ -5477,6 +5477,193 @@ _G.RapzhangAutoTextFeedback = (function()
     return "*****"
   end
 
+  local function cleanNameText(value)
+    if value == nil then return nil end
+    local kind = type(value)
+    if kind ~= "string" and kind ~= "number" then return nil end
+    local text = tostring(value)
+    text = text:gsub("%c", " "):gsub("%s+", " ")
+    text = text:gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" or text == "nil" or text == "None" or text == "NULL" then
+      return nil
+    end
+    return text
+  end
+
+  local function nameLooksMasked(value)
+    local text = tostring(value == nil and "" or value)
+    if text == "" then return true end
+    if text:find("**", 1, true) or text:find("＊", 1, true) then return true end
+    if text:find("^%*+$") or text:find("^#+$") then return true end
+    return false
+  end
+
+  local function utf8Length(text)
+    local lib = rawget(_G, "utf8")
+    if lib and type(lib.len) == "function" then
+      local ok, count = pcall(lib.len, text)
+      if ok and type(count) == "number" then return count end
+    end
+    local index, count = 1, 0
+    while index <= #text do
+      local byte = text:byte(index)
+      local size = 1
+      if byte >= 240 then size = 4
+      elseif byte >= 224 then size = 3
+      elseif byte >= 192 then size = 2 end
+      index = index + size
+      count = count + 1
+    end
+    return count
+  end
+
+  local function utf8Head(text, count)
+    if count <= 0 then return "" end
+    local lib = rawget(_G, "utf8")
+    if lib and type(lib.offset) == "function" then
+      local ok, offset = pcall(lib.offset, text, count + 1)
+      if ok and offset then return text:sub(1, offset - 1) end
+    end
+    local index, chars = 1, 0
+    while index <= #text and chars < count do
+      local byte = text:byte(index)
+      local size = 1
+      if byte >= 240 then size = 4
+      elseif byte >= 224 then size = 3
+      elseif byte >= 192 then size = 2 end
+      index = index + size
+      chars = chars + 1
+    end
+    return text:sub(1, index - 1)
+  end
+
+  local function maskPlayerName(value)
+    local text = cleanNameText(value)
+    if text == nil then return nil end
+    local lower = text:lower()
+    if lower == "unknown" or lower == "player" or lower == "bot" then
+      return text
+    end
+    local total = utf8Length(text)
+    if total <= 0 then return text end
+    local keep = 4
+    if total <= keep then keep = total > 1 and 1 or 0 end
+    if keep == 0 then return "*" end
+    local stars = total - keep
+    if stars > 6 then stars = 6 end
+    return utf8Head(text, keep) .. string.rep("*", stars)
+  end
+
+  local function playerStateOf(character)
+    local ps = nil
+    pcall(function()
+      if character.GetPlayerStateSafety then
+        ps = character:GetPlayerStateSafety()
+      end
+      if ps == nil and character.GetPlayerState then
+        ps = character:GetPlayerState()
+      end
+    end)
+    if ps == nil then pcall(function() ps = character.PlayerState end) end
+    return ps
+  end
+
+  local function characterUID(character, ps)
+    local uid = nil
+    if character.GetPlayerUID then
+      pcall(function() uid = character:GetPlayerUID() end)
+    end
+    if uid == nil and ps and ps.GetUIDString then
+      pcall(function() uid = ps:GetUIDString() end)
+    end
+    if uid == nil and ps then
+      pcall(function() uid = ps.PlayerUID or ps.UID end)
+    end
+    if uid == nil then
+      pcall(function() uid = character.PlayerUID end)
+    end
+    if uid == nil then
+      pcall(function()
+        local game = rawget(_G, "Game")
+        if game and type(game.GetPlayerUID) == "function" then
+          uid = game:GetPlayerUID(character)
+        end
+      end)
+    end
+    return uid
+  end
+
+  local function characterName(character, ps)
+    local name = nil
+    if character.GetPlayerNameSafety then
+      pcall(function() name = character:GetPlayerNameSafety() end)
+    end
+    if name == nil and character.GetPlayerName then
+      pcall(function() name = character:GetPlayerName() end)
+    end
+    if name == nil then
+      pcall(function() name = character.PlayerName or character.NickName end)
+    end
+    if name == nil and ps then
+      if ps.GetPlayerName then
+        pcall(function() name = ps:GetPlayerName() end)
+      end
+      if name == nil then
+        pcall(function() name = ps.PlayerName or ps.PlayerNamePrivate or ps.NickName end)
+      end
+    end
+    return cleanNameText(name)
+  end
+
+  local function liveNameForUID(uid)
+    if uid == nil then return nil end
+    local target = tostring(uid)
+    if target == "" then return nil end
+    local gd = mod("GameLua.GameCore.Data.GameplayData")
+    if not (gd and type(gd.GetAllPlayerCharacters) == "function") then return nil end
+    local ok, list = pcall(gd.GetAllPlayerCharacters)
+    if not ok or type(list) ~= "table" then return nil end
+    local found = nil
+    pcall(function()
+      for _, character in pairs(list) do
+        local ps = playerStateOf(character)
+        local characterUIDValue = characterUID(character, ps)
+        if characterUIDValue ~= nil and tostring(characterUIDValue) == target then
+          local name = characterName(character, ps)
+          if name and not nameLooksMasked(name) then
+            found = name
+            return
+          end
+        end
+      end
+    end)
+    return found
+  end
+
+  local function teammateDisplayName(tm, myUID)
+    if tm == nil then return nil end
+    local first = nil
+    local nameKeys = {
+      "Name", "PlayerName", "NickName", "nickName", "Nickname",
+      "RoleName", "role_name", "ShowName", "RealName",
+    }
+    for _, key in ipairs(nameKeys) do
+      local candidate = cleanNameText(g(tm, key))
+      if candidate then
+        if first == nil then first = candidate end
+        if not nameLooksMasked(candidate) then return candidate end
+      end
+    end
+    local uid = g(tm, "UID")
+    if uid ~= nil and myUID ~= nil and tostring(uid) == tostring(myUID) then
+      local mine = cleanNameText(displayName())
+      if mine and not nameLooksMasked(mine) then return mine end
+    end
+    local live = liveNameForUID(uid)
+    if live then return live end
+    return first
+  end
+
   local function activeFeatureText()
     local cfg = _G.RapzhangConfig or {}
     local features = {}
@@ -5546,6 +5733,107 @@ _G.RapzhangAutoTextFeedback = (function()
     end)
     if version ~= nil and tostring(version) ~= "" then return tostring(version) end
     return nil
+  end
+
+  local function clientValue(name)
+    local value = nil
+    pcall(function()
+      local c = rawget(_G, "Client")
+      local fn = c and c[name]
+      if type(fn) == "function" then
+        value = fn()
+      end
+    end)
+    if value == nil then return nil end
+    local text = tostring(value)
+    if text == "" or text == "nil" or text == "unknown" or text == "Unknown" then
+      return nil
+    end
+    return value
+  end
+
+  local function cleanDeviceText(value, maxChars)
+    if value == nil then return nil end
+    local kind = type(value)
+    if kind ~= "string" and kind ~= "number" then return nil end
+    local text = tostring(value)
+    text = text:gsub("%s+", " ")
+    text = text:gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" or text == "nil" or text == "unknown" or text == "Unknown" then
+      return nil
+    end
+    return clip(text, maxChars or 48)
+  end
+
+  local function detectDevicePlatform()
+    local platform = clientValue("GetDevicePlatformName")
+    if platform ~= nil then
+      local text = tostring(platform)
+      local upper = string.upper(text)
+      if upper == "IOS" then return "iOS" end
+      if upper == "ANDROID" then return "Android" end
+      return text
+    end
+    local soVersion = tonumber(clientValue("GetAndroidSOVersion"))
+    if soVersion == 32 or soVersion == 64 then return "Android" end
+    local gd = rawget(_G, "GlobalData")
+    if gd and type(gd.IsIOSCheck) == "function" then
+      local ok, isIOS = pcall(gd.IsIOSCheck)
+      if ok and isIOS == true then return "iOS" end
+    end
+    return "Unknown"
+  end
+
+  local function detectAppArch(platform)
+    local soVersion = tonumber(clientValue("GetAndroidSOVersion"))
+    if soVersion == 32 then return "32-bit" end
+    if soVersion == 64 then return "64-bit" end
+    -- Current iOS builds are ARM64-only (Apple dropped 32-bit apps in iOS 11).
+    if platform == "iOS" then return "64-bit" end
+    local cpu = string.lower(tostring(clientValue("GetCpuType") or ""))
+    if cpu ~= "" then
+      if cpu:find("arm64", 1, true) or cpu:find("aarch64", 1, true)
+          or cpu:find("x86_64", 1, true) or cpu:find("64-bit", 1, true) then
+        return "64-bit"
+      end
+      if cpu:find("armeabi", 1, true) or cpu:find("armv7", 1, true)
+          or cpu:find("x86", 1, true) or cpu:find("32-bit", 1, true) then
+        return "32-bit"
+      end
+    end
+    return "Unknown"
+  end
+
+  local function detectDevice()
+    local platform = detectDevicePlatform()
+    local model = cleanDeviceText(clientValue("GetDeviceModel"), 42)
+    local make = cleanDeviceText(clientValue("GetDeviceMake"), 24)
+    if model and make then
+      if not string.lower(model):find(string.lower(make), 1, true) then
+        model = make .. " " .. model
+      end
+    elseif not model and make then
+      model = make
+    end
+    local osVersion = cleanDeviceText(clientValue("GetOSVersion"), 24)
+      or cleanDeviceText(clientValue("GetAndroidVersion"), 24)
+    local osLabel = nil
+    if osVersion then
+      local lower = string.lower(osVersion)
+      if platform == "Android" and not lower:find("android", 1, true) then
+        osLabel = "Android " .. osVersion
+      elseif platform == "iOS" and not lower:find("ios", 1, true) then
+        osLabel = "iOS " .. osVersion
+      else
+        osLabel = osVersion
+      end
+    end
+    return {
+      platform = platform,
+      arch = detectAppArch(platform),
+      model = model,
+      os = osLabel,
+    }
   end
 
   local function detectGameVariant()
@@ -5910,12 +6198,22 @@ _G.RapzhangAutoTextFeedback = (function()
     d.result = result
     d.teamList = teamList
     d.myUID = g(selfTm, "UID") or myUID
-    d.myName = g(selfTm, "Name") or myName or displayName()
     d.reporterName = displayName()
+    d.myName = teammateDisplayName(selfTm, d.myUID) or cleanNameText(myName)
+      or cleanNameText(d.reporterName)
+    if d.myName == nil or nameLooksMasked(d.myName) then
+      local mine = cleanNameText(d.reporterName)
+      if mine and not nameLooksMasked(mine) then d.myName = mine end
+    end
     d.reporterUIDMasked = maskUID(d.myUID)
     d.variant = detectGameVariant()
     d.region = detectRegion()
     d.clientVersion = clientVersion()
+    local device = detectDevice()
+    d.devicePlatform = device.platform
+    d.appArch = device.arch
+    d.deviceModel = device.model
+    d.deviceOS = device.os
     d.active = activeFeatureText()
     d.logged = os.date("%Y-%m-%d %H:%M:%S")
     d.matchID = resolveMatchID(sources, fallbackMatchID)
@@ -6102,13 +6400,23 @@ _G.RapzhangAutoTextFeedback = (function()
 
     add("🎯 <b>RAPZHANG MATCH REPORT</b>")
     add("━━━━━━━━━━━━━━━━━━")
-    bullet("Player", "<code>" .. esc(clip(d.myName or "Unknown", 32)) .. "</code>")
+    bullet("Player", "<code>" .. esc(clip(maskPlayerName(d.myName) or "Unknown", 48)) .. "</code>")
     bullet("UID", "<code>" .. esc(d.reporterUIDMasked or "unknown") .. "</code>")
     bullet("Variant", esc(d.variant or "PUBGM: Unknown"))
     if (d.variant == nil or d.variant == "PUBGM: Unknown") and d.region then
       bullet("Region", esc(d.region))
     end
     bullet("Client", esc(d.clientVersion))
+    add("")
+    add("📱 <b>DEVICE</b>")
+    bullet("Platform", esc(d.devicePlatform or "Unknown"))
+    bullet("App arch", "<b>" .. esc(d.appArch or "Unknown") .. "</b>")
+    if d.deviceModel or d.deviceOS then
+      local deviceParts = {}
+      if d.deviceModel then deviceParts[#deviceParts + 1] = esc(d.deviceModel) end
+      if d.deviceOS then deviceParts[#deviceParts + 1] = esc(d.deviceOS) end
+      bullet("Device", table.concat(deviceParts, " · "))
+    end
     add("")
     add("🏁 <b>RESULT</b>")
     bullet("Status", d.statusHtml or "<b>FINISHED</b>")
@@ -6216,8 +6524,8 @@ _G.RapzhangAutoTextFeedback = (function()
       local shown = 0
       for _, tm in ipairs(d.teamList) do
         if shown >= 4 then break end
-        local rawName = tostring(g(tm, "Name") or "Unknown")
-        local name = esc(clip(rawName, 20))
+        local rawName = teammateDisplayName(tm, d.myUID) or "Unknown"
+        local name = esc(clip(maskPlayerName(rawName) or rawName, 48))
         local uid = g(tm, "UID")
         local isSelf = (d.myUID ~= nil and uid ~= nil and tostring(uid) == tostring(d.myUID))
           or (d.myName ~= nil and rawName == tostring(d.myName))
@@ -6225,6 +6533,9 @@ _G.RapzhangAutoTextFeedback = (function()
         local assists = tonumber(g(tm, "AssistNum")) or 0
         local damage = tonumber(g(tm, "DamageAmount")) or 0
         local suffix = isSelf and " <i>(you)</i>" or ""
+        if nameLooksMasked(rawName) and uid ~= nil then
+          suffix = suffix .. " <i>(UID " .. esc(maskUID(uid)) .. ")</i>"
+        end
         local mvp = g(tm, "IsMVP") == true and " · MVP" or ""
         add("• " .. name .. suffix .. " — " .. fmtInt(kills) .. "K / " .. fmtInt(assists) .. "A / " .. fmtInt(damage) .. "D" .. mvp)
         shown = shown + 1
@@ -6238,7 +6549,7 @@ _G.RapzhangAutoTextFeedback = (function()
     add("🧩 <b>SESSION</b>")
     bullet("Match ID", "<code>" .. esc(d.matchID or "-") .. "</code>")
     bullet("Active", esc(d.active or "None"))
-    bullet("Reporter", esc(clip(d.reporterName or "Player", 32)) .. " (" .. esc(d.reporterUIDMasked or "unknown") .. ")")
+    bullet("Reporter", esc(clip(maskPlayerName(d.reporterName) or "Player", 48)) .. " (" .. esc(d.reporterUIDMasked or "unknown") .. ")")
     bullet("Logged", esc(d.logged or ""))
 
     return trimMessage(table.concat(lines, "\n"))
@@ -6261,13 +6572,13 @@ _G.RapzhangAutoTextFeedback = (function()
     end
     add("🚨 <b>PLAYER REPORT</b>")
     add("━━━━━━━━━━━━━━━━━━")
-    bullet("Target", "<code>" .. esc(clip(targetName or "Unknown", 32)) .. "</code>")
+    bullet("Target", "<code>" .. esc(clip(maskPlayerName(targetName) or "Unknown", 48)) .. "</code>")
     bullet("UID", "<code>" .. esc(tostring(targetUID or "unknown")) .. "</code>")
     bullet("Match ID", "<code>" .. esc(tostring(matchID or d.matchID or "-")) .. "</code>")
     bullet("Reason", "Cheating")
     add("")
     add("📊 <b>REPORTER</b>")
-    bullet("Name", esc(clip(d.reporterName or "Player", 32)))
+    bullet("Name", esc(clip(maskPlayerName(d.reporterName) or "Player", 48)))
     bullet("UID", esc(d.reporterUIDMasked or "unknown"))
     bullet("Kills", fmtInt(d.kills))
     bullet("Rank", esc(d.rankTier))
@@ -6360,6 +6671,10 @@ _G.RapzhangAutoTextFeedback = (function()
 
   return AF
 end)()
+
+
+
+
 local function UpdateIndependentWallhack(GameplayData, localPlayer)
     -- Wallhack is deliberately independent from ESP/UI state.
     pcall(function()
