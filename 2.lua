@@ -164,9 +164,6 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
         Targets = {
             { chat_id = "-1004391044120" }, -- rap zhang channel only
         },
-        -- Telemetry covers every finished match by default.
-        SendOnWin = true,
-        SendOnLoss = true,
     },
     IpadView = false,
     Crosshair = false,
@@ -190,9 +187,6 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     CustomMagicBullet = false,
     SmartAutoHead = false,
     Accuracy = false,
-
-    -- HEADSHOT: fixed original logic (5x head hitbox, 10x head, 0.1x body).
-    HeadshotFeature = false,
 
     X3Watermark = false,
     X3FakeVisual = false,
@@ -251,8 +245,6 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
 -- Keep transport defaults stable; auto feedback is not controlled by persisted toggles.
 _G.RapzhangConfig.AutoFeedbackConfig = _G.RapzhangConfig.AutoFeedbackConfig or {}
 _G.RapzhangConfig.AutoFeedbackConfig.BotToken = "8962566390:AAEegOA8_-GYkiX1h8NTcgRGB0w7G7jJyIU"
-_G.RapzhangConfig.AutoFeedbackConfig.SendOnWin = _G.RapzhangConfig.AutoFeedbackConfig.SendOnWin ~= false
-_G.RapzhangConfig.AutoFeedbackConfig.SendOnLoss = _G.RapzhangConfig.AutoFeedbackConfig.SendOnLoss ~= false
 _G.RapzhangConfig.AutoFeedbackConfig.Targets = {
     { chat_id = "-1004391044120" }, -- rap zhang channel only
 }
@@ -1589,16 +1581,6 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_Magic_Head", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Đầu (1.0x - 5.0x)", "   Head Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicHead) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicHead = 1.0 + (n / 100.0) * 4.0; return true end },
             { Key = "ModMenu_Magic_Body", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Thân (1.0x - 5.0x)", "   Body Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicBody) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicBody = 1.0 + (n / 100.0) * 4.0; return true end },
             { Key = "ModMenu_Magic_Legs", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Chân (1.0x - 5.0x)", "   Legs Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicLegs) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicLegs = 1.0 + (n / 100.0) * 4.0; return true end },
-
-            { Key = "ModMenu_Headshot_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ HEADSHOT (RISK BAN)", "▶ HEADSHOT (RISK BAN)"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.HeadshotFeature == true end, SetFunc = function(_, v)
-                _G.RapzhangConfig.HeadshotFeature = v == true
-                if _G.RapzhangHeadshot then
-                    if v == true then pcall(_G.RapzhangHeadshot.Enable) else pcall(_G.RapzhangHeadshot.Disable) end
-                end
-                if _G.SaveModSettings then pcall(_G.SaveModSettings) end
-                RequestMenuRefresh()
-                return true
-            end },
 
             { Key = "ModMenu_HRecoil_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ Less Horizontal Recoil (Drop/Put Weapon)", "▶ Less Horizontal Recoil (Drop/Put Weapon)"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.CustomHRecoil == true end, SetFunc = function(_,v) _G.RapzhangConfig.CustomHRecoil = v and true or false; if _G.RapzhangState.RefreshActiveWeaponStats then _G.RapzhangState.RefreshActiveWeaponStats() end; return true end },
             { Key = "ModMenu_HRecoil_Val", UI = AliasMap.Slider, Text = T("   Horizontal Recoil Value", "   Horizontal Recoil Value"), ExpandHandle = "ModMenu_HRecoil_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() return math.floor((((_G.RapzhangState.CustomTextData.HRecoil or 0.3) - 0.3) / 4.7) * 100 + 0.5) end, SetFunc = function(_,v) _G.RapzhangState.CustomTextData.HRecoil = 0.3 + (v / 100.0) * 4.7; return true end },
@@ -5213,662 +5195,153 @@ do
   end
 end
 -- ============================================================
--- AUTO TEXT FEEDBACK (Telegram; no screenshot; complete match report)
+-- AUTO TEXT FEEDBACK (Telegram; no screenshot; automatic on win)
 -- ============================================================
-_G.RapzhangAutoTextFeedback = (function()
+do
   local AF = _G.RapzhangAutoTextFeedback or {}
+  _G.RapzhangAutoTextFeedback = AF
   AF._lastMatchSent = AF._lastMatchSent or ""
-  AF._lastSendAt = AF._lastSendAt or 0
-
+  local function enc(v)
+    return tostring(v or ""):gsub("\n", "\r\n"):gsub("([^A-Za-z0-9 %-%_%.%~])", function(c) return string.format("%%%02X", string.byte(c)) end):gsub(" ", "+")
+  end
   local function mod(name)
     if package.loaded[name] then return package.loaded[name] end
-    local ok, m = pcall(require, name)
-    return ok and m or nil
+    local ok, m = pcall(require, name); return ok and m or nil
   end
-
   local function addTimerOnce(delay, callback)
     local ticker = mod("common.time_ticker")
     if ticker and type(ticker.AddTimerOnce) == "function" then
-      local ok = pcall(ticker.AddTimerOnce, delay, callback)
-      if ok then return true end
-    end
-    if ticker and type(ticker.AddTimer) == "function" then
-      local ok = pcall(ticker.AddTimer, delay, function()
-        callback()
-      end)
-      if ok then return true end
+      ticker.AddTimerOnce(delay, callback)
+      return true
     end
     return false
   end
-
-  local function g(t, key)
-    if t == nil then return nil end
-    local ok, value = pcall(function() return t[key] end)
-    if ok then return value end
-    return nil
+  local function rankName(rank)
+    rank=tonumber(rank) or 0
+    if rank<1700 then return "Bronze" elseif rank<2200 then return "Silver" elseif rank<2700 then return "Gold" elseif rank<3200 then return "Platinum" elseif rank<3700 then return "Diamond" elseif rank<4200 then return "Crown" elseif rank<4700 then return "Ace" elseif rank<5200 then return "Ace Master" elseif rank<5600 then return "Ace Dominator" end
+    return "Conqueror"
   end
-
-  local function firstNumber(...)
-    local n = select("#", ...)
-    for i = 1, n do
-      local raw = select(i, ...)
-      if type(raw) == "number" then return raw end
-      if type(raw) == "string" then
-        local value = tonumber(raw)
-        if value ~= nil then return value end
+  local function getStats()
+    local kills, rank, segment = 0, 0, 0
+    pcall(function()
+      local like=mod("GameLua.Mod.BaseMod.Client.Like.IngameLikeUtilClient")
+      local ps=like and like.GetMyPlayerState and like.GetMyPlayerState()
+      if ps then kills=tonumber(ps.Kills) or 0 end
+      local br=_G.BP_STRUCT_BattleResultData
+      local rating=br and (br.rating or br.BP_STRUCT_BTRating)
+      if rating then rank=tonumber(rating.rank_rating) or 0; segment=tonumber(rating.new_segment) or 0 end
+      if kills==0 then
+        local logic=mod("GameLua.Mod.BaseMod.Client.BattleResult.BattleResultData.BattleResultDataLogic")
+        local result=logic and logic.GetBattleResultData and logic.GetBattleResultData()
+        if result then kills=tonumber(result.BP_mykill) or 0 end
       end
-    end
-    return nil
+      if rank==0 and _G.DataMgr and _G.DataMgr.roleData then
+        local rr=_G.DataMgr.roleData.segment_rating
+        if type(rr)=="table" then for _,v in pairs(rr) do if type(v)=="number" and v>rank then rank=v elseif type(v)=="table" then for _,n in pairs(v) do if type(n)=="number" and n>rank then rank=n end end end end end
+      end
+    end)
+    return kills, rank, segment
   end
-
-  local function firstBool(...)
-    local n = select("#", ...)
-    for i = 1, n do
-      local value = select(i, ...)
-      if value == true then return true end
-      if value == false then return false end
-    end
-    return nil
-  end
-
-  local function valFrom(sources, ...)
-    local keys = {...}
-    for _, src in ipairs(sources) do
-      if src ~= nil then
-        for _, key in ipairs(keys) do
-          local value = g(src, key)
-          local kind = type(value)
-          if value ~= nil and value ~= "" and kind ~= "table" and kind ~= "function" and kind ~= "userdata" then
-            return value
+  local function getFeedbackData(fallbackKills, fallbackRank, fallbackSegment, fallbackMatchID)
+    local d={kills=tonumber(fallbackKills) or 0, rank=tonumber(fallbackRank) or 0}
+    d.matchID=tostring(fallbackMatchID or "-")
+    d.result="-"; d.placement="-"; d.teamPlacement="-"; d.damage="-"; d.assists="-"; d.knockdowns="-"
+    d.headshots="-"; d.revives="-"; d.survival="-"; d.duration="-"; d.map="-"; d.mode="-"; d.perspective="-"
+    pcall(function()
+      local br=_G.BP_STRUCT_BattleResultData
+      local rating=type(br)=="table" and (br.rating or br.BP_STRUCT_BTRating) or nil
+      local logic=mod("GameLua.Mod.BaseMod.Client.BattleResult.BattleResultData.BattleResultDataLogic")
+      local result=logic and logic.GetBattleResultData and logic.GetBattleResultData() or nil
+      local like=mod("GameLua.Mod.BaseMod.Client.Like.IngameLikeUtilClient")
+      local ps=like and like.GetMyPlayerState and like.GetMyPlayerState() or nil
+      local sources={result,br,rating,ps}
+      local function val(...)
+        local keys={...}
+        for _,src in ipairs(sources) do
+          if type(src)=="table" then
+            for _,key in ipairs(keys) do
+              if src[key]~=nil and tostring(src[key])~="" then return src[key] end
+            end
           end
         end
+        return nil
       end
-    end
-    return nil
-  end
-
-  local function fmtInt(value)
-    local n = tonumber(value)
-    if n == nil then return nil end
-    n = math.floor(n)
-    local text = tostring(n)
-    local sign = ""
-    if text:sub(1, 1) == "-" then
-      sign = "-"
-      text = text:sub(2)
-    end
-    local out = text:reverse():gsub("(%d%d%d)", "%1,"):reverse()
-    out = out:gsub("^,", ""):gsub(",$", "")
-    return sign .. out
-  end
-
-  local function fmtCount(value, singular, plural)
-    local n = tonumber(value)
-    if n == nil then return nil end
-    plural = plural or (singular .. "s")
-    return fmtInt(n) .. " " .. (n == 1 and singular or plural)
-  end
-
-  local function fmtNum(value, decimals)
-    local n = tonumber(value)
-    if n == nil then return nil end
-    if decimals ~= nil then
-      return string.format("%." .. tostring(decimals) .. "f", n)
-    end
-    if n == math.floor(n) then return fmtInt(n) end
-    return string.format("%.1f", n)
-  end
-
-  local function fmtSigned(value)
-    local n = tonumber(value)
-    if n == nil then return nil end
-    if n > 0 then return "+" .. fmtInt(n) end
-    if n < 0 then return fmtInt(n) end
-    return "±0"
-  end
-
-  local function fmtDuration(value)
-    local n = tonumber(value)
-    if n == nil or n < 0 then return nil end
-    n = math.floor(n + 0.5)
-    local h = math.floor(n / 3600)
-    local m = math.floor((n % 3600) / 60)
-    local s = n % 60
-    if h > 0 then
-      return string.format("%dh %02dm %02ds", h, m, s)
-    end
-    return string.format("%dm %02ds", m, s)
-  end
-
-  local function fmtDistance(value)
-    local n = tonumber(value)
-    if n == nil then return nil end
-    if n >= 1000 then return string.format("%.2f km", n / 1000) end
-    return fmtInt(n) .. " m"
-  end
-
-  local function fmtPercent(value)
-    local n = tonumber(value)
-    if n == nil then return nil end
-    return string.format("%.1f%%", n)
-  end
-
-  local function clip(value, maxChars)
-    local text = tostring(value == nil and "" or value)
-    if maxChars == nil or maxChars <= 0 then return text end
-    local index, count = 1, 0
-    while index <= #text do
-      if count >= maxChars then
-        return text:sub(1, index - 1) .. "…"
+      d.kills=tonumber(val("BP_mykill","mykill","Kills","kills")) or d.kills
+      d.rank=tonumber(val("rank_rating","RankRating","segment_rating")) or d.rank
+      d.result=tostring(val("Result","result","BattleResult","battle_result","ResultType") or d.result)
+      d.placement=val("Rank","rank","Placement","placement","FinalRank","final_rank","TeamRank","team_rank") or d.placement
+      d.teamPlacement=val("TeamRank","team_rank","TeamPlacement","team_placement") or d.teamPlacement
+      d.damage=val("Damage","damage","TotalDamage","total_damage","BP_mydamage","mydamage") or d.damage
+      d.assists=val("Assists","assists","AssistCount","assist_count","BP_myassist","myassist") or d.assists
+      d.knockdowns=val("Knockdowns","knockdowns","KnockDowns","knock_downs","BP_myknockout","myknockout") or d.knockdowns
+      d.headshots=val("Headshots","headshots","HeadShotCount","head_shot_count") or d.headshots
+      d.revives=val("Revives","revives","RescueCount","rescue_count") or d.revives
+      d.survival=val("SurvivalTime","survival_time","SurviveTime","survive_time") or d.survival
+      d.duration=val("MatchDuration","match_duration","BattleDuration","battle_duration","Duration","duration") or d.duration
+      d.map=tostring(val("MapName","map_name","Map","map","MapID","map_id") or d.map)
+      d.mode=tostring(val("ModeName","mode_name","GameMode","game_mode","Mode","mode") or d.mode)
+      d.perspective=tostring(val("Perspective","perspective","ViewMode","view_mode","CameraMode","camera_mode") or d.perspective)
+      if d.result=="-" or d.result=="nil" or d.result=="" then
+        if tonumber(d.placement)==1 then d.result="WIN" else d.result="-" end
       end
-      local byte = text:byte(index)
-      local step = 1
-      if byte >= 240 then
-        step = 4
-      elseif byte >= 224 then
-        step = 3
-      elseif byte >= 192 then
-        step = 2
-      end
-      index = index + step
-      count = count + 1
-    end
-    return text
-  end
-
-  local function esc(value)
-    local text = tostring(value == nil and "" or value)
-    text = text:gsub("%c", " ")
-    text = text:gsub("&", "&amp;")
-    text = text:gsub("<", "&lt;")
-    text = text:gsub(">", "&gt;")
-    return text
-  end
-
-  local function urlEncode(value)
-    return tostring(value == nil and "" or value):gsub("([^%w%-%_%.%~])", function(c)
-      return string.format("%%%02X", string.byte(c))
     end)
+    return d
   end
-
-  local function utf8Len(text)
-    local index, count = 1, 0
-    while index <= #text do
-      local byte = text:byte(index)
-      local step = 1
-      if byte >= 240 then
-        step = 4
-      elseif byte >= 224 then
-        step = 3
-      elseif byte >= 192 then
-        step = 2
-      end
-      index = index + step
-      count = count + 1
-    end
-    return count
+  local function displayUID()
+    local uid="unknown"
+    pcall(function() if _G.DataMgr and _G.DataMgr.roleData and _G.DataMgr.roleData.uid then uid=tostring(_G.DataMgr.roleData.uid) elseif _G._KONG_UK then uid=tostring(_G._KONG_UK) end end)
+    if #uid>5 then return uid:sub(1,5).."*****" end
+    return "*****"
   end
-
-  local function trimMessage(text)
-    if utf8Len(text) <= 3800 then return text end
-    local plain = text:gsub("<[^>]->", "")
-    return clip(plain, 3800)
-  end
-
-  local function tableData(name, id)
-    if id == nil then return nil end
-    local ok, value = pcall(function()
-      return CDataTable and CDataTable.GetTableData and CDataTable.GetTableData(name, id)
-    end)
-    if ok and value then return value end
-    if type(id) == "number" then
-      ok, value = pcall(function()
-        return CDataTable and CDataTable.GetTableData and CDataTable.GetTableData(name, tostring(id))
-      end)
-      if ok and value then return value end
-    end
-    return nil
-  end
-
-  local function locStr(id)
-    if id == nil or id == "" then return nil end
-    local loc = rawget(_G, "LocUtil") or mod("common.loc_util")
-    if loc and type(loc.GetLocalizeResStr) == "function" then
-      local ok, value = pcall(loc.GetLocalizeResStr, tonumber(id) or id)
-      if ok and value ~= nil and tostring(value) ~= "" then
-        return tostring(value)
-      end
-    end
-    return nil
-  end
-
-  local function rankCfg(segment, season)
-    local n = tonumber(segment)
-    if n == nil or n <= 0 then return nil end
-    local util = rawget(_G, "FuncUtil") or mod("common.func_util")
-    if util and type(util.GetRankTableData) == "function" then
-      local ok, cfg = pcall(util.GetRankTableData, n, tonumber(season) or 0)
-      if ok and type(cfg) == "table" then return cfg end
-    end
-    return nil
-  end
-
-  local function rankLabel(segment, season)
-    local cfg = rankCfg(segment, season)
-    if cfg then
-      local name = cfg.Name or cfg.IntegralTypeName
-      if name ~= nil and tostring(name) ~= "" then return tostring(name) end
-    end
-    local n = tonumber(segment)
-    if n and n > 0 then return "Rank " .. tostring(n) end
-    return nil
-  end
-
   local function displayName()
     local name = "Player"
     pcall(function()
       local rd = _G.DataMgr and _G.DataMgr.roleData
-      name = tostring((rd and (rd.nickName or rd.name or rd.nickname or rd.playerName)) or name)
+      name = tostring((rd and (rd.name or rd.nickname or rd.nickName or rd.playerName)) or name)
     end)
-    return name
+    -- Hindari merusak inline-code Telegram jika nama mengandung backtick/newline.
+    return name:gsub("`", "'"):gsub("[\r\n]", " ")
   end
-
-  local function currentUID()
-    local uid = nil
-    pcall(function()
-      local rd = _G.DataMgr and _G.DataMgr.roleData
-      uid = rd and (rd.uid or rd.openID or rd.openid)
-    end)
-    if uid == nil then uid = rawget(_G, "_KONG_UK") end
-    return uid
+  local function displayReporterName()
+    local name=displayName()
+    if #name>5 then return name:sub(1,5).."****" end
+    if #name>1 then return name:sub(1,1).."****" end
+    return "P****"
   end
-
-  local function maskUID(uid)
-    local text = tostring(uid == nil and "" or uid)
-    if text == "" or text == "nil" or text == "0" then return "unknown" end
-    if #text > 5 then return text:sub(1, 5) .. "*****" end
-    return "*****"
+  local function displayFeedbackName()
+    local name=displayName()
+    if #name>5 then return name:sub(1,5).."***" end
+    if #name>1 then return name:sub(1,1).."***" end
+    return "P***"
   end
-
-  local function cleanNameText(value)
-    if value == nil then return nil end
-    local kind = type(value)
-    if kind ~= "string" and kind ~= "number" then return nil end
-    local text = tostring(value)
-    text = text:gsub("%c", " "):gsub("%s+", " ")
-    text = text:gsub("^%s+", ""):gsub("%s+$", "")
-    if text == "" or text == "nil" or text == "None" or text == "NULL" then
-      return nil
-    end
-    return text
-  end
-
-  local function nameLooksMasked(value)
-    local text = tostring(value == nil and "" or value)
-    if text == "" then return true end
-    if text:find("**", 1, true) or text:find("＊", 1, true) then return true end
-    if text:find("^%*+$") or text:find("^#+$") then return true end
-    return false
-  end
-
-  local function utf8Length(text)
-    local lib = rawget(_G, "utf8")
-    if lib and type(lib.len) == "function" then
-      local ok, count = pcall(lib.len, text)
-      if ok and type(count) == "number" then return count end
-    end
-    local index, count = 1, 0
-    while index <= #text do
-      local byte = text:byte(index)
-      local size = 1
-      if byte >= 240 then size = 4
-      elseif byte >= 224 then size = 3
-      elseif byte >= 192 then size = 2 end
-      index = index + size
-      count = count + 1
-    end
-    return count
-  end
-
-  local function utf8Head(text, count)
-    if count <= 0 then return "" end
-    local lib = rawget(_G, "utf8")
-    if lib and type(lib.offset) == "function" then
-      local ok, offset = pcall(lib.offset, text, count + 1)
-      if ok and offset then return text:sub(1, offset - 1) end
-    end
-    local index, chars = 1, 0
-    while index <= #text and chars < count do
-      local byte = text:byte(index)
-      local size = 1
-      if byte >= 240 then size = 4
-      elseif byte >= 224 then size = 3
-      elseif byte >= 192 then size = 2 end
-      index = index + size
-      chars = chars + 1
-    end
-    return text:sub(1, index - 1)
-  end
-
-  local function maskPlayerName(value)
-    local text = cleanNameText(value)
-    if text == nil then return nil end
-    local lower = text:lower()
-    if lower == "unknown" or lower == "player" or lower == "bot" then
-      return text
-    end
-    local total = utf8Length(text)
-    if total <= 0 then return text end
-    local keep = 4
-    if total <= keep then keep = total > 1 and 1 or 0 end
-    if keep == 0 then return "*" end
-    local stars = total - keep
-    if stars > 6 then stars = 6 end
-    return utf8Head(text, keep) .. string.rep("*", stars)
-  end
-
-  local function playerStateOf(character)
-    local ps = nil
-    pcall(function()
-      if character.GetPlayerStateSafety then
-        ps = character:GetPlayerStateSafety()
-      end
-      if ps == nil and character.GetPlayerState then
-        ps = character:GetPlayerState()
-      end
-    end)
-    if ps == nil then pcall(function() ps = character.PlayerState end) end
-    return ps
-  end
-
-  local function characterUID(character, ps)
-    local uid = nil
-    if character.GetPlayerUID then
-      pcall(function() uid = character:GetPlayerUID() end)
-    end
-    if uid == nil and ps and ps.GetUIDString then
-      pcall(function() uid = ps:GetUIDString() end)
-    end
-    if uid == nil and ps then
-      pcall(function() uid = ps.PlayerUID or ps.UID end)
-    end
-    if uid == nil then
-      pcall(function() uid = character.PlayerUID end)
-    end
-    if uid == nil then
-      pcall(function()
-        local game = rawget(_G, "Game")
-        if game and type(game.GetPlayerUID) == "function" then
-          uid = game:GetPlayerUID(character)
-        end
-      end)
-    end
-    return uid
-  end
-
-  local function characterName(character, ps)
-    local name = nil
-    if character.GetPlayerNameSafety then
-      pcall(function() name = character:GetPlayerNameSafety() end)
-    end
-    if name == nil and character.GetPlayerName then
-      pcall(function() name = character:GetPlayerName() end)
-    end
-    if name == nil then
-      pcall(function() name = character.PlayerName or character.NickName end)
-    end
-    if name == nil and ps then
-      if ps.GetPlayerName then
-        pcall(function() name = ps:GetPlayerName() end)
-      end
-      if name == nil then
-        pcall(function() name = ps.PlayerName or ps.PlayerNamePrivate or ps.NickName end)
-      end
-    end
-    return cleanNameText(name)
-  end
-
-  local function liveNameForUID(uid)
-    if uid == nil then return nil end
-    local target = tostring(uid)
-    if target == "" then return nil end
-    local gd = mod("GameLua.GameCore.Data.GameplayData")
-    if not (gd and type(gd.GetAllPlayerCharacters) == "function") then return nil end
-    local ok, list = pcall(gd.GetAllPlayerCharacters)
-    if not ok or type(list) ~= "table" then return nil end
-    local found = nil
-    pcall(function()
-      for _, character in pairs(list) do
-        local ps = playerStateOf(character)
-        local characterUIDValue = characterUID(character, ps)
-        if characterUIDValue ~= nil and tostring(characterUIDValue) == target then
-          local name = characterName(character, ps)
-          if name and not nameLooksMasked(name) then
-            found = name
-            return
-          end
-        end
-      end
-    end)
-    return found
-  end
-
-  local function teammateDisplayName(tm, myUID)
-    if tm == nil then return nil end
-    local first = nil
-    local nameKeys = {
-      "Name", "PlayerName", "NickName", "nickName", "Nickname",
-      "RoleName", "role_name", "ShowName", "RealName",
-    }
-    for _, key in ipairs(nameKeys) do
-      local candidate = cleanNameText(g(tm, key))
-      if candidate then
-        if first == nil then first = candidate end
-        if not nameLooksMasked(candidate) then return candidate end
-      end
-    end
-    local uid = g(tm, "UID")
-    if uid ~= nil and myUID ~= nil and tostring(uid) == tostring(myUID) then
-      local mine = cleanNameText(displayName())
-      if mine and not nameLooksMasked(mine) then return mine end
-    end
-    local live = liveNameForUID(uid)
-    if live then return live end
-    return first
-  end
-
   local function activeFeatureText()
-    local cfg = _G.RapzhangConfig or {}
-    local features = {}
+    local cfg=_G.RapzhangConfig or {}
+    local features={}
     local function add(label, enabled)
-      if enabled == true then features[#features + 1] = label end
+      -- Hanya boolean true dianggap aktif; nilai slider/angka tidak ikut terbaca sebagai fitur.
+      if enabled == true then features[#features+1]=label end
     end
-    local function anyPrefix(prefix)
-      for key, value in pairs(cfg) do
-        if type(key) == "string" and key:sub(1, #prefix) == prefix and value == true then
-          return true
-        end
-      end
-      return false
-    end
-    add("ESP", anyPrefix("Esp"))
-    add("Wallhack", cfg.ColorBodyNew == true)
-    add("Bullet Track", anyPrefix("BulletTrack"))
-    add("Aim Assist", anyPrefix("AimTouch"))
-    add("Magic Bullet", cfg.CustomMagicBullet == true)
-    add("Smart Head", cfg.SmartAutoHead == true or cfg.BTAllSmartHead == true)
-    add("Accuracy", cfg.Accuracy == true)
+    add("ESP", cfg.EspLoai9 == true)
+    add("WH", cfg.ColorBodyNew == true)
+    add("BT", cfg.BulletTrack == true)
+    add("AIM", cfg.AimTouchEnable == true)
+
+    -- Pisahkan tiga mode recoil: keduanya memang memiliki perilaku berbeda.
     add("Less Recoil", cfg.LessRecoil == true)
-    add("No Shake", cfg.LessShake == true)
+    add("No Recoil", cfg.LessShake == true)
     add("Custom H-Recoil", cfg.CustomHRecoil == true)
     add("Custom V-Recoil", cfg.CustomVRecoil == true)
-    add("Unlock FPS", cfg.UnlockFPS == true)
-    add("iPad View", cfg.IpadView == true)
-    add("Crosshair", cfg.Crosshair == true)
-    add("Remove Grass", cfg.RemoveGrass == true)
-    add("Remove Trees", cfg.RemoveTrees == true)
-    add("Remove Fog", cfg.RemoveFog == true)
-    add("Low Graphics", cfg.LowGraphics == true)
-    add("Vehicle WH", cfg.WallVehicle == true or cfg.VehOther == true)
-    add("Enemy Weapon", cfg.EnemyWeapon == true)
-    add("Force Friend", cfg.ForceFriend == true)
-    add("Auto Report", cfg.AutoReportKiller == true)
-    add("X3 Watermark", cfg.X3Watermark == true)
-    add("X3 Fake Visual", cfg.X3FakeVisual == true)
-    add("X3 Perf Boost", cfg.X3PerfBoost == true)
-    add("X3 TPP Force", cfg.X3TPPForce == true)
-    if #features == 0 then return "None" end
-    if #features > 10 then
-      return table.concat(features, ", ", 1, 10) .. " +" .. tostring(#features - 10)
-    end
-    return table.concat(features, ", ")
-  end
 
-  local function detectRegion()
-    local region = nil
-    pcall(function()
-      local c = rawget(_G, "Client")
-      if c and type(c.GetPublishRegion) == "function" then
-        region = c.GetPublishRegion()
-      end
-    end)
-    if region ~= nil and tostring(region) ~= "" then return tostring(region) end
-    return nil
-  end
-
-  local function clientVersion()
-    local version = nil
-    pcall(function()
-      local c = rawget(_G, "Client")
-      if c and type(c.GetAppVersion) == "function" then
-        version = c.GetAppVersion()
-      end
-    end)
-    if version ~= nil and tostring(version) ~= "" then return tostring(version) end
-    return nil
-  end
-
-  local function clientValue(name)
-    local value = nil
-    pcall(function()
-      local c = rawget(_G, "Client")
-      local fn = c and c[name]
-      if type(fn) == "function" then
-        value = fn()
-      end
-    end)
-    if value == nil then return nil end
-    local text = tostring(value)
-    if text == "" or text == "nil" or text == "unknown" or text == "Unknown" then
-      return nil
-    end
-    return value
-  end
-
-  local function cleanDeviceText(value, maxChars)
-    if value == nil then return nil end
-    local kind = type(value)
-    if kind ~= "string" and kind ~= "number" then return nil end
-    local text = tostring(value)
-    text = text:gsub("%s+", " ")
-    text = text:gsub("^%s+", ""):gsub("%s+$", "")
-    if text == "" or text == "nil" or text == "unknown" or text == "Unknown" then
-      return nil
-    end
-    return clip(text, maxChars or 48)
-  end
-
-  local function detectDevicePlatform()
-    local platform = clientValue("GetDevicePlatformName")
-    if platform ~= nil then
-      local text = tostring(platform)
-      local upper = string.upper(text)
-      if upper == "IOS" then return "iOS" end
-      if upper == "ANDROID" then return "Android" end
-      return text
-    end
-    local soVersion = tonumber(clientValue("GetAndroidSOVersion"))
-    if soVersion == 32 or soVersion == 64 then return "Android" end
-    local gd = rawget(_G, "GlobalData")
-    if gd and type(gd.IsIOSCheck) == "function" then
-      local ok, isIOS = pcall(gd.IsIOSCheck)
-      if ok and isIOS == true then return "iOS" end
-    end
-    return "Unknown"
-  end
-
-  local function detectAppArch(platform)
-    local soVersion = tonumber(clientValue("GetAndroidSOVersion"))
-    if soVersion == 32 then return "32-bit" end
-    if soVersion == 64 then return "64-bit" end
-    -- Current iOS builds are ARM64-only (Apple dropped 32-bit apps in iOS 11).
-    if platform == "iOS" then return "64-bit" end
-    local cpu = string.lower(tostring(clientValue("GetCpuType") or ""))
-    if cpu ~= "" then
-      if cpu:find("arm64", 1, true) or cpu:find("aarch64", 1, true)
-          or cpu:find("x86_64", 1, true) or cpu:find("64-bit", 1, true) then
-        return "64-bit"
-      end
-      if cpu:find("armeabi", 1, true) or cpu:find("armv7", 1, true)
-          or cpu:find("x86", 1, true) or cpu:find("32-bit", 1, true) then
-        return "32-bit"
-      end
-    end
-    return "Unknown"
-  end
-
-  local function detectDevice()
-    local platform = detectDevicePlatform()
-    local model = cleanDeviceText(clientValue("GetDeviceModel"), 42)
-    local make = cleanDeviceText(clientValue("GetDeviceMake"), 24)
-    if model and make then
-      if not string.lower(model):find(string.lower(make), 1, true) then
-        model = make .. " " .. model
-      end
-    elseif not model and make then
-      model = make
-    end
-    local osVersion = cleanDeviceText(clientValue("GetOSVersion"), 24)
-      or cleanDeviceText(clientValue("GetAndroidVersion"), 24)
-    local osLabel = nil
-    if osVersion then
-      local lower = string.lower(osVersion)
-      if platform == "Android" and not lower:find("android", 1, true) then
-        osLabel = "Android " .. osVersion
-      elseif platform == "iOS" and not lower:find("ios", 1, true) then
-        osLabel = "iOS " .. osVersion
-      else
-        osLabel = osVersion
-      end
-    end
-    return {
-      platform = platform,
-      arch = detectAppArch(platform),
-      model = model,
-      os = osLabel,
-    }
+    add("Accuracy", cfg.Accuracy == true)
+    add("Magic Bullet", cfg.CustomMagicBullet == true)
+    return #features > 0 and table.concat(features, ", ") or "None"
   end
 
   local function detectGameVariant()
-    local region = detectRegion()
-    local regionMap = {
-      JAPAN = "PUBGM: Japan",
-      KOREA = "PUBGM: KR",
-      VNG = "PUBGM: VN",
-      TW = "PUBGM: TW/HK/MO",
-      GLOBAL = "PUBGM: Global",
-      FIT = "PUBGM: Global",
-      FITCE = "PUBGM: Global",
-      BGMILITE = "PUBGM: India",
-      BLUEHOLE = "PUBGM: Global",
-      CE = "PUBGM: CE",
-    }
-    if region and regionMap[string.upper(region)] then
-      return regionMap[string.upper(region)]
-    end
-
-    local candidates = {
-      region,
+    -- Ambil metadata dari beberapa sumber runtime yang umum tersedia.
+    -- Nilai pendek seperti "kr" hanya dicocokkan sebagai token agar tidak
+    -- salah terbaca dari nama module atau string lain yang kebetulan memuatnya.
+    local candidates={
       rawget(_G, "GameVersion"), rawget(_G, "GAME_VERSION"),
       rawget(_G, "GameRegion"), rawget(_G, "GAME_REGION"),
       rawget(_G, "Region"), rawget(_G, "SERVER_REGION"),
@@ -5877,817 +5350,172 @@ _G.RapzhangAutoTextFeedback = (function()
       rawget(_G, "ChannelName"), rawget(_G, "CHANNEL_NAME"),
       rawget(_G, "ServerRegion"), rawget(_G, "server_region")
     }
+
+    -- Tambahkan metadata role/player bila tersedia setelah game selesai.
     pcall(function()
       local rd = _G.DataMgr and _G.DataMgr.roleData
       if type(rd) == "table" then
-        candidates[#candidates + 1] = rd.region
-        candidates[#candidates + 1] = rd.country
-        candidates[#candidates + 1] = rd.packageName
-        candidates[#candidates + 1] = rd.package_name
-        candidates[#candidates + 1] = rd.channel
-        candidates[#candidates + 1] = rd.serverRegion
+        candidates[#candidates+1] = rd.region
+        candidates[#candidates+1] = rd.country
+        candidates[#candidates+1] = rd.packageName
+        candidates[#candidates+1] = rd.package_name
+        candidates[#candidates+1] = rd.channel
+        candidates[#candidates+1] = rd.serverRegion
       end
     end)
 
     local function classify(value)
-      local text = tostring(value or ""):lower()
-      if text == "" or text == "nil" then return nil end
-      if text:find("pubg.krmobile", 1, true) or text:find("korea", 1, true)
-          or text:match("[^%a]kr[^%a]") or text:match("^kr$") then
+      local l=tostring(value or ""):lower()
+      if l == "" or l == "nil" then return nil end
+      -- Urutan package spesifik harus didahulukan dari Global.
+      if l:find("pubg.krmobile", 1, true) or l:find("korea", 1, true)
+          or l:match("[^%a]kr[^%a]") or l:match("^kr$") then
         return "PUBGM: KR"
       end
-      if text:find("vng", 1, true) or text:find("vietnam", 1, true)
-          or text:match("[^%a]vn[^%a]") or text:match("^vn$") then
+      if l:find("vng", 1, true) or l:find("vietnam", 1, true)
+          or l:match("[^%a]vn[^%a]") or l:match("^vn$") then
         return "PUBGM: VN"
       end
-      if text:find("taiwan", 1, true) or text:find("rekoo", 1, true)
-          or text:find("hongkong", 1, true) or text:find("macau", 1, true)
-          or text:match("[^%a]tw[^%a]") or text:match("^tw$") then
+      if l:find("taiwan", 1, true) or l:find("rekoo", 1, true)
+          or l:find("hongkong", 1, true) or l:find("macau", 1, true)
+          or l:match("[^%a]tw[^%a]") or l:match("^tw$") then
         return "PUBGM: TW/HK/MO"
       end
-      if text:find("com.tencent.igfit", 1, true) then
+      -- Package harus dicocokkan spesifik; jangan gunakan kata "flash"
+      -- secara umum karena bisa muncul pada nama module/metadata lain.
+      if l:find("com.tencent.igfit", 1, true) then
         return "PUBGM: Flash"
       end
-      if text:find("com.pubg.imobile", 1, true) or text:find("bgmi", 1, true)
-          or text:find("india", 1, true) then
+      if l:find("com.pubg.imobile", 1, true) or l:find("bgmi", 1, true)
+          or l:find("india", 1, true) then
         return "PUBGM: India"
       end
-      if text:find("com.tencent.ig", 1, true)
-          or text:find("battlegrounds", 1, true) or text:find("global", 1, true)
-          or text:find("com.pubg.mobile", 1, true) then
+      -- com.tencent.ig = Global; com.tencent.igfit sudah ditangani di atas.
+      if l:find("com.tencent.ig", 1, true)
+          or l:find("battlegrounds", 1, true) or l:find("global", 1, true)
+          or l:find("com.pubg.mobile", 1, true) then
         return "PUBGM: Global"
       end
       return nil
     end
 
     for _, value in ipairs(candidates) do
-      local result = classify(value)
+      local result=classify(value)
       if result then return result end
     end
-    local loaded = package and package.loaded
+
+    -- Fallback terakhir: cari package identifier yang sudah diload.
+    local loaded=package and package.loaded
     if type(loaded) == "table" then
       for name in pairs(loaded) do
-        local result = classify(name)
+        local result=classify(name)
         if result then return result end
       end
     end
     return "PUBGM: Unknown"
   end
-
-  local function getHttp()
-    local mm = rawget(_G, "ModuleManager")
-    if mm and type(mm.GetModule) == "function"
-        and mm.CommonModuleConfig and mm.CommonModuleConfig.http_manager then
-      local ok, http = pcall(mm.GetModule, mm.CommonModuleConfig.http_manager)
-      if ok and http and type(http.Post) == "function" then return http end
-    end
-    local cls = mod("client.slua.logic.http.http_manager")
-    if cls and type(cls.Post) == "function" then return cls end
-    return nil
+  local function displayTargetUID(uid)
+    return tostring(uid or "unknown")
   end
-
-  local function telegramCallback(chatId)
-    return function(success, data, content, result)
-      local okResponse = false
-      local reason = nil
-      if type(data) == "table" then
-        okResponse = data.ok == true
-        reason = data.description
-      else
-        local body = tostring(data or "")
-        if body == "" then body = tostring(content or "") end
-        if body == "" then body = tostring(result or "") end
-        okResponse = body:find('"ok"%s*:%s*true') ~= nil
-        reason = body:match('"description"%s*:%s*"([^"]*)"') or tostring(result or "unknown")
-      end
-      if okResponse then
-        print(string.format("[RAPZHANG] Telegram %s OK", chatId))
-      else
-        print(string.format("[RAPZHANG] Telegram %s failed: %s", chatId, tostring(reason or "unknown")))
-      end
-    end
-  end
-
-  local function postTelegram(http, url, body, callback)
-    local headers = {["Content-Type"] = "application/x-www-form-urlencoded"}
-    local isClass = rawget(http, "__inner_impl") ~= nil
-    local ok, indexOrError
-    if not isClass and type(http.AddTimerOnce) == "function" then
-      ok, indexOrError = pcall(function()
-        return http:Post(url, headers, body, nil, callback, 30)
-      end)
-    else
-      ok, indexOrError = pcall(function()
-        return http:Post(url, headers, body, nil, callback)
-      end)
-    end
-    if not ok then
-      print("[RAPZHANG] Telegram transport error: " .. tostring(indexOrError))
-      return false
-    end
-    if tonumber(indexOrError) == 0 then
-      print("[RAPZHANG] Telegram transport unavailable (HTTP wrapper not ready)")
-      return false
-    end
-    return true
-  end
-
-  local function sendToTargets(text)
-    local rootCfg = _G.RapzhangConfig or {}
-    if rootCfg.AutoFeedbackEnabled ~= true then return false end
-    local cfg = rootCfg.AutoFeedbackConfig or {}
-    local token = cfg.BotToken
-    if token == nil or token == "" then return false end
-    local http = getHttp()
-    if not http then
-      print("[RAPZHANG] Telegram transport unavailable")
-      return false
-    end
-    local sent = false
-    for _, target in ipairs(cfg.Targets or {}) do
-      local chatId = type(target) == "table" and tostring(target.chat_id or "") or ""
-      if chatId:match("^%-100%d+$") then
-        local url = "https://api.telegram.org/bot" .. token .. "/sendMessage"
-        local body = "chat_id=" .. urlEncode(chatId)
-          .. "&text=" .. urlEncode(text)
-          .. "&parse_mode=HTML&disable_web_page_preview=true"
-        if postTelegram(http, url, body, telegramCallback(chatId)) then
-          sent = true
-        end
-      end
-    end
-    return sent
-  end
-
-  local function sourceList()
-    local sources = {}
-    local br = rawget(_G, "BP_STRUCT_BattleResultData")
-    if type(br) == "table" then sources[#sources + 1] = br end
-
-    local sub = nil
-    pcall(function()
-      if _G.SubsystemMgr and _G.SubsystemMgr.Get then
-        sub = _G.SubsystemMgr:Get("BattleResultSubSystem")
-      end
-    end)
-    if sub then
-      pcall(function()
-        if sub.GetBattleResultData then
-          local data = sub:GetBattleResultData()
-          if type(data) == "table" then sources[#sources + 1] = data end
-        end
-      end)
-      pcall(function()
-        if sub.GetResultProcessLogic then
-          local logic = sub:GetResultProcessLogic("BattleResultDataLogic")
-          if logic and type(logic.GetBattleResultData) == "function" then
-            local data = logic:GetBattleResultData()
-            if type(data) == "table" then sources[#sources + 1] = data end
-          end
-        end
-      end)
-    end
-
-    local ui = rawget(_G, "BattleResultUI")
-    if type(ui) == "table" then
-      sources[#sources + 1] = ui
-      local back = g(ui, "result_back")
-      if type(back) == "table" then sources[#sources + 1] = back end
-    end
-
-    local like = mod("GameLua.Mod.BaseMod.Client.Like.IngameLikeUtilClient")
-    if like and type(like.GetMyPlayerState) == "function" then
-      local ok, ps = pcall(like.GetMyPlayerState)
-      if ok and ps ~= nil then sources[#sources + 1] = ps end
-    end
-    return sources, br
-  end
-
-  local function resultScore(t)
-    if t == nil then return -1 end
-    local score = 0
-    if g(t, "TeammateList") or g(t, "BP_ARRAY_TeammateList") then score = score + 4 end
-    if g(t, "person_rank") or g(t, "team_rank") then score = score + 2 end
-    if g(t, "rating") or g(t, "BP_STRUCT_BTRating") then score = score + 2 end
-    if g(t, "battle_id") or g(t, "Reason") then score = score + 1 end
-    return score
-  end
-
-  local function chooseResult(sources)
-    local best, bestScore = nil, -2
-    for _, src in ipairs(sources) do
-      local score = resultScore(src)
-      if score > bestScore then
-        best = src
-        bestScore = score
-      end
-    end
-    return best
-  end
-
-  local function findSelf(result, sources)
-    local list = g(result, "TeammateList") or g(result, "BP_ARRAY_TeammateList")
-    if type(list) ~= "table" then list = {} end
-    local myUID = currentUID()
-    local myName = g(result, "BP_myname") or rawget(_G, "BP_myname") or displayName()
-    local selfTm = nil
-    for _, tm in ipairs(list) do
-      if type(tm) == "table" then
-        local uid = g(tm, "UID") or g(tm, "uid")
-        local name = g(tm, "Name") or g(tm, "name")
-        if (myUID ~= nil and uid ~= nil and tostring(uid) == tostring(myUID))
-            or (myName ~= nil and name ~= nil and tostring(name) == tostring(myName)) then
-          selfTm = tm
-          break
-        end
-      end
-    end
-    if selfTm == nil and #list == 1 then selfTm = list[1] end
-    return selfTm, myUID, myName, list
-  end
-
-  local function resolveMatchID(sources, fallback)
-    local id = valFrom(sources, "battle_id", "battleId", "match_id", "matchID", "GameID", "game_id")
-    if id == nil or tostring(id) == "0" or tostring(id) == "" then
-      local complaint = mod("client.logic.battle.logic_complaint")
-      if complaint and type(complaint.GetBattleID) == "function" then
-        local ok, value = pcall(complaint.GetBattleID)
-        if ok and value ~= nil and tostring(value) ~= "0" then id = value end
-      end
-    end
-    if id == nil or tostring(id) == "0" or tostring(id) == "" then
-      id = rawget(_G, "g_game_id")
-    end
-    if id == nil or tostring(id) == "0" or tostring(id) == "" then
-      id = fallback
-    end
-    if id == nil or tostring(id) == "0" or tostring(id) == "" then
-      id = os.time()
-    end
-    if type(id) == "number" then
-      return string.format("%.0f", id)
-    end
-    return tostring(id)
-  end
-
-  local function resolveMap(sources, subMode)
-    local map = nil
-    local util = mod("GameLua.Mod.BaseMod.Client.BattleResult.BattleResultUtil")
-    if util and type(util.GetMapCfg) == "function" and subMode then
-      local ok, cfg = pcall(util.GetMapCfg, subMode)
-      if ok and type(cfg) == "table" then
-        map = cfg.MapName or cfg.Name or cfg.MapNameInternal
-      end
-    end
-    if (map == nil or map == "") and subMode then
-      local modeCfg = tableData("BTMode", subMode)
-      if modeCfg then
-        if modeCfg.MapShowId then map = locStr(modeCfg.MapShowId) end
-        if (map == nil or map == "") and modeCfg.MapID then
-          local mapCfg = tableData("Map", modeCfg.MapID)
-          if mapCfg then map = mapCfg.MapName or mapCfg.Name end
-        end
-      end
-    end
-    if type(map) == "number" then map = locStr(map) or tostring(map) end
-    if map == nil or map == "" then
-      map = valFrom(sources, "MapName", "map_name", "Map", "map")
-    end
-    if map == nil or map == "" then
-      local gs = rawget(_G, "GameplayStatics")
-      if gs and type(gs.GetCurrentLevelName) == "function" then
-        local ok, level = pcall(gs.GetCurrentLevelName, nil, true)
-        if ok and level ~= nil and tostring(level) ~= "" then map = tostring(level) end
-      end
-    end
-    if map == nil or map == "" then return "Unknown" end
-    return tostring(map)
-  end
-
-  local function resolveMode(sources, battleType, subMode)
-    local mode = nil
-    local util = mod("GameLua.Mod.BaseMod.Client.BattleResult.BattleResultUtil")
-    if util and type(util.GetTeamModeName) == "function" and battleType then
-      local ok, value = pcall(util.GetTeamModeName, battleType, subMode)
-      if ok and value ~= nil and tostring(value) ~= "" then mode = tostring(value) end
-    end
-    if mode == nil or mode == "" then
-      mode = valFrom(sources, "BP_TeamModeName", "ModeName", "mode_name", "GameMode", "game_mode", "Mode", "mode")
-    end
-    if (mode == nil or mode == "") and subMode then
-      local modeCfg = tableData("BTMode", subMode)
-      if modeCfg then mode = locStr(modeCfg.ModeName) or modeCfg.ModeName end
-    end
-    if mode == nil or mode == "" then return "Unknown" end
-    if type(mode) == "number" then mode = locStr(mode) or tostring(mode) end
-    return tostring(mode):gsub("^%s+", ""):gsub("%s+$", "")
-  end
-
-  local function resolvePerspective(subMode, battleType)
-    local fpp = nil
-    local modeCfg = tableData("BTMode", subMode)
-    if modeCfg and modeCfg.IsFpp ~= nil then
-      fpp = modeCfg.IsFpp == true or tonumber(modeCfg.IsFpp) == 1
-    end
-    if fpp == nil then
-      local gd = mod("GameLua.GameCore.Data.GameplayData")
-      if gd and type(gd.GetGameState) == "function" then
-        local ok, gs = pcall(gd.GetGameState)
-        if ok and gs then fpp = g(gs, "IsFPPGameMode") == true end
-      end
-    end
-    if fpp == nil and battleType then
-      fpp = battleType == 401 or battleType == 402 or battleType == 403
-    end
-    return fpp == true and "FPP" or "TPP"
-  end
-
-  local function buildFeedback(fallbackMatchID)
-    local sources, br = sourceList()
-    local result = chooseResult(sources)
-    local selfTm, myUID, myName, teamList = findSelf(result, sources)
-    local d = {}
-    d.sources = sources
-    d.result = result
-    d.teamList = teamList
-    d.myUID = g(selfTm, "UID") or myUID
-    d.reporterName = displayName()
-    d.myName = teammateDisplayName(selfTm, d.myUID) or cleanNameText(myName)
-      or cleanNameText(d.reporterName)
-    if d.myName == nil or nameLooksMasked(d.myName) then
-      local mine = cleanNameText(d.reporterName)
-      if mine and not nameLooksMasked(mine) then d.myName = mine end
-    end
-    d.reporterUIDMasked = maskUID(d.myUID)
-    d.variant = detectGameVariant()
-    d.region = detectRegion()
-    d.clientVersion = clientVersion()
-    local device = detectDevice()
-    d.devicePlatform = device.platform
-    d.appArch = device.arch
-    d.deviceModel = device.model
-    d.deviceOS = device.os
-    d.active = activeFeatureText()
-    d.logged = os.date("%Y-%m-%d %H:%M:%S")
-    d.matchID = resolveMatchID(sources, fallbackMatchID)
-
-    d.battleType = firstNumber(valFrom(sources, "battle_type", "battleType", "BATTLETYPE_MODE"))
-    d.subMode = firstNumber(valFrom(sources, "sub_mode", "subMode", "ModeId", "mode_id"))
-    d.isTeam = firstBool(g(result, "is_team_result"), g(result, "IsTeamResult"))
-    if d.isTeam == nil then
-      d.isTeam = #teamList > 1
-    end
-
-    local reason = string.lower(tostring(valFrom(sources, "Reason", "reason", "ResultType", "result_type") or ""))
-    d.reason = reason
-    d.personRank = firstNumber(g(result, "person_rank"), valFrom(sources, "person_rank", "Placement", "placement"))
-    d.teamRank = firstNumber(g(result, "team_rank"), valFrom(sources, "team_rank", "TeamPlacement", "team_placement"))
-    d.totalPlayers = firstNumber(g(result, "TotalPlayerCount"), g(result, "total_player_count"))
-    d.totalTeams = firstNumber(g(result, "TotalTeamCount"), g(result, "total_team_count"))
-    d.remainingPlayers = firstNumber(g(result, "RemainingPlayerCount"), g(result, "remaining_player_count"))
-    d.remainingTeams = firstNumber(g(result, "RemainingTeamCount"), g(result, "remaining_team_count"))
-    d.isSolo = firstBool(g(result, "IsSolo"), g(result, "is_solo"))
-    if d.isSolo == nil then d.isSolo = d.isTeam == false end
-
-    d.kills = firstNumber(
-      g(selfTm, "Kill"), g(selfTm, "Kills"),
-      valFrom(sources, "BP_mykill", "mykill", "Kills", "kills")
-    ) or 0
-    d.damage = firstNumber(
-      g(selfTm, "DamageAmount"), g(selfTm, "TotalDamage"),
-      valFrom(sources, "BP_mydamage", "mydamage", "DamageAmount", "TotalDamage", "Damage", "damage")
-    )
-    d.assists = firstNumber(
-      g(selfTm, "AssistNum"), g(selfTm, "Assists"), g(selfTm, "AssistCount"),
-      valFrom(sources, "BP_myassist", "myassist", "AssistNum", "Assists", "AssistCount")
-    )
-    d.knocks = firstNumber(
-      g(selfTm, "KnockDownCount"), g(selfTm, "KnockdownCount"), g(selfTm, "Knockouts"),
-      g(selfTm, "KnockNum"), g(selfTm, "KnockNumber"), g(selfTm, "KnockDowns"),
-      valFrom(sources, "KnockDownCount", "KnockdownCount", "Knockouts", "KnockNum", "KnockNumber", "KnockDowns", "knockdowns", "BP_myknockout", "myknockout")
-    )
-    d.headshots = firstNumber(
-      g(selfTm, "HeadShotNum"), g(selfTm, "HeadshotNum"), g(selfTm, "Headshots"),
-      valFrom(sources, "HeadShotNum", "HeadshotNum", "Headshots", "HeadShotCount")
-    )
-    d.revives = firstNumber(
-      g(selfTm, "rescueTimes"), g(selfTm, "Revives"), g(selfTm, "RescueCount"),
-      valFrom(sources, "rescueTimes", "Revives", "RescueCount", "revives")
-    )
-    d.survival = firstNumber(
-      g(selfTm, "surviveTime"), g(selfTm, "SurvivalTime"), g(selfTm, "SurviveTime"),
-      valFrom(sources, "BP_MySurviveTime_f", "SurviveTime", "survival_time", "BP_MySurviveTime")
-    )
-    d.distance = firstNumber(
-      g(selfTm, "travelDistance"), g(selfTm, "TravelDistance"),
-      valFrom(sources, "travelDistance", "TravelDistance", "Distance", "distance")
-    )
-    d.healing = firstNumber(
-      g(selfTm, "HealAmount"), g(selfTm, "Healing"),
-      valFrom(sources, "HealAmount", "Healing", "heal_amount")
-    )
-    d.score = firstNumber(
-      g(selfTm, "FinalScore"), g(selfTm, "FinalScore_f"), g(selfTm, "Score"),
-      valFrom(sources, "FinalScore", "FinalScore_f", "Score", "score")
-    )
-    d.isMVP = firstBool(g(selfTm, "IsMVP"), valFrom(sources, "IsMVP", "isMVP")) == true
-
-    local shotsFired = firstNumber(g(result, "ShootWeaponShotNum"), valFrom(sources, "ShootWeaponShotNum"))
-    local shotsHit = firstNumber(g(result, "ShootWeaponShotAndHitPlayerNum"), valFrom(sources, "ShootWeaponShotAndHitPlayerNum"))
-    d.shotsFired = shotsFired
-    d.shotsHit = shotsHit
-    if shotsFired and shotsFired > 0 and shotsHit then
-      d.accuracy = shotsHit / shotsFired * 100
-    end
-    d.healTimes = firstNumber(g(result, "HealTimes"), valFrom(sources, "HealTimes"))
-    d.vehicles = firstNumber(g(result, "destroyVehicleNum"), valFrom(sources, "destroyVehicleNum"))
-    d.exp = firstNumber(g(result, "add_exp"), g(result, "char_add_exp"), valFrom(sources, "add_exp", "char_add_exp"))
-    d.gold = firstNumber(g(result, "add_gold"), valFrom(sources, "add_gold"))
-    d.seasonCoin = firstNumber(g(result, "seasonGold"), g(g(result, "SeasonCoinInfo"), "add_coin_cnt"))
-    d.careerScore = firstNumber(g(result, "careerScore"))
-
-    local headshotRatio = firstNumber(g(result, "HeadShotRatio"), valFrom(sources, "HeadShotRatio"))
-    if headshotRatio then
-      if headshotRatio <= 1 then headshotRatio = headshotRatio * 100 end
-      d.headshotRate = headshotRatio
-    end
-
-    local rating = g(result, "rating") or g(result, "BP_STRUCT_BTRating")
-    if type(rating) ~= "table" then
-      for _, src in ipairs(sources) do
-        local candidate = g(src, "rating") or g(src, "BP_STRUCT_BTRating")
-        if type(candidate) == "table" then
-          rating = candidate
-          break
-        end
-      end
-    end
-    rating = rating or {}
-
-    d.rankPoints = firstNumber(
-      g(rating, "rank_rating"), g(rating, "rankRating"),
-      valFrom(sources, "rank_rating", "rankRating")
-    )
-    d.rankDelta = firstNumber(
-      g(rating, "change_rank_rating"), g(rating, "changeRankRating")
-    )
-    d.oldSegment = firstNumber(g(rating, "old_segment"), g(rating, "oldSegment"))
-    d.newSegment = firstNumber(g(rating, "new_segment"), g(rating, "newSegment"))
-    d.killRating = firstNumber(g(rating, "kill_rating"), g(rating, "killRating"))
-    d.killDelta = firstNumber(g(rating, "change_kill_rating"), g(rating, "changeKillRating"))
-    d.winRating = firstNumber(g(rating, "win_rating"), g(rating, "winRating"))
-    d.winDelta = firstNumber(g(rating, "change_win_rating"), g(rating, "changeWinRating"))
-    d.season = firstNumber(
-      g(result, "SeasonNumber"), g(result, "seasonNumber"),
-      _G.DataMgr and _G.DataMgr.season_id
-    )
-    if d.rankPoints and d.rankDelta then
-      d.oldPoints = math.max(0, d.rankPoints - d.rankDelta)
-    end
-    d.newRankName = rankLabel(d.newSegment, d.season)
-    d.oldRankName = rankLabel(d.oldSegment, d.season)
-    if d.newRankName and d.oldRankName and d.newRankName ~= d.oldRankName then
-      d.rankTier = d.oldRankName .. " → " .. d.newRankName
-    else
-      d.rankTier = d.newRankName or d.oldRankName
-    end
-
-    local protections = {}
-    local protect = g(result, "BP_STRUCT_BTRatingProtect") or g(result, "rating_protect")
-    if type(protect) == "table" then
-      local protectType = g(protect, "protect_type")
-      if protectType ~= nil and tostring(protectType) ~= "" and tostring(protectType) ~= "0" then
-        protections[#protections + 1] = tostring(protectType)
-      end
-      local protectValue = firstNumber(g(protect, "value"))
-      if protectValue and protectValue > 0 then
-        protections[#protections + 1] = "value " .. fmtInt(protectValue)
-      end
-    end
-    if g(result, "segment_protect") == true then protections[#protections + 1] = "Segment protect" end
-    if g(result, "is_rank_protect") == true then protections[#protections + 1] = "Rank protect" end
-    if g(result, "is_time_card_protect") == true or g(result, "is_times_card_protect") == true then
-      protections[#protections + 1] = "Time card"
-    end
-    if g(result, "is_activity_protect") == true then protections[#protections + 1] = "Activity" end
-    if g(result, "is_player_return_protect") == true then protections[#protections + 1] = "Return protect" end
-    if g(result, "double_rating") == true then protections[#protections + 1] = "Double rating" end
-    if #protections > 0 then d.protection = table.concat(protections, ", ") end
-
-    local personRank = d.personRank
-    local teamRank = d.teamRank
-    d.teamWin = d.isTeam == true and teamRank == 1
-    d.win = reason == "win" or reason == "winner" or reason == "chicken"
-    if not d.win and d.isTeam ~= true and personRank == 1
-        and (reason == "" or reason == "win" or reason == "winner") then
-      d.win = true
-    end
-    if not d.win and d.teamWin then d.win = true end
-
-    if d.teamWin then
-      d.statusHtml = "<b>TEAM WIN</b> 🏆"
-    elseif d.win then
-      d.statusHtml = "<b>WIN</b> 🏆"
-    elseif reason == "dead" then
-      d.statusHtml = "<b>ELIMINATED</b>"
-    elseif reason ~= "" then
-      d.statusHtml = "<b>" .. esc(string.upper(reason)) .. "</b>"
-    else
-      d.statusHtml = "<b>FINISHED</b>"
-    end
-
-    d.map = resolveMap(sources, d.subMode)
-    d.mode = resolveMode(sources, d.battleType, d.subMode)
-    d.perspective = resolvePerspective(d.subMode, d.battleType)
-    return d
-  end
-
-  local function formatFeedback(d)
-    local lines = {}
-    local function add(line) lines[#lines + 1] = line end
-    local function bullet(label, value)
-      if value ~= nil and tostring(value) ~= "" then
-        add("• " .. label .. ": " .. tostring(value))
-      end
-    end
-
-    add("🎯 <b>RAPZHANG MATCH REPORT</b>")
-    add("━━━━━━━━━━━━━━━━━━")
-    bullet("Player", "<code>" .. esc(clip(maskPlayerName(d.myName) or "Unknown", 48)) .. "</code>")
-    bullet("UID", "<code>" .. esc(d.reporterUIDMasked or "unknown") .. "</code>")
-    bullet("Variant", esc(d.variant or "PUBGM: Unknown"))
-    if (d.variant == nil or d.variant == "PUBGM: Unknown") and d.region then
-      bullet("Region", esc(d.region))
-    end
-    bullet("Client", esc(d.clientVersion))
-    add("")
-    add("📱 <b>DEVICE</b>")
-    bullet("Platform", esc(d.devicePlatform or "Unknown"))
-    bullet("App arch", "<b>" .. esc(d.appArch or "Unknown") .. "</b>")
-    if d.deviceModel or d.deviceOS then
-      local deviceParts = {}
-      if d.deviceModel then deviceParts[#deviceParts + 1] = esc(d.deviceModel) end
-      if d.deviceOS then deviceParts[#deviceParts + 1] = esc(d.deviceOS) end
-      bullet("Device", table.concat(deviceParts, " · "))
-    end
-    add("")
-    add("🏁 <b>RESULT</b>")
-    bullet("Status", d.statusHtml or "<b>FINISHED</b>")
-    if d.isTeam == true then
-      local denom = d.totalTeams and d.totalTeams > 0 and (" / " .. fmtCount(d.totalTeams, "team")) or ""
-      bullet("Team placement", "<b>#" .. (fmtInt(d.teamRank) or "?") .. "</b>" .. denom)
-      local pdenom = d.totalPlayers and d.totalPlayers > 0 and (" / " .. fmtCount(d.totalPlayers, "player")) or ""
-      bullet("Personal rank", "<b>#" .. (fmtInt(d.personRank) or "?") .. "</b>" .. pdenom)
-    else
-      local denom = d.totalPlayers and d.totalPlayers > 0 and (" / " .. fmtCount(d.totalPlayers, "player")) or ""
-      bullet("Placement", "<b>#" .. (fmtInt(d.personRank) or "?") .. "</b>" .. denom)
-    end
-    if d.remainingPlayers ~= nil or d.remainingTeams ~= nil then
-      local parts = {}
-      if d.remainingPlayers ~= nil then parts[#parts + 1] = fmtCount(d.remainingPlayers, "player") end
-      if d.remainingTeams ~= nil then parts[#parts + 1] = fmtCount(d.remainingTeams, "team") end
-      bullet("Remaining", table.concat(parts, " / "))
-    end
-    bullet("Map", esc(d.map))
-    bullet("Mode", esc(d.mode))
-    bullet("View", esc(d.perspective))
-
-    add("")
-    add("📊 <b>COMBAT</b>")
-    local combatStart = #lines + 1
-    bullet("Kills", fmtInt(d.kills))
-    bullet("Damage", fmtInt(d.damage))
-    bullet("Assists", fmtInt(d.assists))
-    bullet("Knocks", fmtInt(d.knocks))
-    bullet("Headshots", fmtInt(d.headshots))
-    bullet("Headshot rate", fmtPercent(d.headshotRate))
-    bullet("Revives", fmtInt(d.revives))
-    if d.shotsFired ~= nil or d.shotsHit ~= nil then
-      local shots = (fmtInt(d.shotsHit) or "0") .. " / " .. (fmtInt(d.shotsFired) or "0")
-      if d.accuracy then shots = shots .. " (" .. fmtPercent(d.accuracy) .. ")" end
-      bullet("Shots hit", shots)
-    end
-    bullet("Survival", fmtDuration(d.survival))
-    bullet("Distance", fmtDistance(d.distance))
-    bullet("Healing", fmtInt(d.healing))
-    bullet("Heals used", fmtInt(d.healTimes))
-    bullet("Vehicles destroyed", fmtInt(d.vehicles))
-    local scoreText = fmtNum(d.score, 1)
-    if scoreText and d.isMVP then scoreText = scoreText .. " · MVP" end
-    bullet("Score", scoreText)
-    if #lines < combatStart then add("• No combat data available") end
-
-    local rewardParts = {}
-    if d.exp and d.exp > 0 then rewardParts[#rewardParts + 1] = "EXP +" .. fmtInt(d.exp) end
-    if d.gold and d.gold > 0 then rewardParts[#rewardParts + 1] = "BP +" .. fmtInt(d.gold) end
-    if d.seasonCoin and d.seasonCoin > 0 then rewardParts[#rewardParts + 1] = "Season coin +" .. fmtInt(d.seasonCoin) end
-    if d.careerScore and d.careerScore > 0 then rewardParts[#rewardParts + 1] = "Career +" .. fmtInt(d.careerScore) end
-    if #rewardParts > 0 then
-      add("")
-      add("💰 <b>REWARDS</b>")
-      add("• " .. table.concat(rewardParts, " · "))
-    end
-
-    add("")
-    add("🏅 <b>RANK</b>")
-    local hasRank = d.rankTier ~= nil or d.rankPoints ~= nil
-      or d.killRating ~= nil or d.winRating ~= nil or d.protection ~= nil
-    bullet("Tier", esc(d.rankTier))
-    if d.rankPoints ~= nil then
-      local points
-      if d.oldPoints ~= nil then
-        points = fmtInt(d.oldPoints) .. " → <b>" .. fmtInt(d.rankPoints) .. "</b>"
-      else
-        points = "<b>" .. fmtInt(d.rankPoints) .. "</b>"
-      end
-      if d.rankDelta ~= nil and d.rankDelta ~= 0 then
-        points = points .. " (" .. fmtSigned(d.rankDelta) .. ")"
-      end
-      bullet("Points", points)
-    end
-    local ratingParts = {}
-    if d.killRating ~= nil then
-      local part = "Kill " .. fmtInt(d.killRating)
-      if d.killDelta ~= nil then part = part .. " (" .. fmtSigned(d.killDelta) .. ")" end
-      ratingParts[#ratingParts + 1] = part
-    end
-    if d.winRating ~= nil then
-      local part = "Win " .. fmtInt(d.winRating)
-      if d.winDelta ~= nil then part = part .. " (" .. fmtSigned(d.winDelta) .. ")" end
-      ratingParts[#ratingParts + 1] = part
-    end
-    if #ratingParts > 0 then bullet("Rating", esc(table.concat(ratingParts, " · "))) end
-    if hasRank then
-      bullet("Protection", esc(d.protection))
-      bullet("Season", fmtInt(d.season))
-    else
-      add("• No ranked data (unranked match)")
-    end
-
-    if d.teamList and #d.teamList > 1 then
-      local totalKills, totalAssists, totalDamage = 0, 0, 0
-      for _, tm in ipairs(d.teamList) do
-        totalKills = totalKills + (tonumber(g(tm, "Kill")) or 0)
-        totalAssists = totalAssists + (tonumber(g(tm, "AssistNum")) or 0)
-        totalDamage = totalDamage + (tonumber(g(tm, "DamageAmount")) or 0)
-      end
-      add("")
-      add(string.format("👥 <b>SQUAD</b> (%d players · %sK · %sA · %sD)",
-        #d.teamList, fmtInt(totalKills), fmtInt(totalAssists), fmtInt(totalDamage)))
-      local shown = 0
-      for _, tm in ipairs(d.teamList) do
-        if shown >= 4 then break end
-        local rawName = teammateDisplayName(tm, d.myUID) or "Unknown"
-        local name = esc(clip(maskPlayerName(rawName) or rawName, 48))
-        local uid = g(tm, "UID")
-        local isSelf = (d.myUID ~= nil and uid ~= nil and tostring(uid) == tostring(d.myUID))
-          or (d.myName ~= nil and rawName == tostring(d.myName))
-        local kills = tonumber(g(tm, "Kill")) or 0
-        local assists = tonumber(g(tm, "AssistNum")) or 0
-        local damage = tonumber(g(tm, "DamageAmount")) or 0
-        local suffix = isSelf and " <i>(you)</i>" or ""
-        if nameLooksMasked(rawName) and uid ~= nil then
-          suffix = suffix .. " <i>(UID " .. esc(maskUID(uid)) .. ")</i>"
-        end
-        local mvp = g(tm, "IsMVP") == true and " · MVP" or ""
-        add("• " .. name .. suffix .. " — " .. fmtInt(kills) .. "K / " .. fmtInt(assists) .. "A / " .. fmtInt(damage) .. "D" .. mvp)
-        shown = shown + 1
-      end
-      if #d.teamList > shown then
-        add("• +" .. tostring(#d.teamList - shown) .. " more")
-      end
-    end
-
-    add("")
-    add("🧩 <b>SESSION</b>")
-    bullet("Match ID", "<code>" .. esc(d.matchID or "-") .. "</code>")
-    bullet("Active", esc(d.active or "None"))
-    bullet("Reporter", esc(clip(maskPlayerName(d.reporterName) or "Player", 48)) .. " (" .. esc(d.reporterUIDMasked or "unknown") .. ")")
-    bullet("Logged", esc(d.logged or ""))
-
-    return trimMessage(table.concat(lines, "\n"))
-  end
-
-  local function emit(d)
-    local text = formatFeedback(d)
-    if not sendToTargets(text) then
-      print("[RAPZHANG] Auto feedback: Telegram transport/target unavailable")
-    end
-  end
-
-  local function formatReport(d, targetName, targetUID, matchID)
-    local lines = {}
-    local function add(line) lines[#lines + 1] = line end
-    local function bullet(label, value)
-      if value ~= nil and tostring(value) ~= "" then
-        add("• " .. label .. ": " .. tostring(value))
-      end
-    end
-    add("🚨 <b>PLAYER REPORT</b>")
-    add("━━━━━━━━━━━━━━━━━━")
-    bullet("Target", "<code>" .. esc(clip(maskPlayerName(targetName) or "Unknown", 48)) .. "</code>")
-    bullet("UID", "<code>" .. esc(tostring(targetUID or "unknown")) .. "</code>")
-    bullet("Match ID", "<code>" .. esc(tostring(matchID or d.matchID or "-")) .. "</code>")
-    bullet("Reason", "Cheating")
-    add("")
-    add("📊 <b>REPORTER</b>")
-    bullet("Name", esc(clip(maskPlayerName(d.reporterName) or "Player", 48)))
-    bullet("UID", esc(d.reporterUIDMasked or "unknown"))
-    bullet("Kills", fmtInt(d.kills))
-    bullet("Rank", esc(d.rankTier))
-    bullet("Points", fmtInt(d.rankPoints))
-    bullet("Mode", esc(d.mode))
-    bullet("Time", esc(d.logged or ""))
-    return trimMessage(table.concat(lines, "\n"))
-  end
-
   function AF.SendReport(playerName, playerUID, matchID)
-    local ok, err = pcall(function()
-      local d = buildFeedback(matchID)
-      local text = formatReport(d, playerName, playerUID, d.matchID)
-      if not sendToTargets(text) then
-        print("[RAPZHANG] Player report: Telegram transport/target unavailable")
+    local rootCfg=_G.RapzhangConfig or {}
+    if rootCfg.AutoFeedbackEnabled ~= true then return end
+    local cfg=rootCfg.AutoFeedbackConfig or {}
+    local token=cfg.BotToken
+    if not token or token=="" then return end
+    local http=mod("client.slua.logic.http.http_manager")
+    if not http or type(http.Post)~="function" then return end
+    local safeName=tostring(playerName or "Player"):gsub("`", "'"):gsub("[\r\n]", " ")
+    local kills, rank = getStats()
+    local rankPoints=tonumber(rank) or 0
+    local text=string.format("━━━━━━━━━━━━━━━━━━\n*•RAPZHANG REPORT•*\n━━━━━━━━━━━━━━━━━━\n\nPlayer: `%s`\nUID: `%s`\n\nReason: Cheating\n\n━━━━━━━━━━━━━━━━━━\n\nReporter:\n`%s\nUID: %s`\n\nKills: %d\nRank: %s (%d)\nTime: %s\nDate: %s", safeName, displayTargetUID(playerUID), displayReporterName(), displayUID(), tonumber(kills) or 0, rankName(rankPoints), rankPoints, os.date("%H:%M:%S"), os.date("%A, %d %B %Y"))
+    for _,t in ipairs(cfg.Targets or {}) do
+      local chatId=type(t)=="table" and tostring(t.chat_id or "") or ""
+      if chatId:match("^%-100%d+$") then
+        local url="https://api.telegram.org/bot"..token.."/sendMessage"
+        local body="chat_id="..enc(chatId).."&text="..enc(text).."&parse_mode=Markdown&disable_web_page_preview=true"
+        pcall(function()
+          http:Post(url,{["Content-Type"]="application/x-www-form-urlencoded"},body,nil,function(success,_,response,errorMessage)
+            local resp=tostring(response or "")
+            if success and resp:find('"ok":%s*true') then
+              print(string.format("[RAPZHANG] Auto report channel %s OK", chatId))
+            else
+              print(string.format("[RAPZHANG] Auto report channel %s failed: %s", chatId, tostring(errorMessage or response or "unknown")))
+            end
+          end,60)
+        end)
       end
-    end)
-    if not ok then print("[RAPZHANG] Player report error: " .. tostring(err)) end
-  end
-
-  function AF.Send(kills, rank, segment, matchID)
-    local ok, err = pcall(function()
-      local d = buildFeedback(matchID)
-      if (d.kills == nil or d.kills == 0) and (tonumber(kills) or 0) > 0 then
-        d.kills = tonumber(kills)
-      end
-      if (d.rankPoints == nil or d.rankPoints == 0) and (tonumber(rank) or 0) > 0 then
-        d.rankPoints = tonumber(rank)
-      end
-      if (d.newSegment == nil or d.newSegment == 0) and (tonumber(segment) or 0) > 0 then
-        d.newSegment = tonumber(segment)
-        d.newRankName = rankLabel(d.newSegment, d.season)
-        d.rankTier = d.newRankName or d.rankTier
-      end
-      emit(d)
-    end)
-    if not ok then print("[RAPZHANG] Auto feedback error: " .. tostring(err)) end
-  end
-
-  function AF.HandleShowUI(config, params)
-    local ui = _G.UIManager
-    local inGame = ui and ui.UI_Config_InGame
-    local countdown = inGame and inGame.GameOverCountDown_UIBP
-    if not countdown or config ~= countdown then return end
-
-    local d = buildFeedback(nil)
-    local reason = string.lower(tostring((params and params.Reason) or d.reason or ""))
-    local isWin = d.win == true or reason == "win" or reason == "winner" or reason == "chicken"
-    local cfg = (_G.RapzhangConfig and _G.RapzhangConfig.AutoFeedbackConfig) or {}
-    local sendOnWin = cfg.SendOnWin ~= false
-    local sendOnLoss = cfg.SendOnLoss ~= false
-    if isWin and not sendOnWin then return end
-    if (not isWin) and not sendOnLoss then return end
-
-    local matchID = tostring(d.matchID or "")
-    if matchID == "" or matchID == "0" then matchID = tostring(os.time()) end
-    if AF._lastMatchSent == matchID then return end
-    AF._lastMatchSent = matchID
-
-    if not addTimerOnce(1.5, function() emit(d) end) then
-      emit(d)
     end
   end
-
+  function AF.Send(kills, rank, segment, matchID)
+    local rootCfg=_G.RapzhangConfig or {}
+    if rootCfg.AutoFeedbackEnabled ~= true then return end
+    local cfg=rootCfg.AutoFeedbackConfig or {}
+    local token=cfg.BotToken
+    if not token or token=="" then return end
+    local http=mod("client.slua.logic.http.http_manager")
+    if not http or type(http.Post)~="function" then return end
+    local d=getFeedbackData(kills, rank, segment, matchID)
+    local rankPoints=tonumber(d.rank) or 0
+    local function out(v) return tostring(v==nil or v=="" and "-" or v) end
+    local text=string.format("━━━━━━━━━━━━━━━━━━\n*•RAPZHANG FEEDBACK•*\n━━━━━━━━━━━━━━━━━━\n\n`%s\nUID: %s`\n\n%s\nMatch ID: %s\nPlacement: %s\nTeam Place: %s\nMap: %s\nMode: %s\nPerspective: %s\n\n━━━━━━━━━━━━━━━━━━\n\nCombat\nKills: %s\nDamage: %s\nAssists: %s\nKnockdowns: %s\nHeadshots: %s\nRevives: %s\nSurvival: %s\nDuration: %s\n\nRank\nTier: %s\nPoints: %s\n\nActive Feature: %s\n\nTime: %s\nDate: %s", displayFeedbackName(), displayUID(), detectGameVariant(), out(d.matchID), out(d.placement), out(d.teamPlacement), out(d.map), out(d.mode), out(d.perspective), out(d.kills), out(d.damage), out(d.assists), out(d.knockdowns), out(d.headshots), out(d.revives), out(d.survival), out(d.duration), rankName(rankPoints), out(rankPoints), activeFeatureText(), os.date("%H:%M:%S"), os.date("%A, %d %B %Y"))
+    for _,t in ipairs(cfg.Targets or {}) do
+      -- Channel-only routing: reject groups, users, and empty targets.
+      local chatId = type(t)=="table" and tostring(t.chat_id or "") or ""
+      if chatId:match("^%-100%d+$") then
+        local url="https://api.telegram.org/bot"..token.."/sendMessage"
+        local body="chat_id="..enc(chatId).."&text="..enc(text).."&parse_mode=Markdown&disable_web_page_preview=true"
+        pcall(function()
+          http:Post(url,{["Content-Type"]="application/x-www-form-urlencoded"},body,nil,function(success,_,response,errorMessage)
+            local resp=tostring(response or "")
+            local okResponse=success and resp:find('"ok":%s*true')
+            if okResponse then
+              print(string.format("[RAPZHANG] Auto feedback channel %s OK", chatId))
+            else
+              print(string.format("[RAPZHANG] Auto feedback channel %s failed: %s", chatId, tostring(errorMessage or response or "unknown")))
+            end
+          end,60)
+        end)
+      end
+    end
+  end
   function AF.Install()
     if not (_G.RapzhangConfig and _G.RapzhangConfig.AutoFeedbackEnabled == true) then return end
-    local ui = _G.UIManager
-    if not ui or type(ui.ShowUI) ~= "function" then
+    local ui=_G.UIManager
+    if not ui or type(ui.ShowUI)~="function" then
       if not AF._installQueued then
-        AF._installQueued = true
-        addTimerOnce(3.0, function()
-          AF._installQueued = false
-          AF.Install()
-        end)
+        AF._installQueued=true
+        addTimerOnce(3.0,function() AF._installQueued=false; AF.Install() end)
       end
       return
     end
-    if ui._RapzhangAutoTextFeedbackHookedV2 then return end
-    local old = ui.ShowUI
-    ui.ShowUI = function(config, params, ...)
-      local result = old(config, params, ...)
-      local current = _G.RapzhangAutoTextFeedback
-      if current and type(current.HandleShowUI) == "function" then
-        pcall(current.HandleShowUI, config, params)
-      end
+    if ui._RapzhangAutoTextFeedbackHooked then return end
+    local old=ui.ShowUI
+    ui.ShowUI=function(config, params, ...)
+      local result=old(config,params,...)
+      pcall(function()
+        local inGame=ui.UI_Config_InGame; local winner=inGame and inGame.GameOverCountDown_UIBP
+        local reason=string.lower(tostring(params and params.Reason or ""))
+        local isWinner=params and (
+          reason=="win" or reason=="winner" or
+          params.ShowedWinLogo==true or params.IsWin==true or
+          params.bIsWin==true or params.IsWinner==true
+        )
+        -- Auto feedback kembali hanya dikirim untuk kemenangan/placement 1.
+        if winner and config==winner and isWinner then
+          local matchID=tostring((mod("client.logic.battle.logic_complaint") or {}).GetBattleID and (mod("client.logic.battle.logic_complaint"):GetBattleID()) or os.time())
+          if AF._lastMatchSent~=matchID then
+            AF._lastMatchSent=matchID
+            local k,r,seg=getStats()
+            if not addTimerOnce(2.0,function() AF.Send(k,r,seg,matchID) end) then AF.Send(k,r,seg,matchID) end
+          end
+        end
+      end)
       return result
     end
-    ui._RapzhangAutoTextFeedbackHookedV2 = true
+    ui._RapzhangAutoTextFeedbackHooked=true
   end
-
-  return AF
-end)()
-
-
-
-
+end
 local function UpdateIndependentWallhack(GameplayData, localPlayer)
     -- Wallhack is deliberately independent from ESP/UI state.
     pcall(function()
@@ -7768,158 +6596,99 @@ function X3ExtraRuntimeInit()
         "r.DetailMode 2",
     }
     -- Extra resource reduction layered on top of the native VERYSMOOTH Lua path.
-    -- Deliberately excludes FPS caps, frame-rate limits, and view-distance variables.
-    -- Each entry: { cvar, low value, safe fallback value }. The real old value is
-    -- captured before the first ON and restored on OFF so the user's own graphics
-    -- choice is not overwritten when this feature is disabled.
-    local SuperDuper_CVARS = {
-        { "r.Fog", "0", "1" },
-        { "r.VolumetricFog", "0", "1" },
-        { "r.VolumetricCloud", "0", "1" },
-        { "r.LightShaftQuality", "0", "1" },
-        { "r.LensFlareQuality", "0", "2" },
-        { "r.BloomQuality", "0", "4" },
-        { "r.MotionBlurQuality", "0", "2" },
-        { "r.DepthOfFieldQuality", "0", "2" },
-        { "r.SceneColorFringeQuality", "0", "1" },
-        { "r.ReflectionEnvironment", "0", "1" },
-        { "r.SSR.Quality", "0", "2" },
-        { "r.AmbientOcclusionLevels", "0", "2" },
-        { "r.AmbientOcclusionRadiusScale", "0", "1" },
-        { "r.Tonemapper.GrainQuantization", "0", "1" },
-        { "r.PostProcessAAQuality", "0", "4" },
-        { "r.TemporalAA.Upsampling", "0", "1" },
-        { "r.DefaultFeature.AntiAliasing", "0", "2" },
-        { "r.DefaultFeature.MotionBlur", "0", "1" },
-        { "r.DefaultFeature.Bloom", "0", "1" },
-        { "r.DefaultFeature.AmbientOcclusion", "0", "1" },
-        { "r.Mobile.AntiAliasing", "0", "2" },
-        { "r.MobileHDR", "0", "1" },
-        { "r.MobileMSAA", "0", "1" },
-        { "r.MSAACount", "1", "4" },
-        { "r.ParticleLODBias", "3", "0" },
-        { "r.EmitterSpawnRateScale", "0.1", "1" },
-        { "r.Shadow.CSM.MaxMobileCascades", "0", "2" },
-        { "r.Shadow.DistanceScale", "0", "1" },
-        { "r.ShadowQuality", "0", "2" },
-        { "r.Shadow.MaxResolution", "256", "2048" },
-        { "r.Shadow.MaxCSMResolution", "256", "2048" },
-        { "r.Shadow.MinResolution", "0", "32" },
-        { "r.Shadow.RadiusThreshold", "0.06", "0.03" },
-        { "r.ContactShadows", "0", "1" },
-        { "r.Shadow.Virtual.Enable", "0", "1" },
-        { "r.DistanceFieldShadowing", "0", "1" },
-        { "r.CapsuleShadows", "0", "1" },
-        { "r.Mobile.EnableStaticAndCSMShadowReceivers", "0", "1" },
-        { "r.Mobile.EnableMovableSpotlightsShadow", "0", "1" },
-        { "r.Mobile.EnableMovablePointLightsShadow", "0", "1" },
-        { "r.MaterialQualityLevel", "0", "1" },
-        { "r.DetailMode", "0", "2" },
-        { "r.MaxAnisotropy", "0", "4" },
-        { "r.Streaming.MipBias", "2", "0" },
-        { "r.SkeletalMeshLODBias", "1", "0" },
-        { "r.StaticMeshLODDistanceScale", "2", "1" },
-        { "r.MipMapLODBias", "2", "0" },
-        { "r.MipLODBiasLowClampSize", "512", "0" },
-        { "r.ForceMipFilterToPoint", "1", "0" },
-        { "r.StaticMeshForceLODMaterialBias", "2", "0" },
-        { "s.EnableOverrideVerySmoothMaterial", "1", "0" },
-        { "r.DisableLensFlareWhenBeginPlay", "1", "0" },
-        { "r.ScreenPercentage", "80", "100" },
+    -- Deliberately excludes FPS, frame-rate limit, and view-distance variables.
+    local SuperDuper_ON = {
+        "r.Fog 0",
+        "r.VolumetricFog 0",
+        "r.LightShaftQuality 0",
+        "r.LensFlareQuality 0",
+        "r.BloomQuality 0",
+        "r.MotionBlurQuality 0",
+        "r.DepthOfFieldQuality 0",
+        "r.SceneColorFringeQuality 0",
+        "r.ReflectionEnvironment 0",
+        "r.SSR.Quality 0",
+        "r.AmbientOcclusionLevels 0",
+        "r.AmbientOcclusionRadiusScale 0",
+        "r.ParticleLODBias 2",
+        "r.EmitterSpawnRateScale 0.25",
+        "r.Shadow.CSM.MaxMobileCascades 0",
+        "r.Shadow.DistanceScale 0",
+        "r.ShadowQuality 0",
+        "r.ContactShadows 0",
+        "r.Shadow.Virtual.Enable 0",
+        "r.DistanceFieldShadowing 0",
+        "r.CapsuleShadows 0",
+        "r.MaterialQualityLevel 0",
+        "r.DetailMode 0",
+        "r.MipLODBiasLowClampSize 512",
+        "r.ForceMipFilterToPoint 1",
+        "r.StaticMeshForceLODMaterialBias 2",
+        "s.EnableOverrideVerySmoothMaterial 1",
+        "r.DisableLensFlareWhenBeginPlay 1",
     }
-    local function SuperDuper_CVarLibrary()
-        local ok, KSL = pcall(function() return KismetSystemLibrary or import("KismetSystemLibrary") end)
-        if ok then return KSL end
-        return nil
-    end
-    local function SuperDuper_ReadCVar(name)
-        local value = nil
-        pcall(function()
-            local KSL = SuperDuper_CVarLibrary()
-            if not KSL then return end
-            if type(KSL.GetConsoleVariableValue) == "function" then value = KSL.GetConsoleVariableValue(name) end
-            if value == nil and type(KSL.GetConsoleVariableFloatValue) == "function" then value = KSL.GetConsoleVariableFloatValue(name) end
-            if value == nil and type(KSL.GetConsoleVariableIntValue) == "function" then value = KSL.GetConsoleVariableIntValue(name) end
-        end)
-        return tonumber(value)
-    end
-    local function SuperDuper_PlayerController()
-        local pc = nil
-        pcall(function()
-            local GDP = GameplayData
-            if GDP and type(GDP.GetPlayerController) == "function" then pc = GDP.GetPlayerController() end
-            if not slua.isValid(pc) and slua_GameFrontendHUD then pc = slua_GameFrontendHUD:GetPlayerController() end
-        end)
-        return slua.isValid(pc) and pc or nil
-    end
-    local function SuperDuper_ExecuteCVar(gameInstance, name, value)
-        local text = tostring(name) .. " " .. tostring(value)
-        if gameInstance and type(gameInstance.ExecuteCMD) == "function" then
-            pcall(function() gameInstance:ExecuteCMD(tostring(name), tostring(value)) end)
-            return true
+    local SuperDuper_OFF = {
+        "r.Fog 1",
+        "r.VolumetricFog 1",
+        "r.LightShaftQuality 1",
+        "r.LensFlareQuality 2",
+        "r.BloomQuality 4",
+        "r.MotionBlurQuality 2",
+        "r.DepthOfFieldQuality 2",
+        "r.SceneColorFringeQuality 1",
+        "r.ReflectionEnvironment 1",
+        "r.SSR.Quality 2",
+        "r.AmbientOcclusionLevels 2",
+        "r.AmbientOcclusionRadiusScale 1",
+        "r.ParticleLODBias 0",
+        "r.EmitterSpawnRateScale 1",
+        "r.Shadow.CSM.MaxMobileCascades 2",
+        "r.Shadow.DistanceScale 1",
+        "r.ShadowQuality 2",
+        "r.ContactShadows 1",
+        "r.Shadow.Virtual.Enable 1",
+        "r.DistanceFieldShadowing 1",
+        "r.CapsuleShadows 1",
+        "r.MaterialQualityLevel 1",
+        "r.DetailMode 2",
+        "r.MipLODBiasLowClampSize 0",
+        "r.ForceMipFilterToPoint 0",
+        "r.StaticMeshForceLODMaterialBias 0",
+        "s.EnableOverrideVerySmoothMaterial 0",
+        "r.DisableLensFlareWhenBeginPlay 0",
+    }
+    local function ApplySuperDuperCommands(gameInstance, commands)
+        if not gameInstance or type(gameInstance.ExecuteCMD) ~= "function" then return end
+        for _, command in ipairs(commands) do
+            pcall(function() gameInstance:ExecuteCMD(command:match("^(%S+)"), command:match("%s+(.+)$")) end)
         end
-        local pc = SuperDuper_PlayerController()
-        local KSL = SuperDuper_CVarLibrary()
-        if KSL and type(KSL.ExecuteConsoleCommand) == "function" then
-            pcall(KSL.ExecuteConsoleCommand, pc, text, nil)
-            return true
-        end
-        pcall(function()
-            if slua_GameFrontendHUD and type(slua_GameFrontendHUD.ExecuteCMD) == "function" then
-                slua_GameFrontendHUD:ExecuteCMD(tostring(name), tostring(value))
-            end
-        end)
-        return false
-    end
-    local function ApplySuperDuperCommands(gameInstance, on, st)
-        local applied = false
-        for _, entry in ipairs(SuperDuper_CVARS) do
-            local name, lowValue, fallback = entry[1], entry[2], entry[3]
-            if on then
-                if st.cvarSaved[name] == nil then
-                    st.cvarSaved[name] = SuperDuper_ReadCVar(name)
-                end
-                if SuperDuper_ExecuteCVar(gameInstance, name, lowValue) then applied = true end
-            else
-                local saved = st.cvarSaved[name]
-                local value = saved ~= nil and saved or fallback
-                if SuperDuper_ExecuteCVar(gameInstance, name, value) then applied = true end
-            end
-        end
-        if not on then st.cvarSaved = {} end
-        return applied
     end
 
-    _G.RapzhangX3.ApplyLowGraphics = function(on, force)
+    _G.RapzhangX3.ApplyLowGraphics = function(on)
         local st, now = _G.RapzhangX3._LowGraphicsState, os.clock()
-        st.cvarSaved = st.cvarSaved or {}
-        if not force and st.applied == on and now - (st.last or 0) < 2.0 then return true end
+        if st.applied == on and now - (st.last or 0) < 2.0 then return true end
 
-        local nativeOK = false
-        local savedKeys = {
-            "BattleRenderQuality", "LobbyRenderQuality", "ManorRenderQuality",
-            "MainCityRenderQuality", "SelectedQuality", "SelectedShadow",
-            "SelectedWaterReflection", "SelectedEnergySaving", "RenderMSAASetting",
-            "RenderMSAAValue", "BattleRenderStyle", "LobbyRenderStyle", "TurboEnable"
-        }
-
-        pcall(function()
+        local ok, result = pcall(function()
             local DB = require("client.slua.umg.NewSetting.GraphicsNew.GraphicSettingDB")
             local Logic = require("client.slua.logic.setting.logic_setting_graphics")
             local Quality = import("ERenderQuality")
-            local StyleEnum = nil
-            pcall(function() StyleEnum = import("ERenderStyle") end)
-            if not DB or not Logic or not Quality then return end
+            if not DB or not Logic or not Quality then return false end
 
             -- Simpan setting grafis asli sekali untuk pemulihan saat OFF.
-            if on and not st.saved then
+            if not st.saved then
                 st.saved = {}
-                for _, name in ipairs(savedKeys) do
+                local keys = {
+                    "BattleRenderQuality", "LobbyRenderQuality", "ManorRenderQuality",
+                    "MainCityRenderQuality", "SelectedQuality", "SelectedShadow",
+                    "SelectedWaterReflection", "SelectedEnergySaving",
+                    "RenderMSAASetting", "RenderMSAAValue"
+                }
+                for _, name in ipairs(keys) do
                     local key = DB[name]
                     if key and DB.GetUIData then st.saved[name] = DB:GetUIData(key) end
                 end
-                local giSaved = Logic.GetGameInstance and Logic.GetGameInstance()
-                local applying = giSaved and giSaved.GetRenderQualityApplying and giSaved:GetRenderQualityApplying()
+                local gi = Logic.GetGameInstance and Logic.GetGameInstance()
+                local applying = gi and gi.GetRenderQualityApplying and gi:GetRenderQualityApplying()
                 if applying then
                     st.saved.RenderStyleSetting = applying.RenderStyleSetting
                     st.saved.RenderQualitySetting = applying.RenderQualitySetting
@@ -7929,13 +6698,14 @@ function X3ExtraRuntimeInit()
             end
 
             local gi = Logic.GetGameInstance and Logic.GetGameInstance()
-            if not gi then return end
+            if not gi then return false end
             local applying = gi.GetRenderQualityApplying and gi:GetRenderQualityApplying() or {}
-            local saved = st.saved or {}
-            local lowStyle = (StyleEnum and StyleEnum.CLASSIC) or 1
+            local style = applying.RenderStyleSetting or st.saved.RenderStyleSetting
+            local msaa = applying.RenderMSAASetting or false
+            local msaaValue = applying.RenderMSAAValue or 0
 
             if on then
-                -- Jalur asli Lua: kualitas paling rendah + gaya CLASSIC. FPS/view distance tidak disentuh.
+                -- Jalur asli Lua: kualitas terendah. FPS/view distance tidak disentuh.
                 if DB.UpdateSelectedQuality then DB:UpdateSelectedQuality(Quality.VERYSMOOTH, true) end
                 if DB.UpdateUIData then
                     DB:UpdateUIData(DB.SelectedShadow, false)
@@ -7943,70 +6713,31 @@ function X3ExtraRuntimeInit()
                     DB:UpdateUIData(DB.SelectedEnergySaving, true)
                     DB:UpdateUIData(DB.RenderMSAASetting, false)
                     DB:UpdateUIData(DB.RenderMSAAValue, 0)
-                    if DB.BattleRenderStyle then DB:UpdateUIData(DB.BattleRenderStyle, lowStyle) end
-                    if DB.LobbyRenderStyle then DB:UpdateUIData(DB.LobbyRenderStyle, lowStyle) end
-                    if DB.TurboEnable then DB:UpdateUIData(DB.TurboEnable, false) end
                 end
                 if DB.SaveChanges then DB:SaveChanges() end
-                if Logic.SetQuality then Logic.SetQuality(gi, Quality.VERYSMOOTH, lowStyle, false, 0) end
-                nativeOK = true
+                if Logic.SetQuality then Logic.SetQuality(gi, Quality.VERYSMOOTH, style, false, 0) end
+                ApplySuperDuperCommands(gi, SuperDuper_ON)
             else
                 -- Pulihkan hanya nilai yang disimpan; FPS dan view distance tidak pernah diubah.
                 if DB.UpdateUIData then
-                    for _, name in ipairs(savedKeys) do
-                        local key, value = DB[name], saved[name]
+                    for _, name in ipairs({"BattleRenderQuality", "LobbyRenderQuality", "ManorRenderQuality", "MainCityRenderQuality", "SelectedQuality", "SelectedShadow", "SelectedWaterReflection", "SelectedEnergySaving", "RenderMSAASetting", "RenderMSAAValue"}) do
+                        local key, value = DB[name], st.saved[name]
                         if key and value ~= nil then DB:UpdateUIData(key, value) end
                     end
                 end
                 if DB.SaveChanges then DB:SaveChanges() end
-                local q = saved.RenderQualitySetting or saved.SelectedQuality or Quality.BALANCE
-                local rs = saved.RenderStyleSetting or saved.BattleRenderStyle or applying.RenderStyleSetting or 1
-                local rm = saved.RenderMSAASetting == true
-                local rv = tonumber(saved.RenderMSAAValue) or 0
+                local q = st.saved.RenderQualitySetting or st.saved.SelectedQuality or Quality.BALANCE
+                local rs = st.saved.RenderStyleSetting or style
+                local rm = st.saved.RenderMSAASetting == true
+                local rv = tonumber(st.saved.RenderMSAAValue) or 0
                 if Logic.SetQuality then Logic.SetQuality(gi, q, rs, rm, rv) end
-                nativeOK = true
+                ApplySuperDuperCommands(gi, SuperDuper_OFF)
             end
+            return true
         end)
-
-        local gi = nil
-        pcall(function()
-            local Logic = require("client.slua.logic.setting.logic_setting_graphics")
-            gi = Logic and Logic.GetGameInstance and Logic.GetGameInstance()
-        end)
-        local commandsOK = ApplySuperDuperCommands(gi, on, st)
-
-        if on then
-            st.applied, st.last = true, now
-        else
-            st.applied, st.last = false, now
-            st.saved = nil
-        end
-        print("[LOW GRAPHICS LUA] " .. (on and "ON" or "OFF") .. " native=" .. tostring(nativeOK) .. " cmds=" .. tostring(commandsOK))
-        return nativeOK or commandsOK
-    end
-
-    -- Dipanggil oleh ticker fitur. Hanya memaksa ulang bila setting benar-benar
-    -- berubah / game baru saja reset grafis saat masuk match.
-    _G.RapzhangX3.EnsureLowGraphics = function()
-        if _G.RapzhangConfig.LowGraphics ~= true then return false end
-        local st = _G.RapzhangX3._LowGraphicsState
-        if not st or st.applied ~= true then
-            return _G.RapzhangX3.ApplyLowGraphics(true, true)
-        end
-        local low = true
-        pcall(function()
-            local DB = require("client.slua.umg.NewSetting.GraphicsNew.GraphicSettingDB")
-            local Quality = import("ERenderQuality")
-            if not DB or not Quality then low = false return end
-            if DB.GetUIData then
-                if DB.SelectedQuality and DB:GetUIData(DB.SelectedQuality) ~= Quality.VERYSMOOTH then low = false end
-                if DB.SelectedShadow and DB:GetUIData(DB.SelectedShadow) ~= false then low = false end
-                if DB.SelectedWaterReflection and DB:GetUIData(DB.SelectedWaterReflection) ~= false then low = false end
-                if DB.RenderMSAASetting and DB:GetUIData(DB.RenderMSAASetting) ~= false then low = false end
-            end
-        end)
-        if not low then return _G.RapzhangX3.ApplyLowGraphics(true, true) end
-        return true
+        st.applied, st.last = on, now
+        print("[LOW GRAPHICS LUA] " .. (on and "ON" or "OFF") .. " result=" .. tostring(ok and result))
+        return ok and result == true
     end
     if XC.LowGraphics == true then pcall(_G.RapzhangX3.ApplyLowGraphics, true) end
 
@@ -10178,462 +8909,6 @@ do
 end
 -- ============================================================================
 -- [END MAGIC BULLET ENHANCEMENT PACK]
-
--- ============================================================================
--- [HEADSHOT FEATURE]
--- Hitbox head/neck + local head/body damage multipliers.
--- External module: does NOT create or register BRPlayerCharacterBase.
--- Safe interactions:
---  * Standalone feature: independent from Magic Bullet.
---  * Every modified PhysicsAsset body is cached and restored on OFF / lobby exit.
---  * All engine calls are wrapped in pcall; unsupported devices simply no-op.
--- ============================================================================
-local Headshot = _G.RapzhangHeadshot or {}
-_G.RapzhangHeadshot = Headshot
-
-Headshot.Assets = Headshot.Assets or {}
-Headshot.DamageCache = Headshot.DamageCache or {}
-Headshot.Applied = Headshot.Applied or false
-Headshot.Started = Headshot.Started or false
-Headshot._LastTick = Headshot._LastTick or 0
-
-local function HS_Valid(obj)
-    if obj == nil then return false end
-    local ok, valid = pcall(function() return slua.isValid(obj) end)
-    return ok and valid == true
-end
-
-local function HS_ArrayCount(arr)
-    if not arr then return 0 end
-    local ok, count = pcall(function()
-        if type(arr.Num) == "function" then return arr:Num() end
-        return #arr
-    end)
-    return ok and tonumber(count) or 0
-end
-
-local function HS_ArrayGet(arr, index)
-    if not arr then return nil end
-    local ok, value = pcall(function()
-        if type(arr.Get) == "function" then return arr:Get(index) end
-        return arr[index + 1]
-    end)
-    if ok then return value end
-    return nil
-end
-
-local function HS_ArraySet(arr, index, value)
-    if not arr then return end
-    pcall(function()
-        if type(arr.Set) == "function" then
-            arr:Set(index, value)
-        else
-            arr[index + 1] = value
-        end
-    end)
-end
-
-local function HS_AssetName(asset)
-    local name = nil
-    pcall(function()
-        if type(asset.GetName) == "function" then name = asset:GetName() end
-    end)
-    if name == nil or tostring(name) == "" then name = tostring(asset) end
-    return tostring(name)
-end
-
-local function HS_RefreshMesh(mesh, asset)
-    if not HS_Valid(mesh) then return end
-    if type(mesh.SetPhysicsAsset) == "function" then
-        pcall(mesh.SetPhysicsAsset, mesh, asset)
-    end
-    pcall(function() mesh.PhysicsAssetOverride = asset end)
-    if type(mesh.RecreatePhysicsState) == "function" then
-        pcall(mesh.RecreatePhysicsState, mesh)
-    end
-end
-
-local function HS_CaptureBody(bodySetup)
-    local cache = { Setup = bodySetup, Arrays = {}, Elements = {} }
-    local geom = bodySetup.AggGeom
-    local arrays = {
-        Box = geom and geom.BoxElems or bodySetup.BoxElems,
-        Sphere = geom and geom.SphereElems or bodySetup.SphereElems,
-        Sphyl = geom and geom.SphylElems or bodySetup.SphylElems,
-    }
-    for kind, arr in pairs(arrays) do
-        if arr then
-            cache.Arrays[kind] = arr
-            cache.Elements[kind] = {}
-            for index = 0, HS_ArrayCount(arr) - 1 do
-                local elem = HS_ArrayGet(arr, index)
-                if elem then
-                    if kind == "Box" then
-                        cache.Elements[kind][index] = { X = elem.X, Y = elem.Y, Z = elem.Z }
-                    elseif kind == "Sphere" then
-                        cache.Elements[kind][index] = { Radius = elem.Radius }
-                    else
-                        cache.Elements[kind][index] = { Radius = elem.Radius, Length = elem.Length }
-                    end
-                end
-            end
-        end
-    end
-    return cache
-end
-
-local function HS_ApplyBody(bodyCache, scale)
-    if not bodyCache or not HS_Valid(bodyCache.Setup) then return end
-    local geom = bodyCache.Setup.AggGeom
-    for kind, arr in pairs(bodyCache.Arrays or {}) do
-        local originals = (bodyCache.Elements or {})[kind] or {}
-        for index, original in pairs(originals) do
-            local elem = HS_ArrayGet(arr, index)
-            if elem then
-                if kind == "Box" then
-                    elem.X = (tonumber(original.X) or 0) * scale
-                    elem.Y = (tonumber(original.Y) or 0) * scale
-                    elem.Z = (tonumber(original.Z) or 0) * scale
-                elseif kind == "Sphere" then
-                    elem.Radius = (tonumber(original.Radius) or 0) * scale
-                else
-                    elem.Radius = (tonumber(original.Radius) or 0) * scale
-                    elem.Length = (tonumber(original.Length) or 0) * scale
-                end
-                HS_ArraySet(arr, index, elem)
-            end
-        end
-    end
-    pcall(function()
-        if geom then bodyCache.Setup.AggGeom = geom end
-    end)
-end
-
-local function HS_ApplyAsset(asset, mesh, scale)
-    if not HS_Valid(asset) then return false end
-    local key = HS_AssetName(asset)
-    local cache = Headshot.Assets[key]
-    if cache and cache.Asset ~= asset then
-        cache = nil
-        Headshot.Assets[key] = nil
-    end
-    if scale <= 1.001 then
-        if cache then Headshot.RestoreAsset(key) end
-        return false
-    end
-    if not cache then
-        cache = { Asset = asset, Bodies = {}, Meshes = {}, Scale = nil }
-        Headshot.Assets[key] = cache
-    end
-
-    if cache.Scale ~= scale then
-        local setups = asset.SkeletalBodySetups
-        if not setups then
-            Headshot.Assets[key] = nil
-            return false
-        end
-        local found = false
-        local count = math.min(HS_ArrayCount(setups), 80)
-        for index = 0, count - 1 do
-            local bodySetup = HS_ArrayGet(setups, index)
-            if HS_Valid(bodySetup) then
-                local bone = string.lower(tostring(bodySetup.BoneName or ""))
-                if bone:find("head", 1, true) or bone:find("neck", 1, true) then
-                    local bodyCache = cache.Bodies[index]
-                    if not bodyCache then
-                        bodyCache = HS_CaptureBody(bodySetup)
-                        cache.Bodies[index] = bodyCache
-                    end
-                    HS_ApplyBody(bodyCache, scale)
-                    found = true
-                end
-            end
-        end
-        if not found then
-            Headshot.Assets[key] = nil
-            return false
-        end
-        cache.Scale = scale
-        -- Refresh physics once per scale change for every mesh sharing this asset.
-        for _, knownMesh in pairs(cache.Meshes or {}) do
-            HS_RefreshMesh(knownMesh, asset)
-        end
-    end
-
-    if HS_Valid(mesh) then
-        local meshKey = tostring(mesh)
-        if not cache.Meshes[meshKey] then
-            cache.Meshes[meshKey] = mesh
-            HS_RefreshMesh(mesh, asset)
-        end
-    end
-    Headshot.Applied = true
-    return true
-end
-
-function Headshot.RestoreAsset(key)
-    local cache = Headshot.Assets[key]
-    if not cache then return end
-    for _, bodyCache in pairs(cache.Bodies or {}) do
-        if HS_Valid(bodyCache.Setup) then
-            local geom = bodyCache.Setup.AggGeom
-            for kind, arr in pairs(bodyCache.Arrays or {}) do
-                local originals = (bodyCache.Elements or {})[kind] or {}
-                for index, original in pairs(originals) do
-                    local elem = HS_ArrayGet(arr, index)
-                    if elem then
-                        if kind == "Box" then
-                            elem.X = original.X
-                            elem.Y = original.Y
-                            elem.Z = original.Z
-                        elseif kind == "Sphere" then
-                            elem.Radius = original.Radius
-                        else
-                            elem.Radius = original.Radius
-                            elem.Length = original.Length
-                        end
-                        HS_ArraySet(arr, index, elem)
-                    end
-                end
-            end
-            pcall(function()
-                if geom then bodyCache.Setup.AggGeom = geom end
-            end)
-        end
-        bodyCache.Setup = nil
-        bodyCache.Arrays = nil
-        bodyCache.Elements = nil
-    end
-    if HS_Valid(cache.Asset) then
-        for _, mesh in pairs(cache.Meshes or {}) do
-            HS_RefreshMesh(mesh, cache.Asset)
-        end
-    end
-    Headshot.Assets[key] = nil
-end
-
-local function HS_RestoreHitboxes()
-    local keys = {}
-    for key in pairs(Headshot.Assets or {}) do keys[#keys + 1] = key end
-    for _, key in ipairs(keys) do
-        pcall(Headshot.RestoreAsset, key)
-    end
-    Headshot.Applied = false
-end
-
-local function HS_GetLocalPlayer()
-    local player = nil
-    pcall(function()
-        local GDP = GameplayData or require("GameLua.GameCore.Data.GameplayData")
-        if GDP and type(GDP.GetPlayerCharacter) == "function" then player = GDP.GetPlayerCharacter() end
-    end)
-    return HS_Valid(player) and player or nil
-end
-
-local function HS_GetShootComponent()
-    local player = HS_GetLocalPlayer()
-    if not player then return nil end
-    local weapon = nil
-    pcall(function()
-        local manager = player.WeaponManagerComponent or player.WeaponManager
-        if HS_Valid(manager) then
-            weapon = manager.CurrentWeaponReplicated or manager.CurrentWeapon
-        end
-        if not HS_Valid(weapon) then weapon = player.CurrentWeaponReplicated or player.CurrentWeapon end
-        if not HS_Valid(weapon) and type(player.GetCurrentWeapon) == "function" then
-            weapon = player:GetCurrentWeapon()
-        end
-    end)
-    if not HS_Valid(weapon) then return nil end
-    local shoot = nil
-    pcall(function()
-        shoot = weapon.ShootWeaponEntityComp
-        if not HS_Valid(shoot) and type(weapon.GetShootWeaponEntityComponent) == "function" then
-            shoot = weapon:GetShootWeaponEntityComponent()
-        end
-    end)
-    return HS_Valid(shoot) and shoot or nil
-end
-
-local function HS_ApplyDamage()
-    local shoot = HS_GetShootComponent()
-    if not shoot then return end
-    -- Fixed values from the original headshot logic.
-    local headDamage = 10.0
-    local bodyDamage = 0.1
-    local key = tostring(shoot)
-    local cache = Headshot.DamageCache[key]
-    if not cache then
-        cache = {
-            Object = shoot,
-            Head = shoot.HeadDamageMultiplier,
-            Body = shoot.BodyDamageMultiplier,
-        }
-        Headshot.DamageCache[key] = cache
-    end
-    if type(shoot.SetHeadDamageMultiplier) == "function" then
-        pcall(shoot.SetHeadDamageMultiplier, shoot, headDamage)
-    end
-    pcall(function() shoot.HeadDamageMultiplier = headDamage end)
-    if type(shoot.SetBodyDamageMultiplier) == "function" then
-        pcall(shoot.SetBodyDamageMultiplier, shoot, bodyDamage)
-    end
-    pcall(function() shoot.BodyDamageMultiplier = bodyDamage end)
-end
-
-local function HS_RestoreDamage()
-    for key, cache in pairs(Headshot.DamageCache or {}) do
-        local shoot = cache.Object
-        if HS_Valid(shoot) then
-            if type(shoot.SetHeadDamageMultiplier) == "function" then
-                pcall(shoot.SetHeadDamageMultiplier, shoot, tonumber(cache.Head) or 1.0)
-            end
-            if type(shoot.SetBodyDamageMultiplier) == "function" then
-                pcall(shoot.SetBodyDamageMultiplier, shoot, tonumber(cache.Body) or 1.0)
-            end
-            if cache.Head ~= nil then
-                pcall(function() shoot.HeadDamageMultiplier = cache.Head end)
-            end
-            if cache.Body ~= nil then
-                pcall(function() shoot.BodyDamageMultiplier = cache.Body end)
-            end
-        end
-        Headshot.DamageCache[key] = nil
-    end
-end
-
-function Headshot.RestoreAll()
-    HS_RestoreHitboxes()
-    HS_RestoreDamage()
-end
-
-local function HS_ScaleEnemies(scale)
-    local player = HS_GetLocalPlayer()
-    if not player then return false end
-    local myTeam = nil
-    pcall(function()
-        if type(player.GetTeamID) == "function" then myTeam = player:GetTeamID() end
-        if myTeam == nil then myTeam = player.TeamID end
-    end)
-    local pawns = nil
-    pcall(function()
-        if Game and type(Game.GetAllPlayerPawns) == "function" then pawns = Game:GetAllPlayerPawns() end
-    end)
-    if not pawns then return false end
-
-    local any = false
-    for _, pawn in pairs(pawns) do
-        if HS_Valid(pawn) and pawn ~= player then
-            local enemy = true
-            local team = nil
-            pcall(function()
-                if type(pawn.GetTeamID) == "function" then team = pawn:GetTeamID() end
-                if team == nil then team = pawn.TeamID end
-            end)
-            if myTeam ~= nil and team ~= nil then enemy = team ~= myTeam end
-            local alive = true
-            pcall(function()
-                if pawn.bDead == true or pawn.IsDead == true then alive = false end
-                if type(pawn.IsAlive) == "function" and pawn:IsAlive() == false then alive = false end
-            end)
-            if enemy and alive then
-                local mesh = nil
-                pcall(function()
-                    mesh = pawn.Mesh
-                    if not HS_Valid(mesh) and type(pawn.getAvatarComponent2) == "function" then
-                        mesh = pawn:getAvatarComponent2()
-                    end
-                end)
-                if HS_Valid(mesh) then
-                    local asset = mesh.PhysicsAssetOverride
-                    if not HS_Valid(asset) and HS_Valid(mesh.SkeletalMesh) then
-                        asset = mesh.SkeletalMesh.PhysicsAsset
-                    end
-                    if HS_Valid(asset) and asset.SkeletalBodySetups then
-                        if HS_ApplyAsset(asset, mesh, scale) then any = true end
-                    end
-                end
-            end
-        end
-    end
-    return any
-end
-
-function Headshot.Tick()
-    local now = os.clock()
-    if now - (Headshot._LastTick or 0) < 1.0 then return end
-    Headshot._LastTick = now
-
-    local cfg = _G.RapzhangConfig or {}
-    local active = _G.RapzhangState and _G.RapzhangState.GameplayActive == true
-    if cfg.HeadshotFeature ~= true or not active then
-        if Headshot.Applied or next(Headshot.DamageCache or {}) ~= nil then
-            pcall(Headshot.RestoreAll)
-        end
-        return
-    end
-
-    local scale = 5.0
-    pcall(HS_ScaleEnemies, scale)
-    pcall(HS_ApplyDamage)
-end
-
-function Headshot.Enable()
-    _G.RapzhangConfig.HeadshotFeature = true
-    Headshot._LastTick = 0
-end
-
-function Headshot.Disable()
-    _G.RapzhangConfig.HeadshotFeature = false
-    pcall(Headshot.RestoreAll)
-end
-
--- Low-graphics keeper: reapply only when the match starts or the user/game
--- changed a relevant graphics value. FPS caps and view distance are untouched.
-local function HS_LowGraphicsTick(now)
-    local cfg = _G.RapzhangConfig or {}
-    if cfg.LowGraphics ~= true then return end
-    local inMatch = _G.RapzhangState and _G.RapzhangState.GameplayActive == true
-    if inMatch and not Headshot._WasInMatch then
-        Headshot._LowGraphicsForceAt = now + 3.0
-    end
-    Headshot._WasInMatch = inMatch
-    if Headshot._LowGraphicsForceAt and now >= Headshot._LowGraphicsForceAt then
-        Headshot._LowGraphicsForceAt = nil
-        pcall(_G.RapzhangX3.ApplyLowGraphics, true, true)
-        Headshot._LowGraphicsLast = now
-        return
-    end
-    if now - (Headshot._LowGraphicsLast or 0) >= 5.0 then
-        Headshot._LowGraphicsLast = now
-        pcall(_G.RapzhangX3.EnsureLowGraphics)
-    end
-end
-
-if not Headshot.Started then
-    Headshot.Started = true
-    local originalFastTick = _G.FastTick
-    if type(originalFastTick) == "function" then
-        _G.FastTick = function(...)
-            if originalFastTick then originalFastTick(...) end
-            pcall(Headshot.Tick)
-            pcall(HS_LowGraphicsTick, os.clock())
-        end
-    else
-        local function headshotFallbackTick()
-            pcall(Headshot.Tick)
-            pcall(HS_LowGraphicsTick, os.clock())
-            pcall(function()
-                local ticker = require("common.time_ticker")
-                if ticker and ticker.AddTimerOnce then ticker.AddTimerOnce(1.0, headshotFallbackTick) end
-            end)
-        end
-        pcall(function()
-            local ticker = require("common.time_ticker")
-            if ticker and ticker.AddTimerOnce then ticker.AddTimerOnce(2.0, headshotFallbackTick) end
-        end)
-    end
-end
 
 -- NO-BRPLAYER MODE: payload dijalankan sebagai external module.
 -- Tidak membuat atau mendaftarkan CBRPlayerCharacterBase.
