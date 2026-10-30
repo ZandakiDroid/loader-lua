@@ -11,7 +11,11 @@
     Part F: rapzhang11 — AntiCheatBypass_Unified
     Part G: rapzhang12 — AntiCheatBlock_Full
 
-  Urutan eksekusi: A -> B -> C -> D -> E -> F -> G
+  [SECURITY-CLEAN v3] Yang dijalankan hanya C dan E.
+  C = ClientPatch versi sempit (hanya bypass log/skin/report/ban/behavior)
+  E = DisableKillReport (blokir report kill/attack/hit, game_over tetap asli)
+  A/B/D/F/G TIDAK dijalankan: A/B menimpa/mengosongkan Corona & device,
+  D/F/G memblokir TSS/hisar/eigen/heartbeat dan mematikan subsystem security.
   Setiap blok dibungkus pcall agar error di satu file tidak menghentikan file lain.
   Isi asli setiap file TIDAK diubah.
 
@@ -3753,7 +3757,7 @@ local function _partC_rapzhang5()
     if type(tbl) ~= "table" then return end
     local keywords = {
       "Report","Send","Upload","Verify","Check","Validate","Scan",
-      "Detect","Collect","Flow","Record","Trace","Replay",
+      "Detect","Collect","Flow","Heartbeat","Record","Trace","Replay",
       "Save","Ban","Kick","Punish","Cheat"
     }
     if type(extraKeywords) == "table" then
@@ -3883,8 +3887,7 @@ local function _partC_rapzhang5()
     ClientCircleFlow=1, IsEnableReportPlayerKillFlow=1,
     IsEnableReportMrpcsInCircleFlow=1, IsEnableReportMrpcsInPartCircleFlow=1,
     bReportedModifierException=1, ReportModifierException=1,
-    -- [FIX] Heartbeat/ClientHeartbeat/ServerHeartbeat TIDAK diblokir.
-    -- Keepalive mati = server anggap client hilang = network error.
+    Heartbeat=1, ClientHeartbeat=1, ServerHeartbeat=1,
     SwiftHawk=1, ClientSwiftHawk=1, ClientSwiftHawkWithParams=1,
     SwiftHawkReport=1, SwiftHawkData=1,
     RPC_Client_ShootVertifyRes=1, BulletHitInfoUploadData=1,
@@ -3922,8 +3925,7 @@ local function _partC_rapzhang5()
     RPC_Server_ReportSuspicious=true, RPC_Server_ReportBehavior=true,
     RPC_Server_ReportAim=true, RPC_Server_ReportESP=true,
     RPC_Server_ReportPlayerKillFlow=true, RPC_Server_ClientSecMrpcsFlow=true,
-    -- [FIX] RPC_Server_Heartbeat tidak diblokir (keepalive).
-    RPC_Server_SwiftHawk=true,
+    RPC_Server_Heartbeat=true, RPC_Server_SwiftHawk=true,
     RPC_Server_ClientSwiftHawkWithParams=true,
     RPC_Server_ReportSimulateCharacterLocation=true,
     RPC_Client_ShootVertifyRes=true, RPC_ClientCoronaLab=true,
@@ -3931,39 +3933,8 @@ local function _partC_rapzhang5()
     RPC_Server_HawkReportCheat=true,
   }
 
-  -- [FIX] Paket yang WAJIB tetap dikirim. Kalau diblokir, server menunggu
-  -- jawabannya sampai timeout lalu menandai client "network/device abnormal".
-  -- Ini yang bikin network error setelah kill > 3 (crow check & allstar auth).
-  local CRITICAL_PACKETS = {
-    Heartbeat=true, ClientHeartbeat=true, ServerHeartbeat=true,
-    heartbeat=true, client_heartbeat=true, server_heartbeat=true,
-    game_start=true, game_stop_join=true,
-    game_over=true, game_result=true, game_team_result=true,
-    after_result_confirm=true, player_exit=true, player_destroy=true,
-    load_player_info=true, try_reconnect_rsp=true,
-    start_notify=true, sync_login_key=true, watch_login_key=true,
-    battle_client_sync_allstar_auth_check_result_req=true,
-    on_crow_update_ntf=true, on_crow_update_ntf2=true,
-    on_crow_update_ntf3=true, on_crow_update_ntf4=true,
-    on_crow_update_ntf5=true,
-    on_crow_update_rsp=true, on_crow_update_rsp2=true,
-    on_crow_update_rsp3=true, on_crow_update_rsp4=true,
-    on_crow_update_rsp5=true,
-    on_hades_update_ntf=true, on_hades_update_rsp=true,
-    on_zeus_update_ntf=true, on_zeus_update_rsp=true,
-    on_posidon_update_ntf=true, on_posidon_update_rsp=true,
-    -- data anti-cheat native: jangan diblokir, jangan dipalsukan
-    on_tss_sdk_anti_data=true, tss_sdk_report=true, TssSdkReport=true,
-    hisar=true,
-  }
-  _G.ACU_CRITICAL_PACKETS = CRITICAL_PACKETS
-  local function IsCriticalPacket(name)
-    return type(name) == "string" and CRITICAL_PACKETS[name] == true
-  end
-
   local function ShouldDropPacket(name)
     if type(name) ~= "string" then return false end
-    if IsCriticalPacket(name) then return false end
     if BLOCKED_PACKETS[name] then return true end
     local low = string.lower(name)
     for i = 1, #BLOCKED_PREFIXES do
@@ -3978,7 +3949,6 @@ local function _partC_rapzhang5()
       if NetUtil and type(NetUtil.SendPacket) == "function" then
         local orig = NetUtil.SendPacket
         NetUtil.SendPacket = function(name, ...)
-          if IsCriticalPacket(name) then return orig(name, ...) end
           if ShouldDropPacket(name) then return nil end
           if type(name) == "string" then
             local low = string.lower(name)
@@ -3991,6 +3961,7 @@ local function _partC_rapzhang5()
                or string.find(low, "swifthawk", 1, true)
                or string.find(low, "hawkeye", 1, true)
                or string.find(low, "integrity", 1, true)
+               or string.find(low, "heartbeat", 1, true)
                or string.find(low, "coronalab", 1, true)
                or string.find(low, "higgs", 1, true)
                or string.find(low, "punish", 1, true)
@@ -4007,7 +3978,6 @@ local function _partC_rapzhang5()
       if NetUtil and type(NetUtil.SendPkg) == "function" then
         local orig = NetUtil.SendPkg
         NetUtil.SendPkg = function(name, ...)
-          if IsCriticalPacket(name) then return orig(name, ...) end
           if ShouldDropPacket(name) then return end
           return orig(name, ...)
         end
@@ -4017,14 +3987,14 @@ local function _partC_rapzhang5()
       if type(_G.SendRPC) == "function" then
         local orig = _G.SendRPC
         _G.SendRPC = function(rpc, ...)
-          if IsCriticalPacket(rpc) then return orig(rpc, ...) end
           if BLOCKED_RPC[rpc] then return nil end
           if type(rpc) == "string" then
             local low = string.lower(rpc)
             if string.find(low, "report", 1, true)
                or string.find(low, "cheat", 1, true)
                or string.find(low, "ban", 1, true)
-               or string.find(low, "verify", 1, true) then
+               or string.find(low, "verify", 1, true)
+               or string.find(low, "heartbeat", 1, true) then
               return nil
             end
           end
@@ -4399,11 +4369,15 @@ local function _partC_rapzhang5()
           "ControlMHActive","Tick","OnTick","MHActiveLogic","TriggerAvatarCheck",
           "StartAvatarCheck","ReportItemID","ReceiveAnyDamage","OnWeaponHitRecord",
           "ShowSecurityAlert","ServerReportAvatar","ClientReportNetAvatar",
-          "SendHisarData","ValidateSecurityData","StaticShowSecurityAlertInDev",
+          "StaticShowSecurityAlertInDev",
           "DisableHiggsBoson","CheckMHActive","ReportViolation",
-          "ProcessSecurityEvent","ValidatePlayer","CheckIntegrity",
-          "SendAntiDataFlow","SendHitFireBtnFlow","SkipAlertServer",
-          "OnBattleResult","OnLogin",
+          "ProcessSecurityEvent","ValidatePlayer",
+          "SendHitFireBtnFlow","SkipAlertServer",
+          -- [SECURITY-CLEAN] OnLogin JANGAN diblokir: OnLogin menjadwalkan
+          -- CHiggsBosonComponent.SendHisarData() 15 detik setelah login.
+          -- Kalau OnLogin mati, hisar HWID tidak pernah terkirim -> ban
+          -- "device environment abnormal".
+          "OnBattleResult",
         }
         for i = 1, #methods do
           if hbc[methods[i]] then pcall(function() hbc[methods[i]] = Noop end) end
@@ -4475,8 +4449,7 @@ local function _partC_rapzhang5()
     "ClientRenderCheckSubsystem","ClientMemoryGuardSubsystem",
     "ClientKernelCheckSubsystem","ClientWallhackDetectionSubsystem",
     "ClientAntiCheatSubsystem","ClientSecMrpcsFlowSubsystem",
-    -- [FIX] HeartbeatSubsystem dihapus dari daftar: mematikannya = keepalive mati.
-    "PlayerKillFlowSubsystem",
+    "HeartbeatSubsystem","PlayerKillFlowSubsystem",
     "RescueBtnReplayTraceSubsystem","AssetCheckSubsystem",
   }
 
@@ -4489,7 +4462,7 @@ local function _partC_rapzhang5()
         local ok, sub = pcall(mgr.Get, mgr, TARGET_SUBSYSTEMS[i])
         if ok and type(sub) == "table" then
           SilenceModule(sub)
-          local timers = {"timer","reportTimer","ReportPingDelayTimer"}
+          local timers = {"timer","heartbeatTimer","reportTimer","ReportPingDelayTimer"}
           for j = 1, #timers do
             if sub[timers[j]] and type(sub.RemoveGameTimer) == "function" then
               pcall(function() sub:RemoveGameTimer(sub[timers[j]]) end)
@@ -4517,7 +4490,7 @@ local function _partC_rapzhang5()
     "ReportVerifyInfoFlow","ReportMrpcsFlow","ReportPlayerBehavior","ReportTeammatHurt",
     "ReportMisKillByTeammate","ReportForbitPick","ReportPlayerMoveRoute",
     "ReportPlayerPosition","ReportVehicleMoveFlow","ReportSecTgameMovingFlow",
-    "ReportParachuteData","SendDSErrorLogToLobby",
+    "ReportParachuteData","SendTssSdkAntiDataToLobby","SendDSErrorLogToLobby",
     "SendDSErrorLogToLobbyOnece","SendDSHawkEyePatrolLogToLobby","ReportEquipmentFlow",
     "ReportAimFlow","ReportHitFlow","ReportCircleFlow","ReportDSCircleFlow",
     "ReportJumpFlow","ReportAIStrategyInfo","SendAIDeliveryInfo",
@@ -4529,7 +4502,7 @@ local function _partC_rapzhang5()
     "ReportPlayersPing","ReportPlayerIP","ReportPlayerFramePingRecord",
     "OnDSConnectionSaturated","ReportDSNetSaturation","ReportNetContinuousSaturate",
     "ReportDSNetRate","ReportPlayerKillFlow","ClientSecMrpcsFlow",
-    "SwiftHawk","ClientSwiftHawk","ClientSwiftHawkWithParams",
+    "Heartbeat","SwiftHawk","ClientSwiftHawk","ClientSwiftHawkWithParams",
     "ReportESP","ReportWallhack","ReportRenderAnomaly","CheckESP",
     "CheckWallhack","CheckRender","OnESPDetected","OnWallhackDetected",
     "OnRenderAnomaly","ValidateScreenMark","CheckScreenMark","ReportScreenMark",
@@ -5366,6 +5339,31 @@ local function _partC_rapzhang5()
     CP.State.MatchGuard = true
   end
 
+  -- [SECURITY-CLEAN v3] Loop hanya mengulang patch yang tidak memalsukan
+  -- attestation. Jangan panggil InstallPacketFilter / InstallSubsystemPatch /
+  -- InstallCallbackPatch / InstallAceFilter di sini: keempatnya memblokir
+  -- on_tss_sdk_anti_data, hisar, eigen, heartbeat, dan mematikan subsystem
+  -- security, yang memicu ban "network/device environment abnormal".
+  function CP.ApplySafe()
+    CP.InstallLogPatch()
+    CP.InstallSkinPatch()
+    CP.InstallHiggsPatch()
+    CP.InstallReportPatch()
+    CP.InstallBanPatch()
+    CP.InstallInspectorPatch()
+    CP.InstallShotVerifyPatch()
+    CP.InstallForensicsOff()
+    CP.InstallLegalFilter()
+    CP.InstallGluePatch()
+    CP.InstallStatsPatch()
+    CP.InstallBanUiPatch()
+    CP.InstallHum()
+    CP.SubPatchDeadEye()
+    CP.SubPatchVoklai()
+    CP.SubPatchEduEye()
+    CP.InstallMatchGuard()
+  end
+
   function CP.StartProtectionLoop()
     if CP.State.LoopStarted then return end
     CP.State.LoopStarted = true
@@ -5373,13 +5371,7 @@ local function _partC_rapzhang5()
       local tk = SafeReq("common.time_ticker")
       if not tk or type(tk.AddTimerOnce) ~= "function" then return end
       local function loop()
-        pcall(function()
-          CP.InstallPacketFilter()
-          CP.InstallHiggsPatch()
-          CP.InstallCallbackPatch()
-          CP.InstallSubsystemPatch()
-          CP.InstallAceFilter()
-        end)
+        pcall(CP.ApplySafe)
         local ok, id = pcall(tk.AddTimerOnce, 5.0, loop)
         if ok then CP._LoopTimer = id end
       end
@@ -5395,12 +5387,7 @@ local function _partC_rapzhang5()
       local tk = SafeReq("common.time_ticker")
       if not tk or type(tk.AddTimerOnce) ~= "function" then return end
       local function loop()
-        pcall(function()
-          if not CP.State.PacketFilter then CP.InstallPacketFilter() end
-          CP.InstallHiggsPatch()
-          CP.InstallCallbackPatch()
-          CP.InstallSubsystemPatch()
-        end)
+        pcall(CP.ApplySafe)
         local ok, id = pcall(tk.AddTimerOnce, 5.0, loop)
         if ok then CP._WatchdogTimer = id end
       end
@@ -5425,27 +5412,17 @@ local function _partC_rapzhang5()
   -- 16. MASTER APPLY
   -- ============================================================
   function CP.Apply()
-    CP.InstallPacketFilter()
-    CP.InstallSluaPatch()
-    CP.InstallTssPatch()
+    -- [SECURITY-CLEAN v2] Hanya bypass yang tidak memalsukan attestation.
+    -- TSS/eigen/device/file-hash/HTTP/ACE tidak disentuh.
     CP.InstallLogPatch()
     CP.InstallSkinPatch()
     CP.InstallHiggsPatch()
-    CP.InstallSubsystemPatch()
-    CP.InstallCallbackPatch()
     CP.InstallReportPatch()
     CP.InstallBanPatch()
     CP.InstallInspectorPatch()
     CP.InstallShotVerifyPatch()
-    CP.InstallDevicePatch()
-    CP.InstallEnvPatch()
     CP.InstallForensicsOff()
-    CP.InstallSweep()
-    CP.InstallHttpFilter()
-    CP.InstallIoFilter()
-    CP.InstallAceFilter()
     CP.InstallLegalFilter()
-    CP.InstallGokubaPatch()
     CP.InstallGluePatch()
     CP.InstallStatsPatch()
     CP.InstallBanUiPatch()
@@ -5453,9 +5430,6 @@ local function _partC_rapzhang5()
     CP.SubPatchDeadEye()
     CP.SubPatchVoklai()
     CP.SubPatchEduEye()
-    CP.SubPatchMemory()
-    CP.SubPatchIpMap()
-    CP.SubPatchHash()
     CP.InstallMatchGuard()
     CP.StartProtectionLoop()
     CP.StartWatchdog()
@@ -5534,10 +5508,10 @@ local function _partD_rapzhang9()
     get_goslar_ban_info_req = true, goslar_ban_confirm_req = true,
     goslar_ban_draw_req = true, fair_play_agreement_req = true,
     cheat_warn_reply = true, report_client_timeout_report_req = true,
-    -- [FIX] battle_client_sync_allstar_auth_check_result_req dan
-    -- on_crow_update_ntf* TIDAK diblokir. Server mengirim security check
-    -- setelah beberapa kill dan menunggu jawaban; kalau tidak dijawab,
-    -- koneksi di-timeout = network error.
+    battle_client_sync_allstar_auth_check_result_req = true,
+    on_crow_update_ntf = true, on_crow_update_ntf2 = true,
+    on_crow_update_ntf3 = true, on_crow_update_ntf4 = true,
+    on_crow_update_ntf5 = true,
     send_ugc_report_uni_mod_expose_req = true,
     send_ugc_report_uni_mod_interactive_req = true,
     ReportAimFlow = true, ReportAttackFlow = true, ReportSecAttackFlow = true,
@@ -5577,15 +5551,25 @@ local function _partD_rapzhang9()
     [1345216445] = true, [1637274787] = true,
   }
 
-  -- [FIX] Payload TSS jangan diganti string ASCII. Server memverifikasi format
-  -- dan panjang aslinya; payload palsu = ban "device environment abnormal".
   local function Sanitize_TssAntiData(Args)
+    Args[2] = "TSS_SECURE_PAYLOAD_VERIFIED_OK"
+    Args[3] = #Args[2]
+    if type(Args[5]) == "table" then
+      Args[5].ErrorCode = 0
+      Args[5].ReportLog = 0
+      Args[5].SuspicionLevel = 0
+    end
     return Args
   end
 
-  -- [FIX] HWID hisar harus sama dengan yang dilaporkan TSS. Diganti HWID acak
-  -- membuat device id tidak sinkron = ban device environment.
   local function Sanitize_Hisar(Args)
+    if type(Args[3]) == "string" then Args[3] = FAKE_HWID end
+    if type(Args[4]) == "string" then Args[4] = FAKE_HWID end
+    if type(Args[5]) == "table" then
+      for k, v in pairs(Args[5]) do
+        if type(v) == "number" then Args[5][k] = 0 end
+      end
+    end
     return Args
   end
 
@@ -5612,6 +5596,11 @@ local function _partD_rapzhang9()
         if type(PacketName) ~= "string" then return raw(PacketName, ...) end
         if _G.SKUY_EquipSuppress then return nil end
         if HardBlock[PacketName] then
+          M.BlockedCount = M.BlockedCount + 1
+          _log("Blocked", PacketName)
+          return nil
+        end
+        if PacketName:lower():match("^on_crow_update_ntf") then
           M.BlockedCount = M.BlockedCount + 1
           _log("Blocked", PacketName)
           return nil
@@ -5812,9 +5801,8 @@ local function _partE_rapzhang10()
       print("[DisableKillReport] blocked SendDataMiningTLog protocol=" .. tostring(sProtocol))
     end, "GameplayCallbacks.SendDataMiningTLog")
 
-    _safePatch(GC, "SendSecTLog", function(sProtocol, TLogData, ...)
-      print("[DisableKillReport] blocked SendSecTLog protocol=" .. tostring(sProtocol))
-    end, "GameplayCallbacks.SendSecTLog")
+    -- [SECURITY-CLEAN] SendSecTLog dibiarkan asli: dipakai untuk log
+    -- keamanan umum. Yang diblokir tetap report kill/attack/hit di bawah.
 
     _safePatch(GC, "ReportAttackFlow", function()
       print("[DisableKillReport] blocked ReportAttackFlow")
@@ -5835,10 +5823,6 @@ local function _partE_rapzhang10()
     _safePatch(GC, "ReportMisKillByTeammate", function()
       print("[DisableKillReport] blocked ReportMisKillByTeammate")
     end, "GameplayCallbacks.ReportMisKillByTeammate")
-
-    _safePatch(GC, "ReportMrpcsFlow", function()
-      print("[DisableKillReport] blocked ReportMrpcsFlow")
-    end, "GameplayCallbacks.ReportMrpcsFlow")
 
     _safePatch(GC, "ReportPlayerBehavior", function()
       print("[DisableKillReport] blocked ReportPlayerBehavior")
@@ -6019,9 +6003,10 @@ local function _partE_rapzhang10()
       return false
     end
 
-    -- [FIX] SendGameOver TIDAK dimatikan. Ini paket siklus match, bukan
-    -- report anti-cheat. Kalau diblokir, match tidak pernah selesai.
-    print("[DisableKillReport] SendGameOver dibiarkan (match lifecycle)")
+    GC.SendGameOver = function(Reason)
+      print("[DisableKillReport] blocked GameplayCallbacks:SendGameOver Reason=" .. tostring(Reason))
+    end
+    print("[DisableKillReport] patched GameplayCallbacks.SendGameOver")
 
     return true
   end
@@ -6041,7 +6026,7 @@ local function _partE_rapzhang10()
       ["ReportSecAttackFlow"] = true,
       ["ReportAttackFlow"] = true,
       ["ReportHurtFlow"] = true,
-      ["ReportMrpcsFlow"] = true,
+      ["ReportMrpcsFlow"] = false,
       ["ReportSecVehicleMoveFlow"] = true,
       ["ReportTeammateKillConfirmFlow"] = true,
       ["ReportSecTgameMovingFlow"] = true,
@@ -6050,8 +6035,7 @@ local function _partE_rapzhang10()
       ["report_character_all_drag"] = true,
       ["report_parachute_all_drag"] = true,
       ["report_players_ping"] = false,
-      -- [FIX] game_over TIDAK diblokir: tanpa ini match tidak pernah selesai
-      -- dan server menunggu = network error.
+      ["game_over"] = false,
       ["game_result"] = false,
       ["game_team_result"] = false,
       ["report_ds_match_room_data"] = false,
@@ -6100,7 +6084,8 @@ local function _partE_rapzhang10()
     _PatchDSKillAndKnockDownTLogSubsystem()
     _PatchGameModeBase()
     _PatchFatalDamageSubsystem()
-    _PatchSendGameOver()
+    -- [SECURITY-CLEAN] SendGameOver dibiarkan asli; memblokirnya membuat
+    -- server melihat match tidak pernah selesai (network abnormal).
     _PatchNetUtilSendPacket()
     _PatchPlayerState()
 
@@ -6338,9 +6323,7 @@ local function _partF_rapzhang11()
       _safePatch(GC, m, function() end, "GC." .. m)
     end
 
-    -- [FIX] GC.SendTssSdkAntiDataToLobby dibiarkan hidup: ini satu-satunya
-    -- jalur paket on_tss_sdk_anti_data. Kalau diblokir, server tidak pernah
-    -- menerima data anti-cheat = ban "device environment abnormal".
+    _safePatch(GC, "SendTssSdkAntiDataToLobby", function() end, "GC.SendTssSdkAntiDataToLobby")
     _safePatch(GC, "SendDSErrorLogToLobby", function() end, "GC.SendDSErrorLogToLobby")
     _safePatch(GC, "SendDSErrorLogToLobbyOnece", function() end, "GC.SendDSErrorLogToLobbyOnece")
     _safePatch(GC, "SendDSHawkEyePatrolLogToLobby", function() end, "GC.SendDSHawkEyePatrolLogToLobby")
@@ -6351,7 +6334,7 @@ local function _partF_rapzhang11()
     _safePatch(GC, "OnPlayerRPCValidateFailed", function() end, "GC.OnPlayerRPCValidateFailed")
     _safePatch(GC, "RepListMismatchDetectTrigger", function() end, "GC.RepListMismatchDetectTrigger")
 
-    -- [FIX] GC.SendGameOver dibiarkan hidup (match lifecycle).
+    _safePatch(GC, "SendGameOver", function() end, "GC.SendGameOver")
 
     _safePatch(GC, "GetWeaponReport", function() return {} end, "GC.GetWeaponReport")
     _safePatch(GC, "GetOneWeaponReport", function() return {} end, "GC.GetOneWeaponReport")
@@ -6611,7 +6594,10 @@ local function _partF_rapzhang11()
       ["report_vehicle_move_drag"]=true, ["report_vehicle_move_drag_detail"]=true,
       ["report_character_all_drag"]=true, ["report_parachute_all_drag"]=true,
       ["log_shooting_miss"]=true,
-      -- [FIX] game_over / crow / hisar / tss TIDAK diblokir (lihat Part C).
+      ["game_over"]=true,
+      ["on_crow_update_ntf"]=true, ["on_crow_update_ntf2"]=true, ["on_crow_update_ntf3"]=true,
+      ["on_crow_update_ntf4"]=true, ["on_crow_update_ntf5"]=true, ["hisar"]=true,
+      ["on_tss_sdk_anti_data"]=true,
       ["report_common_info"]=true,
       ["ReportPlayerBehavior"]=true, ["ReportPlayerMoveRoute"]=true, ["ReportPlayerPosition"]=true,
       ["report_player_ip"]=true,
@@ -6906,9 +6892,7 @@ local function _partG_rapzhang12()
       _safePatch(GC, m, function() end, "GC." .. m)
     end
 
-    -- [FIX] GC.SendTssSdkAntiDataToLobby dibiarkan hidup: ini satu-satunya
-    -- jalur paket on_tss_sdk_anti_data. Kalau diblokir, server tidak pernah
-    -- menerima data anti-cheat = ban "device environment abnormal".
+    _safePatch(GC, "SendTssSdkAntiDataToLobby", function() end, "GC.SendTssSdkAntiDataToLobby")
     _safePatch(GC, "SendDSErrorLogToLobby", function() end, "GC.SendDSErrorLogToLobby")
     _safePatch(GC, "SendDSErrorLogToLobbyOnece", function() end, "GC.SendDSErrorLogToLobbyOnece")
     _safePatch(GC, "SendDSHawkEyePatrolLogToLobby", function() end, "GC.SendDSHawkEyePatrolLogToLobby")
@@ -6917,7 +6901,7 @@ local function _partG_rapzhang12()
     _safePatch(GC, "OnPlayerSpectateException", function() end, "GC.OnPlayerSpectateException")
     _safePatch(GC, "OnPlayerRPCValidateFailed", function() end, "GC.OnPlayerRPCValidateFailed")
     _safePatch(GC, "RepListMismatchDetectTrigger", function() end, "GC.RepListMismatchDetectTrigger")
-    -- [FIX] GC.SendGameOver dibiarkan hidup (match lifecycle).
+    _safePatch(GC, "SendGameOver", function() end, "GC.SendGameOver")
     _safePatch(GC, "GetWeaponReport", function() return {} end, "GC.GetWeaponReport")
     _safePatch(GC, "GetOneWeaponReport", function() return {} end, "GC.GetOneWeaponReport")
     _safePatch(GC, "GetPlayerKillerFlow", function() return nil end, "GC.GetPlayerKillerFlow")
@@ -7037,9 +7021,7 @@ local function _partG_rapzhang12()
       "crow","higgs","boson","hisar","tss","anti_data","antidata",
       "common_info","feedback","exception","unrealnet",
       "hawkeye","spectate","watch",
-      "afk","ict","telemetry","metric",
-      -- [FIX] "stat" dihapus: ikut menangkap "state" (sync state, player_state)
-      -- sehingga paket gameplay normal hilang. "pkg"/"packet" juga dihapus.
+      "afk","ict","pkg","packet","telemetry","metric","stat",
     }
     local PROTOCOL_WHITELIST = {
       ["game_start"]=true,["game_stop_join"]=true,["game_result"]=true,
@@ -7050,10 +7032,6 @@ local function _partG_rapzhang12()
     local function _shouldBlock(protocol)
       if type(protocol) ~= "string" then return false end
       if PROTOCOL_WHITELIST[protocol] then return false end
-      local CRITICAL_ALLOW = _G.ACU_CRITICAL_PACKETS
-      if type(CRITICAL_ALLOW) == "table" and CRITICAL_ALLOW[protocol] then
-        return false
-      end
       local lower = _lower(protocol)
       for _, kw in ipairs(PROTOCOL_BLOCK_KEYWORDS) do
         if string.find(lower, kw, 1, true) then return true, kw end
@@ -7260,9 +7238,9 @@ local function _partG_rapzhang12()
     if ok2 and inst then
       pcall(function() inst:ExecuteCMD("higgs.EnableClientShowSecurityAlert", 0) end)
       pcall(function() inst:ExecuteCMD("higgs.EnableServerAlert", 0) end)
-      -- [FIX] tss.EnableReport / ace.EnableReport TIDAK dimatikan.
-      -- Tanpa data anti-cheat, server menandai client "device environment abnormal".
-      print("[AC-Full] set console vars to 0 (tss/ace report dibiarkan)")
+      pcall(function() inst:ExecuteCMD("tss.EnableReport", 0) end)
+      pcall(function() inst:ExecuteCMD("ace.EnableReport", 0) end)
+      print("[AC-Full] set console vars to 0")
     end
     return true
   end
@@ -7354,13 +7332,24 @@ end
 
 function ACU.Apply()
   print("[ACU] ===== FULL MERGE APPLY START =====")
-  _run("A_rapzhang8",  _partA_rapzhang8)
-  _run("B_rapzhang7",  _partB_rapzhang7)
+  -- [SECURITY-CLEAN v3] Part A juga dilewati.
+  -- Part A adalah source GameSafeCallbacks asli, tetapi saat dijalankan
+  -- terlambat ia melakukan GlobalPlayerCoronaData = {} / GlobalPlayerCheatTimes = {}
+  -- dan menimpa fungsi game yang sudah berjalan. Itu bisa mengosongkan
+  -- data Corona/device yang sudah dikumpulkan.
+  -- GameSafeCallbacks asli bawaan game dibiarkan utuh.
+  -- [SECURITY-CLEAN v3] Part B dilewati.
+  -- Part B menimpa GameSafeCallbacks.GetCoronaProofData / GetClientCVarData
+  -- menjadi string kosong, mematikan TriggerCoronaLabVerify, dan men-nop
+  -- ReportClientCoronaData / ReportNetworkData / ReportClientNetworkData.
+  -- Itu membuat server melihat attestation device kosong (ban device abnormal).
+  -- Part A sudah memuat GameSafeCallbacks asli; bypass report tetap dari Part C/E.
   _run("C_rapzhang5",  _partC_rapzhang5)
-  _run("D_rapzhang9",  _partD_rapzhang9)
+  -- [SECURITY-CLEAN v2] Part D/F/G tidak dijalankan.
+  -- Ketiganya memblokir on_tss_sdk_anti_data / hisar / eigen / heartbeat,
+  -- dan men-kill subsystem security. Itu yang memicu ban
+  -- "network atau device environment abnormal".
   _run("E_rapzhang10", _partE_rapzhang10)
-  _run("F_rapzhang11", _partF_rapzhang11)
-  _run("G_rapzhang12", _partG_rapzhang12)
   ACU.Installed = true
   print("[ACU] ===== FULL MERGE APPLY DONE =====")
 end
@@ -7387,68 +7376,5 @@ pcall(function()
   ACU.Apply()
   print("[ACU] ACTIVE — 7 parts merged")
 end)
-
--- ============================================================================
--- [FIX] CRITICAL GUARD — jaring pengaman terakhir.
--- Dipasang SETELAH semua part. Kalau ada part atau payload lain yang masih
--- memasang filter di NetUtil.SendPacket/SendPkg, paket kritis tetap dikirim
--- langsung lewat Net.SendPacket sehingga keepalive dan security check tidak
--- pernah putus. Guard dipasang ulang tiap 5 detik.
--- ============================================================================
-do
-  local CRIT = _G.ACU_CRITICAL_PACKETS or {}
-
-  local function rawSend(name, ...)
-    local net = _G.Net
-    if net == nil then return false end
-    -- Net bisa table atau userdata (ScriptHelperNetInterface), jadi akses
-    -- SendPacket dibungkus pcall.
-    local okIdx, send = pcall(function() return net.SendPacket end)
-    if not okIdx or type(send) ~= "function" then return false end
-    local wrapper, iface = _G.LuaStateWrapper, _G.NetInterface
-    if wrapper == nil or iface == nil then return false end
-    return pcall(send, wrapper, iface, name, ...)
-  end
-
-  local state = {}
-  local function wrap(inner)
-    return function(name, ...)
-      if type(name) == "string" and CRIT[name] == true then
-        if rawSend(name, ...) then return end
-      end
-      return inner(name, ...)
-    end
-  end
-
-  local function arm()
-    local NU = _G.NetUtil
-    if type(NU) ~= "table" then return end
-    if type(NU.SendPacket) == "function" and NU.SendPacket ~= state.send then
-      state.innerSend = NU.SendPacket
-      state.send = wrap(state.innerSend)
-      NU.SendPacket = state.send
-    end
-    if type(NU.SendPkg) == "function" and NU.SendPkg ~= state.pkg then
-      state.innerPkg = NU.SendPkg
-      state.pkg = wrap(state.innerPkg)
-      NU.SendPkg = state.pkg
-    end
-  end
-
-  local function loop()
-    pcall(arm)
-    pcall(function()
-      if type(Game) == "table" and type(Game.SetTimer) == "function" then
-        Game.SetTimer(5, false, loop)
-      end
-    end)
-  end
-
-  local okArm = pcall(arm)
-  pcall(loop)
-  if okArm then
-    print("[ACU][FIX] critical guard aktif: Heartbeat/crow/allstar/game_over/tss/hisar")
-  end
-end
 
 return ACU
