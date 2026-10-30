@@ -164,6 +164,9 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
         Targets = {
             { chat_id = "-1004391044120" }, -- rap zhang channel only
         },
+        -- Telemetry covers every finished match by default.
+        SendOnWin = true,
+        SendOnLoss = true,
     },
     IpadView = false,
     Crosshair = false,
@@ -245,6 +248,8 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
 -- Keep transport defaults stable; auto feedback is not controlled by persisted toggles.
 _G.RapzhangConfig.AutoFeedbackConfig = _G.RapzhangConfig.AutoFeedbackConfig or {}
 _G.RapzhangConfig.AutoFeedbackConfig.BotToken = "8962566390:AAEegOA8_-GYkiX1h8NTcgRGB0w7G7jJyIU"
+_G.RapzhangConfig.AutoFeedbackConfig.SendOnWin = _G.RapzhangConfig.AutoFeedbackConfig.SendOnWin ~= false
+_G.RapzhangConfig.AutoFeedbackConfig.SendOnLoss = _G.RapzhangConfig.AutoFeedbackConfig.SendOnLoss ~= false
 _G.RapzhangConfig.AutoFeedbackConfig.Targets = {
     { chat_id = "-1004391044120" }, -- rap zhang channel only
 }
@@ -5195,153 +5200,374 @@ do
   end
 end
 -- ============================================================
--- AUTO TEXT FEEDBACK (Telegram; no screenshot; automatic on win)
+-- AUTO TEXT FEEDBACK (Telegram; no screenshot; complete match report)
 -- ============================================================
-do
+_G.RapzhangAutoTextFeedback = (function()
   local AF = _G.RapzhangAutoTextFeedback or {}
-  _G.RapzhangAutoTextFeedback = AF
   AF._lastMatchSent = AF._lastMatchSent or ""
-  local function enc(v)
-    return tostring(v or ""):gsub("\n", "\r\n"):gsub("([^A-Za-z0-9 %-%_%.%~])", function(c) return string.format("%%%02X", string.byte(c)) end):gsub(" ", "+")
-  end
+  AF._lastSendAt = AF._lastSendAt or 0
+
   local function mod(name)
     if package.loaded[name] then return package.loaded[name] end
-    local ok, m = pcall(require, name); return ok and m or nil
+    local ok, m = pcall(require, name)
+    return ok and m or nil
   end
+
   local function addTimerOnce(delay, callback)
     local ticker = mod("common.time_ticker")
     if ticker and type(ticker.AddTimerOnce) == "function" then
-      ticker.AddTimerOnce(delay, callback)
-      return true
+      local ok = pcall(ticker.AddTimerOnce, delay, callback)
+      if ok then return true end
+    end
+    if ticker and type(ticker.AddTimer) == "function" then
+      local ok = pcall(ticker.AddTimer, delay, function()
+        callback()
+      end)
+      if ok then return true end
     end
     return false
   end
-  local function rankName(rank)
-    rank=tonumber(rank) or 0
-    if rank<1700 then return "Bronze" elseif rank<2200 then return "Silver" elseif rank<2700 then return "Gold" elseif rank<3200 then return "Platinum" elseif rank<3700 then return "Diamond" elseif rank<4200 then return "Crown" elseif rank<4700 then return "Ace" elseif rank<5200 then return "Ace Master" elseif rank<5600 then return "Ace Dominator" end
-    return "Conqueror"
+
+  local function g(t, key)
+    if t == nil then return nil end
+    local ok, value = pcall(function() return t[key] end)
+    if ok then return value end
+    return nil
   end
-  local function getStats()
-    local kills, rank, segment = 0, 0, 0
-    pcall(function()
-      local like=mod("GameLua.Mod.BaseMod.Client.Like.IngameLikeUtilClient")
-      local ps=like and like.GetMyPlayerState and like.GetMyPlayerState()
-      if ps then kills=tonumber(ps.Kills) or 0 end
-      local br=_G.BP_STRUCT_BattleResultData
-      local rating=br and (br.rating or br.BP_STRUCT_BTRating)
-      if rating then rank=tonumber(rating.rank_rating) or 0; segment=tonumber(rating.new_segment) or 0 end
-      if kills==0 then
-        local logic=mod("GameLua.Mod.BaseMod.Client.BattleResult.BattleResultData.BattleResultDataLogic")
-        local result=logic and logic.GetBattleResultData and logic.GetBattleResultData()
-        if result then kills=tonumber(result.BP_mykill) or 0 end
+
+  local function firstNumber(...)
+    local n = select("#", ...)
+    for i = 1, n do
+      local raw = select(i, ...)
+      if type(raw) == "number" then return raw end
+      if type(raw) == "string" then
+        local value = tonumber(raw)
+        if value ~= nil then return value end
       end
-      if rank==0 and _G.DataMgr and _G.DataMgr.roleData then
-        local rr=_G.DataMgr.roleData.segment_rating
-        if type(rr)=="table" then for _,v in pairs(rr) do if type(v)=="number" and v>rank then rank=v elseif type(v)=="table" then for _,n in pairs(v) do if type(n)=="number" and n>rank then rank=n end end end end end
-      end
-    end)
-    return kills, rank, segment
+    end
+    return nil
   end
-  local function getFeedbackData(fallbackKills, fallbackRank, fallbackSegment, fallbackMatchID)
-    local d={kills=tonumber(fallbackKills) or 0, rank=tonumber(fallbackRank) or 0}
-    d.matchID=tostring(fallbackMatchID or "-")
-    d.result="-"; d.placement="-"; d.teamPlacement="-"; d.damage="-"; d.assists="-"; d.knockdowns="-"
-    d.headshots="-"; d.revives="-"; d.survival="-"; d.duration="-"; d.map="-"; d.mode="-"; d.perspective="-"
-    pcall(function()
-      local br=_G.BP_STRUCT_BattleResultData
-      local rating=type(br)=="table" and (br.rating or br.BP_STRUCT_BTRating) or nil
-      local logic=mod("GameLua.Mod.BaseMod.Client.BattleResult.BattleResultData.BattleResultDataLogic")
-      local result=logic and logic.GetBattleResultData and logic.GetBattleResultData() or nil
-      local like=mod("GameLua.Mod.BaseMod.Client.Like.IngameLikeUtilClient")
-      local ps=like and like.GetMyPlayerState and like.GetMyPlayerState() or nil
-      local sources={result,br,rating,ps}
-      local function val(...)
-        local keys={...}
-        for _,src in ipairs(sources) do
-          if type(src)=="table" then
-            for _,key in ipairs(keys) do
-              if src[key]~=nil and tostring(src[key])~="" then return src[key] end
-            end
+
+  local function firstBool(...)
+    local n = select("#", ...)
+    for i = 1, n do
+      local value = select(i, ...)
+      if value == true then return true end
+      if value == false then return false end
+    end
+    return nil
+  end
+
+  local function valFrom(sources, ...)
+    local keys = {...}
+    for _, src in ipairs(sources) do
+      if src ~= nil then
+        for _, key in ipairs(keys) do
+          local value = g(src, key)
+          local kind = type(value)
+          if value ~= nil and value ~= "" and kind ~= "table" and kind ~= "function" and kind ~= "userdata" then
+            return value
           end
         end
-        return nil
       end
-      d.kills=tonumber(val("BP_mykill","mykill","Kills","kills")) or d.kills
-      d.rank=tonumber(val("rank_rating","RankRating","segment_rating")) or d.rank
-      d.result=tostring(val("Result","result","BattleResult","battle_result","ResultType") or d.result)
-      d.placement=val("Rank","rank","Placement","placement","FinalRank","final_rank","TeamRank","team_rank") or d.placement
-      d.teamPlacement=val("TeamRank","team_rank","TeamPlacement","team_placement") or d.teamPlacement
-      d.damage=val("Damage","damage","TotalDamage","total_damage","BP_mydamage","mydamage") or d.damage
-      d.assists=val("Assists","assists","AssistCount","assist_count","BP_myassist","myassist") or d.assists
-      d.knockdowns=val("Knockdowns","knockdowns","KnockDowns","knock_downs","BP_myknockout","myknockout") or d.knockdowns
-      d.headshots=val("Headshots","headshots","HeadShotCount","head_shot_count") or d.headshots
-      d.revives=val("Revives","revives","RescueCount","rescue_count") or d.revives
-      d.survival=val("SurvivalTime","survival_time","SurviveTime","survive_time") or d.survival
-      d.duration=val("MatchDuration","match_duration","BattleDuration","battle_duration","Duration","duration") or d.duration
-      d.map=tostring(val("MapName","map_name","Map","map","MapID","map_id") or d.map)
-      d.mode=tostring(val("ModeName","mode_name","GameMode","game_mode","Mode","mode") or d.mode)
-      d.perspective=tostring(val("Perspective","perspective","ViewMode","view_mode","CameraMode","camera_mode") or d.perspective)
-      if d.result=="-" or d.result=="nil" or d.result=="" then
-        if tonumber(d.placement)==1 then d.result="WIN" else d.result="-" end
+    end
+    return nil
+  end
+
+  local function fmtInt(value)
+    local n = tonumber(value)
+    if n == nil then return nil end
+    n = math.floor(n)
+    local text = tostring(n)
+    local sign = ""
+    if text:sub(1, 1) == "-" then
+      sign = "-"
+      text = text:sub(2)
+    end
+    local out = text:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+    out = out:gsub("^,", ""):gsub(",$", "")
+    return sign .. out
+  end
+
+  local function fmtCount(value, singular, plural)
+    local n = tonumber(value)
+    if n == nil then return nil end
+    plural = plural or (singular .. "s")
+    return fmtInt(n) .. " " .. (n == 1 and singular or plural)
+  end
+
+  local function fmtNum(value, decimals)
+    local n = tonumber(value)
+    if n == nil then return nil end
+    if decimals ~= nil then
+      return string.format("%." .. tostring(decimals) .. "f", n)
+    end
+    if n == math.floor(n) then return fmtInt(n) end
+    return string.format("%.1f", n)
+  end
+
+  local function fmtSigned(value)
+    local n = tonumber(value)
+    if n == nil then return nil end
+    if n > 0 then return "+" .. fmtInt(n) end
+    if n < 0 then return fmtInt(n) end
+    return "±0"
+  end
+
+  local function fmtDuration(value)
+    local n = tonumber(value)
+    if n == nil or n < 0 then return nil end
+    n = math.floor(n + 0.5)
+    local h = math.floor(n / 3600)
+    local m = math.floor((n % 3600) / 60)
+    local s = n % 60
+    if h > 0 then
+      return string.format("%dh %02dm %02ds", h, m, s)
+    end
+    return string.format("%dm %02ds", m, s)
+  end
+
+  local function fmtDistance(value)
+    local n = tonumber(value)
+    if n == nil then return nil end
+    if n >= 1000 then return string.format("%.2f km", n / 1000) end
+    return fmtInt(n) .. " m"
+  end
+
+  local function fmtPercent(value)
+    local n = tonumber(value)
+    if n == nil then return nil end
+    return string.format("%.1f%%", n)
+  end
+
+  local function clip(value, maxChars)
+    local text = tostring(value == nil and "" or value)
+    if maxChars == nil or maxChars <= 0 then return text end
+    local index, count = 1, 0
+    while index <= #text do
+      if count >= maxChars then
+        return text:sub(1, index - 1) .. "…"
       end
+      local byte = text:byte(index)
+      local step = 1
+      if byte >= 240 then
+        step = 4
+      elseif byte >= 224 then
+        step = 3
+      elseif byte >= 192 then
+        step = 2
+      end
+      index = index + step
+      count = count + 1
+    end
+    return text
+  end
+
+  local function esc(value)
+    local text = tostring(value == nil and "" or value)
+    text = text:gsub("%c", " ")
+    text = text:gsub("&", "&amp;")
+    text = text:gsub("<", "&lt;")
+    text = text:gsub(">", "&gt;")
+    return text
+  end
+
+  local function urlEncode(value)
+    return tostring(value == nil and "" or value):gsub("([^%w%-%_%.%~])", function(c)
+      return string.format("%%%02X", string.byte(c))
     end)
-    return d
   end
-  local function displayUID()
-    local uid="unknown"
-    pcall(function() if _G.DataMgr and _G.DataMgr.roleData and _G.DataMgr.roleData.uid then uid=tostring(_G.DataMgr.roleData.uid) elseif _G._KONG_UK then uid=tostring(_G._KONG_UK) end end)
-    if #uid>5 then return uid:sub(1,5).."*****" end
-    return "*****"
+
+  local function utf8Len(text)
+    local index, count = 1, 0
+    while index <= #text do
+      local byte = text:byte(index)
+      local step = 1
+      if byte >= 240 then
+        step = 4
+      elseif byte >= 224 then
+        step = 3
+      elseif byte >= 192 then
+        step = 2
+      end
+      index = index + step
+      count = count + 1
+    end
+    return count
   end
+
+  local function trimMessage(text)
+    if utf8Len(text) <= 3800 then return text end
+    local plain = text:gsub("<[^>]->", "")
+    return clip(plain, 3800)
+  end
+
+  local function tableData(name, id)
+    if id == nil then return nil end
+    local ok, value = pcall(function()
+      return CDataTable and CDataTable.GetTableData and CDataTable.GetTableData(name, id)
+    end)
+    if ok and value then return value end
+    if type(id) == "number" then
+      ok, value = pcall(function()
+        return CDataTable and CDataTable.GetTableData and CDataTable.GetTableData(name, tostring(id))
+      end)
+      if ok and value then return value end
+    end
+    return nil
+  end
+
+  local function locStr(id)
+    if id == nil or id == "" then return nil end
+    local loc = rawget(_G, "LocUtil") or mod("common.loc_util")
+    if loc and type(loc.GetLocalizeResStr) == "function" then
+      local ok, value = pcall(loc.GetLocalizeResStr, tonumber(id) or id)
+      if ok and value ~= nil and tostring(value) ~= "" then
+        return tostring(value)
+      end
+    end
+    return nil
+  end
+
+  local function rankCfg(segment, season)
+    local n = tonumber(segment)
+    if n == nil or n <= 0 then return nil end
+    local util = rawget(_G, "FuncUtil") or mod("common.func_util")
+    if util and type(util.GetRankTableData) == "function" then
+      local ok, cfg = pcall(util.GetRankTableData, n, tonumber(season) or 0)
+      if ok and type(cfg) == "table" then return cfg end
+    end
+    return nil
+  end
+
+  local function rankLabel(segment, season)
+    local cfg = rankCfg(segment, season)
+    if cfg then
+      local name = cfg.Name or cfg.IntegralTypeName
+      if name ~= nil and tostring(name) ~= "" then return tostring(name) end
+    end
+    local n = tonumber(segment)
+    if n and n > 0 then return "Rank " .. tostring(n) end
+    return nil
+  end
+
   local function displayName()
     local name = "Player"
     pcall(function()
       local rd = _G.DataMgr and _G.DataMgr.roleData
-      name = tostring((rd and (rd.name or rd.nickname or rd.nickName or rd.playerName)) or name)
+      name = tostring((rd and (rd.nickName or rd.name or rd.nickname or rd.playerName)) or name)
     end)
-    -- Hindari merusak inline-code Telegram jika nama mengandung backtick/newline.
-    return name:gsub("`", "'"):gsub("[\r\n]", " ")
+    return name
   end
-  local function displayReporterName()
-    local name=displayName()
-    if #name>5 then return name:sub(1,5).."****" end
-    if #name>1 then return name:sub(1,1).."****" end
-    return "P****"
-  end
-  local function displayFeedbackName()
-    local name=displayName()
-    if #name>5 then return name:sub(1,5).."***" end
-    if #name>1 then return name:sub(1,1).."***" end
-    return "P***"
-  end
-  local function activeFeatureText()
-    local cfg=_G.RapzhangConfig or {}
-    local features={}
-    local function add(label, enabled)
-      -- Hanya boolean true dianggap aktif; nilai slider/angka tidak ikut terbaca sebagai fitur.
-      if enabled == true then features[#features+1]=label end
-    end
-    add("ESP", cfg.EspLoai9 == true)
-    add("WH", cfg.ColorBodyNew == true)
-    add("BT", cfg.BulletTrack == true)
-    add("AIM", cfg.AimTouchEnable == true)
 
-    -- Pisahkan tiga mode recoil: keduanya memang memiliki perilaku berbeda.
+  local function currentUID()
+    local uid = nil
+    pcall(function()
+      local rd = _G.DataMgr and _G.DataMgr.roleData
+      uid = rd and (rd.uid or rd.openID or rd.openid)
+    end)
+    if uid == nil then uid = rawget(_G, "_KONG_UK") end
+    return uid
+  end
+
+  local function maskUID(uid)
+    local text = tostring(uid == nil and "" or uid)
+    if text == "" or text == "nil" or text == "0" then return "unknown" end
+    if #text > 5 then return text:sub(1, 5) .. "*****" end
+    return "*****"
+  end
+
+  local function activeFeatureText()
+    local cfg = _G.RapzhangConfig or {}
+    local features = {}
+    local function add(label, enabled)
+      if enabled == true then features[#features + 1] = label end
+    end
+    local function anyPrefix(prefix)
+      for key, value in pairs(cfg) do
+        if type(key) == "string" and key:sub(1, #prefix) == prefix and value == true then
+          return true
+        end
+      end
+      return false
+    end
+    add("ESP", anyPrefix("Esp"))
+    add("Wallhack", cfg.ColorBodyNew == true)
+    add("Bullet Track", anyPrefix("BulletTrack"))
+    add("Aim Assist", anyPrefix("AimTouch"))
+    add("Magic Bullet", cfg.CustomMagicBullet == true)
+    add("Smart Head", cfg.SmartAutoHead == true or cfg.BTAllSmartHead == true)
+    add("Accuracy", cfg.Accuracy == true)
     add("Less Recoil", cfg.LessRecoil == true)
-    add("No Recoil", cfg.LessShake == true)
+    add("No Shake", cfg.LessShake == true)
     add("Custom H-Recoil", cfg.CustomHRecoil == true)
     add("Custom V-Recoil", cfg.CustomVRecoil == true)
+    add("Unlock FPS", cfg.UnlockFPS == true)
+    add("iPad View", cfg.IpadView == true)
+    add("Crosshair", cfg.Crosshair == true)
+    add("Remove Grass", cfg.RemoveGrass == true)
+    add("Remove Trees", cfg.RemoveTrees == true)
+    add("Remove Fog", cfg.RemoveFog == true)
+    add("Low Graphics", cfg.LowGraphics == true)
+    add("Vehicle WH", cfg.WallVehicle == true or cfg.VehOther == true)
+    add("Enemy Weapon", cfg.EnemyWeapon == true)
+    add("Force Friend", cfg.ForceFriend == true)
+    add("Auto Report", cfg.AutoReportKiller == true)
+    add("X3 Watermark", cfg.X3Watermark == true)
+    add("X3 Fake Visual", cfg.X3FakeVisual == true)
+    add("X3 Perf Boost", cfg.X3PerfBoost == true)
+    add("X3 TPP Force", cfg.X3TPPForce == true)
+    if #features == 0 then return "None" end
+    if #features > 10 then
+      return table.concat(features, ", ", 1, 10) .. " +" .. tostring(#features - 10)
+    end
+    return table.concat(features, ", ")
+  end
 
-    add("Accuracy", cfg.Accuracy == true)
-    add("Magic Bullet", cfg.CustomMagicBullet == true)
-    return #features > 0 and table.concat(features, ", ") or "None"
+  local function detectRegion()
+    local region = nil
+    pcall(function()
+      local c = rawget(_G, "Client")
+      if c and type(c.GetPublishRegion) == "function" then
+        region = c.GetPublishRegion()
+      end
+    end)
+    if region ~= nil and tostring(region) ~= "" then return tostring(region) end
+    return nil
+  end
+
+  local function clientVersion()
+    local version = nil
+    pcall(function()
+      local c = rawget(_G, "Client")
+      if c and type(c.GetAppVersion) == "function" then
+        version = c.GetAppVersion()
+      end
+    end)
+    if version ~= nil and tostring(version) ~= "" then return tostring(version) end
+    return nil
   end
 
   local function detectGameVariant()
-    -- Ambil metadata dari beberapa sumber runtime yang umum tersedia.
-    -- Nilai pendek seperti "kr" hanya dicocokkan sebagai token agar tidak
-    -- salah terbaca dari nama module atau string lain yang kebetulan memuatnya.
-    local candidates={
+    local region = detectRegion()
+    local regionMap = {
+      JAPAN = "PUBGM: Japan",
+      KOREA = "PUBGM: KR",
+      VNG = "PUBGM: VN",
+      TW = "PUBGM: TW/HK/MO",
+      GLOBAL = "PUBGM: Global",
+      FIT = "PUBGM: Global",
+      FITCE = "PUBGM: Global",
+      BGMILITE = "PUBGM: India",
+      BLUEHOLE = "PUBGM: Global",
+      CE = "PUBGM: CE",
+    }
+    if region and regionMap[string.upper(region)] then
+      return regionMap[string.upper(region)]
+    end
+
+    local candidates = {
+      region,
       rawget(_G, "GameVersion"), rawget(_G, "GAME_VERSION"),
       rawget(_G, "GameRegion"), rawget(_G, "GAME_REGION"),
       rawget(_G, "Region"), rawget(_G, "SERVER_REGION"),
@@ -5350,172 +5576,790 @@ do
       rawget(_G, "ChannelName"), rawget(_G, "CHANNEL_NAME"),
       rawget(_G, "ServerRegion"), rawget(_G, "server_region")
     }
-
-    -- Tambahkan metadata role/player bila tersedia setelah game selesai.
     pcall(function()
       local rd = _G.DataMgr and _G.DataMgr.roleData
       if type(rd) == "table" then
-        candidates[#candidates+1] = rd.region
-        candidates[#candidates+1] = rd.country
-        candidates[#candidates+1] = rd.packageName
-        candidates[#candidates+1] = rd.package_name
-        candidates[#candidates+1] = rd.channel
-        candidates[#candidates+1] = rd.serverRegion
+        candidates[#candidates + 1] = rd.region
+        candidates[#candidates + 1] = rd.country
+        candidates[#candidates + 1] = rd.packageName
+        candidates[#candidates + 1] = rd.package_name
+        candidates[#candidates + 1] = rd.channel
+        candidates[#candidates + 1] = rd.serverRegion
       end
     end)
 
     local function classify(value)
-      local l=tostring(value or ""):lower()
-      if l == "" or l == "nil" then return nil end
-      -- Urutan package spesifik harus didahulukan dari Global.
-      if l:find("pubg.krmobile", 1, true) or l:find("korea", 1, true)
-          or l:match("[^%a]kr[^%a]") or l:match("^kr$") then
+      local text = tostring(value or ""):lower()
+      if text == "" or text == "nil" then return nil end
+      if text:find("pubg.krmobile", 1, true) or text:find("korea", 1, true)
+          or text:match("[^%a]kr[^%a]") or text:match("^kr$") then
         return "PUBGM: KR"
       end
-      if l:find("vng", 1, true) or l:find("vietnam", 1, true)
-          or l:match("[^%a]vn[^%a]") or l:match("^vn$") then
+      if text:find("vng", 1, true) or text:find("vietnam", 1, true)
+          or text:match("[^%a]vn[^%a]") or text:match("^vn$") then
         return "PUBGM: VN"
       end
-      if l:find("taiwan", 1, true) or l:find("rekoo", 1, true)
-          or l:find("hongkong", 1, true) or l:find("macau", 1, true)
-          or l:match("[^%a]tw[^%a]") or l:match("^tw$") then
+      if text:find("taiwan", 1, true) or text:find("rekoo", 1, true)
+          or text:find("hongkong", 1, true) or text:find("macau", 1, true)
+          or text:match("[^%a]tw[^%a]") or text:match("^tw$") then
         return "PUBGM: TW/HK/MO"
       end
-      -- Package harus dicocokkan spesifik; jangan gunakan kata "flash"
-      -- secara umum karena bisa muncul pada nama module/metadata lain.
-      if l:find("com.tencent.igfit", 1, true) then
+      if text:find("com.tencent.igfit", 1, true) then
         return "PUBGM: Flash"
       end
-      if l:find("com.pubg.imobile", 1, true) or l:find("bgmi", 1, true)
-          or l:find("india", 1, true) then
+      if text:find("com.pubg.imobile", 1, true) or text:find("bgmi", 1, true)
+          or text:find("india", 1, true) then
         return "PUBGM: India"
       end
-      -- com.tencent.ig = Global; com.tencent.igfit sudah ditangani di atas.
-      if l:find("com.tencent.ig", 1, true)
-          or l:find("battlegrounds", 1, true) or l:find("global", 1, true)
-          or l:find("com.pubg.mobile", 1, true) then
+      if text:find("com.tencent.ig", 1, true)
+          or text:find("battlegrounds", 1, true) or text:find("global", 1, true)
+          or text:find("com.pubg.mobile", 1, true) then
         return "PUBGM: Global"
       end
       return nil
     end
 
     for _, value in ipairs(candidates) do
-      local result=classify(value)
+      local result = classify(value)
       if result then return result end
     end
-
-    -- Fallback terakhir: cari package identifier yang sudah diload.
-    local loaded=package and package.loaded
+    local loaded = package and package.loaded
     if type(loaded) == "table" then
       for name in pairs(loaded) do
-        local result=classify(name)
+        local result = classify(name)
         if result then return result end
       end
     end
     return "PUBGM: Unknown"
   end
-  local function displayTargetUID(uid)
-    return tostring(uid or "unknown")
+
+  local function getHttp()
+    local mm = rawget(_G, "ModuleManager")
+    if mm and type(mm.GetModule) == "function"
+        and mm.CommonModuleConfig and mm.CommonModuleConfig.http_manager then
+      local ok, http = pcall(mm.GetModule, mm.CommonModuleConfig.http_manager)
+      if ok and http and type(http.Post) == "function" then return http end
+    end
+    local cls = mod("client.slua.logic.http.http_manager")
+    if cls and type(cls.Post) == "function" then return cls end
+    return nil
   end
-  function AF.SendReport(playerName, playerUID, matchID)
-    local rootCfg=_G.RapzhangConfig or {}
-    if rootCfg.AutoFeedbackEnabled ~= true then return end
-    local cfg=rootCfg.AutoFeedbackConfig or {}
-    local token=cfg.BotToken
-    if not token or token=="" then return end
-    local http=mod("client.slua.logic.http.http_manager")
-    if not http or type(http.Post)~="function" then return end
-    local safeName=tostring(playerName or "Player"):gsub("`", "'"):gsub("[\r\n]", " ")
-    local kills, rank = getStats()
-    local rankPoints=tonumber(rank) or 0
-    local text=string.format("━━━━━━━━━━━━━━━━━━\n*•RAPZHANG REPORT•*\n━━━━━━━━━━━━━━━━━━\n\nPlayer: `%s`\nUID: `%s`\n\nReason: Cheating\n\n━━━━━━━━━━━━━━━━━━\n\nReporter:\n`%s\nUID: %s`\n\nKills: %d\nRank: %s (%d)\nTime: %s\nDate: %s", safeName, displayTargetUID(playerUID), displayReporterName(), displayUID(), tonumber(kills) or 0, rankName(rankPoints), rankPoints, os.date("%H:%M:%S"), os.date("%A, %d %B %Y"))
-    for _,t in ipairs(cfg.Targets or {}) do
-      local chatId=type(t)=="table" and tostring(t.chat_id or "") or ""
+
+  local function telegramCallback(chatId)
+    return function(success, data, content, result)
+      local okResponse = false
+      local reason = nil
+      if type(data) == "table" then
+        okResponse = data.ok == true
+        reason = data.description
+      else
+        local body = tostring(data or "")
+        if body == "" then body = tostring(content or "") end
+        if body == "" then body = tostring(result or "") end
+        okResponse = body:find('"ok"%s*:%s*true') ~= nil
+        reason = body:match('"description"%s*:%s*"([^"]*)"') or tostring(result or "unknown")
+      end
+      if okResponse then
+        print(string.format("[RAPZHANG] Telegram %s OK", chatId))
+      else
+        print(string.format("[RAPZHANG] Telegram %s failed: %s", chatId, tostring(reason or "unknown")))
+      end
+    end
+  end
+
+  local function postTelegram(http, url, body, callback)
+    local headers = {["Content-Type"] = "application/x-www-form-urlencoded"}
+    local isClass = rawget(http, "__inner_impl") ~= nil
+    local ok, indexOrError
+    if not isClass and type(http.AddTimerOnce) == "function" then
+      ok, indexOrError = pcall(function()
+        return http:Post(url, headers, body, nil, callback, 30)
+      end)
+    else
+      ok, indexOrError = pcall(function()
+        return http:Post(url, headers, body, nil, callback)
+      end)
+    end
+    if not ok then
+      print("[RAPZHANG] Telegram transport error: " .. tostring(indexOrError))
+      return false
+    end
+    if tonumber(indexOrError) == 0 then
+      print("[RAPZHANG] Telegram transport unavailable (HTTP wrapper not ready)")
+      return false
+    end
+    return true
+  end
+
+  local function sendToTargets(text)
+    local rootCfg = _G.RapzhangConfig or {}
+    if rootCfg.AutoFeedbackEnabled ~= true then return false end
+    local cfg = rootCfg.AutoFeedbackConfig or {}
+    local token = cfg.BotToken
+    if token == nil or token == "" then return false end
+    local http = getHttp()
+    if not http then
+      print("[RAPZHANG] Telegram transport unavailable")
+      return false
+    end
+    local sent = false
+    for _, target in ipairs(cfg.Targets or {}) do
+      local chatId = type(target) == "table" and tostring(target.chat_id or "") or ""
       if chatId:match("^%-100%d+$") then
-        local url="https://api.telegram.org/bot"..token.."/sendMessage"
-        local body="chat_id="..enc(chatId).."&text="..enc(text).."&parse_mode=Markdown&disable_web_page_preview=true"
-        pcall(function()
-          http:Post(url,{["Content-Type"]="application/x-www-form-urlencoded"},body,nil,function(success,_,response,errorMessage)
-            local resp=tostring(response or "")
-            if success and resp:find('"ok":%s*true') then
-              print(string.format("[RAPZHANG] Auto report channel %s OK", chatId))
-            else
-              print(string.format("[RAPZHANG] Auto report channel %s failed: %s", chatId, tostring(errorMessage or response or "unknown")))
-            end
-          end,60)
-        end)
+        local url = "https://api.telegram.org/bot" .. token .. "/sendMessage"
+        local body = "chat_id=" .. urlEncode(chatId)
+          .. "&text=" .. urlEncode(text)
+          .. "&parse_mode=HTML&disable_web_page_preview=true"
+        if postTelegram(http, url, body, telegramCallback(chatId)) then
+          sent = true
+        end
       end
     end
+    return sent
   end
-  function AF.Send(kills, rank, segment, matchID)
-    local rootCfg=_G.RapzhangConfig or {}
-    if rootCfg.AutoFeedbackEnabled ~= true then return end
-    local cfg=rootCfg.AutoFeedbackConfig or {}
-    local token=cfg.BotToken
-    if not token or token=="" then return end
-    local http=mod("client.slua.logic.http.http_manager")
-    if not http or type(http.Post)~="function" then return end
-    local d=getFeedbackData(kills, rank, segment, matchID)
-    local rankPoints=tonumber(d.rank) or 0
-    local function out(v) return tostring(v==nil or v=="" and "-" or v) end
-    local text=string.format("━━━━━━━━━━━━━━━━━━\n*•RAPZHANG FEEDBACK•*\n━━━━━━━━━━━━━━━━━━\n\n`%s\nUID: %s`\n\n%s\nMatch ID: %s\nPlacement: %s\nTeam Place: %s\nMap: %s\nMode: %s\nPerspective: %s\n\n━━━━━━━━━━━━━━━━━━\n\nCombat\nKills: %s\nDamage: %s\nAssists: %s\nKnockdowns: %s\nHeadshots: %s\nRevives: %s\nSurvival: %s\nDuration: %s\n\nRank\nTier: %s\nPoints: %s\n\nActive Feature: %s\n\nTime: %s\nDate: %s", displayFeedbackName(), displayUID(), detectGameVariant(), out(d.matchID), out(d.placement), out(d.teamPlacement), out(d.map), out(d.mode), out(d.perspective), out(d.kills), out(d.damage), out(d.assists), out(d.knockdowns), out(d.headshots), out(d.revives), out(d.survival), out(d.duration), rankName(rankPoints), out(rankPoints), activeFeatureText(), os.date("%H:%M:%S"), os.date("%A, %d %B %Y"))
-    for _,t in ipairs(cfg.Targets or {}) do
-      -- Channel-only routing: reject groups, users, and empty targets.
-      local chatId = type(t)=="table" and tostring(t.chat_id or "") or ""
-      if chatId:match("^%-100%d+$") then
-        local url="https://api.telegram.org/bot"..token.."/sendMessage"
-        local body="chat_id="..enc(chatId).."&text="..enc(text).."&parse_mode=Markdown&disable_web_page_preview=true"
-        pcall(function()
-          http:Post(url,{["Content-Type"]="application/x-www-form-urlencoded"},body,nil,function(success,_,response,errorMessage)
-            local resp=tostring(response or "")
-            local okResponse=success and resp:find('"ok":%s*true')
-            if okResponse then
-              print(string.format("[RAPZHANG] Auto feedback channel %s OK", chatId))
-            else
-              print(string.format("[RAPZHANG] Auto feedback channel %s failed: %s", chatId, tostring(errorMessage or response or "unknown")))
-            end
-          end,60)
-        end)
+
+  local function sourceList()
+    local sources = {}
+    local br = rawget(_G, "BP_STRUCT_BattleResultData")
+    if type(br) == "table" then sources[#sources + 1] = br end
+
+    local sub = nil
+    pcall(function()
+      if _G.SubsystemMgr and _G.SubsystemMgr.Get then
+        sub = _G.SubsystemMgr:Get("BattleResultSubSystem")
       end
-    end
-  end
-  function AF.Install()
-    if not (_G.RapzhangConfig and _G.RapzhangConfig.AutoFeedbackEnabled == true) then return end
-    local ui=_G.UIManager
-    if not ui or type(ui.ShowUI)~="function" then
-      if not AF._installQueued then
-        AF._installQueued=true
-        addTimerOnce(3.0,function() AF._installQueued=false; AF.Install() end)
-      end
-      return
-    end
-    if ui._RapzhangAutoTextFeedbackHooked then return end
-    local old=ui.ShowUI
-    ui.ShowUI=function(config, params, ...)
-      local result=old(config,params,...)
+    end)
+    if sub then
       pcall(function()
-        local inGame=ui.UI_Config_InGame; local winner=inGame and inGame.GameOverCountDown_UIBP
-        local reason=string.lower(tostring(params and params.Reason or ""))
-        local isWinner=params and (
-          reason=="win" or reason=="winner" or
-          params.ShowedWinLogo==true or params.IsWin==true or
-          params.bIsWin==true or params.IsWinner==true
-        )
-        -- Auto feedback kembali hanya dikirim untuk kemenangan/placement 1.
-        if winner and config==winner and isWinner then
-          local matchID=tostring((mod("client.logic.battle.logic_complaint") or {}).GetBattleID and (mod("client.logic.battle.logic_complaint"):GetBattleID()) or os.time())
-          if AF._lastMatchSent~=matchID then
-            AF._lastMatchSent=matchID
-            local k,r,seg=getStats()
-            if not addTimerOnce(2.0,function() AF.Send(k,r,seg,matchID) end) then AF.Send(k,r,seg,matchID) end
+        if sub.GetBattleResultData then
+          local data = sub:GetBattleResultData()
+          if type(data) == "table" then sources[#sources + 1] = data end
+        end
+      end)
+      pcall(function()
+        if sub.GetResultProcessLogic then
+          local logic = sub:GetResultProcessLogic("BattleResultDataLogic")
+          if logic and type(logic.GetBattleResultData) == "function" then
+            local data = logic:GetBattleResultData()
+            if type(data) == "table" then sources[#sources + 1] = data end
           end
         end
       end)
+    end
+
+    local ui = rawget(_G, "BattleResultUI")
+    if type(ui) == "table" then
+      sources[#sources + 1] = ui
+      local back = g(ui, "result_back")
+      if type(back) == "table" then sources[#sources + 1] = back end
+    end
+
+    local like = mod("GameLua.Mod.BaseMod.Client.Like.IngameLikeUtilClient")
+    if like and type(like.GetMyPlayerState) == "function" then
+      local ok, ps = pcall(like.GetMyPlayerState)
+      if ok and ps ~= nil then sources[#sources + 1] = ps end
+    end
+    return sources, br
+  end
+
+  local function resultScore(t)
+    if t == nil then return -1 end
+    local score = 0
+    if g(t, "TeammateList") or g(t, "BP_ARRAY_TeammateList") then score = score + 4 end
+    if g(t, "person_rank") or g(t, "team_rank") then score = score + 2 end
+    if g(t, "rating") or g(t, "BP_STRUCT_BTRating") then score = score + 2 end
+    if g(t, "battle_id") or g(t, "Reason") then score = score + 1 end
+    return score
+  end
+
+  local function chooseResult(sources)
+    local best, bestScore = nil, -2
+    for _, src in ipairs(sources) do
+      local score = resultScore(src)
+      if score > bestScore then
+        best = src
+        bestScore = score
+      end
+    end
+    return best
+  end
+
+  local function findSelf(result, sources)
+    local list = g(result, "TeammateList") or g(result, "BP_ARRAY_TeammateList")
+    if type(list) ~= "table" then list = {} end
+    local myUID = currentUID()
+    local myName = g(result, "BP_myname") or rawget(_G, "BP_myname") or displayName()
+    local selfTm = nil
+    for _, tm in ipairs(list) do
+      if type(tm) == "table" then
+        local uid = g(tm, "UID") or g(tm, "uid")
+        local name = g(tm, "Name") or g(tm, "name")
+        if (myUID ~= nil and uid ~= nil and tostring(uid) == tostring(myUID))
+            or (myName ~= nil and name ~= nil and tostring(name) == tostring(myName)) then
+          selfTm = tm
+          break
+        end
+      end
+    end
+    if selfTm == nil and #list == 1 then selfTm = list[1] end
+    return selfTm, myUID, myName, list
+  end
+
+  local function resolveMatchID(sources, fallback)
+    local id = valFrom(sources, "battle_id", "battleId", "match_id", "matchID", "GameID", "game_id")
+    if id == nil or tostring(id) == "0" or tostring(id) == "" then
+      local complaint = mod("client.logic.battle.logic_complaint")
+      if complaint and type(complaint.GetBattleID) == "function" then
+        local ok, value = pcall(complaint.GetBattleID)
+        if ok and value ~= nil and tostring(value) ~= "0" then id = value end
+      end
+    end
+    if id == nil or tostring(id) == "0" or tostring(id) == "" then
+      id = rawget(_G, "g_game_id")
+    end
+    if id == nil or tostring(id) == "0" or tostring(id) == "" then
+      id = fallback
+    end
+    if id == nil or tostring(id) == "0" or tostring(id) == "" then
+      id = os.time()
+    end
+    if type(id) == "number" then
+      return string.format("%.0f", id)
+    end
+    return tostring(id)
+  end
+
+  local function resolveMap(sources, subMode)
+    local map = nil
+    local util = mod("GameLua.Mod.BaseMod.Client.BattleResult.BattleResultUtil")
+    if util and type(util.GetMapCfg) == "function" and subMode then
+      local ok, cfg = pcall(util.GetMapCfg, subMode)
+      if ok and type(cfg) == "table" then
+        map = cfg.MapName or cfg.Name or cfg.MapNameInternal
+      end
+    end
+    if (map == nil or map == "") and subMode then
+      local modeCfg = tableData("BTMode", subMode)
+      if modeCfg then
+        if modeCfg.MapShowId then map = locStr(modeCfg.MapShowId) end
+        if (map == nil or map == "") and modeCfg.MapID then
+          local mapCfg = tableData("Map", modeCfg.MapID)
+          if mapCfg then map = mapCfg.MapName or mapCfg.Name end
+        end
+      end
+    end
+    if type(map) == "number" then map = locStr(map) or tostring(map) end
+    if map == nil or map == "" then
+      map = valFrom(sources, "MapName", "map_name", "Map", "map")
+    end
+    if map == nil or map == "" then
+      local gs = rawget(_G, "GameplayStatics")
+      if gs and type(gs.GetCurrentLevelName) == "function" then
+        local ok, level = pcall(gs.GetCurrentLevelName, nil, true)
+        if ok and level ~= nil and tostring(level) ~= "" then map = tostring(level) end
+      end
+    end
+    if map == nil or map == "" then return "Unknown" end
+    return tostring(map)
+  end
+
+  local function resolveMode(sources, battleType, subMode)
+    local mode = nil
+    local util = mod("GameLua.Mod.BaseMod.Client.BattleResult.BattleResultUtil")
+    if util and type(util.GetTeamModeName) == "function" and battleType then
+      local ok, value = pcall(util.GetTeamModeName, battleType, subMode)
+      if ok and value ~= nil and tostring(value) ~= "" then mode = tostring(value) end
+    end
+    if mode == nil or mode == "" then
+      mode = valFrom(sources, "BP_TeamModeName", "ModeName", "mode_name", "GameMode", "game_mode", "Mode", "mode")
+    end
+    if (mode == nil or mode == "") and subMode then
+      local modeCfg = tableData("BTMode", subMode)
+      if modeCfg then mode = locStr(modeCfg.ModeName) or modeCfg.ModeName end
+    end
+    if mode == nil or mode == "" then return "Unknown" end
+    if type(mode) == "number" then mode = locStr(mode) or tostring(mode) end
+    return tostring(mode):gsub("^%s+", ""):gsub("%s+$", "")
+  end
+
+  local function resolvePerspective(subMode, battleType)
+    local fpp = nil
+    local modeCfg = tableData("BTMode", subMode)
+    if modeCfg and modeCfg.IsFpp ~= nil then
+      fpp = modeCfg.IsFpp == true or tonumber(modeCfg.IsFpp) == 1
+    end
+    if fpp == nil then
+      local gd = mod("GameLua.GameCore.Data.GameplayData")
+      if gd and type(gd.GetGameState) == "function" then
+        local ok, gs = pcall(gd.GetGameState)
+        if ok and gs then fpp = g(gs, "IsFPPGameMode") == true end
+      end
+    end
+    if fpp == nil and battleType then
+      fpp = battleType == 401 or battleType == 402 or battleType == 403
+    end
+    return fpp == true and "FPP" or "TPP"
+  end
+
+  local function buildFeedback(fallbackMatchID)
+    local sources, br = sourceList()
+    local result = chooseResult(sources)
+    local selfTm, myUID, myName, teamList = findSelf(result, sources)
+    local d = {}
+    d.sources = sources
+    d.result = result
+    d.teamList = teamList
+    d.myUID = g(selfTm, "UID") or myUID
+    d.myName = g(selfTm, "Name") or myName or displayName()
+    d.reporterName = displayName()
+    d.reporterUIDMasked = maskUID(d.myUID)
+    d.variant = detectGameVariant()
+    d.region = detectRegion()
+    d.clientVersion = clientVersion()
+    d.active = activeFeatureText()
+    d.logged = os.date("%Y-%m-%d %H:%M:%S")
+    d.matchID = resolveMatchID(sources, fallbackMatchID)
+
+    d.battleType = firstNumber(valFrom(sources, "battle_type", "battleType", "BATTLETYPE_MODE"))
+    d.subMode = firstNumber(valFrom(sources, "sub_mode", "subMode", "ModeId", "mode_id"))
+    d.isTeam = firstBool(g(result, "is_team_result"), g(result, "IsTeamResult"))
+    if d.isTeam == nil then
+      d.isTeam = #teamList > 1
+    end
+
+    local reason = string.lower(tostring(valFrom(sources, "Reason", "reason", "ResultType", "result_type") or ""))
+    d.reason = reason
+    d.personRank = firstNumber(g(result, "person_rank"), valFrom(sources, "person_rank", "Placement", "placement"))
+    d.teamRank = firstNumber(g(result, "team_rank"), valFrom(sources, "team_rank", "TeamPlacement", "team_placement"))
+    d.totalPlayers = firstNumber(g(result, "TotalPlayerCount"), g(result, "total_player_count"))
+    d.totalTeams = firstNumber(g(result, "TotalTeamCount"), g(result, "total_team_count"))
+    d.remainingPlayers = firstNumber(g(result, "RemainingPlayerCount"), g(result, "remaining_player_count"))
+    d.remainingTeams = firstNumber(g(result, "RemainingTeamCount"), g(result, "remaining_team_count"))
+    d.isSolo = firstBool(g(result, "IsSolo"), g(result, "is_solo"))
+    if d.isSolo == nil then d.isSolo = d.isTeam == false end
+
+    d.kills = firstNumber(
+      g(selfTm, "Kill"), g(selfTm, "Kills"),
+      valFrom(sources, "BP_mykill", "mykill", "Kills", "kills")
+    ) or 0
+    d.damage = firstNumber(
+      g(selfTm, "DamageAmount"), g(selfTm, "TotalDamage"),
+      valFrom(sources, "BP_mydamage", "mydamage", "DamageAmount", "TotalDamage", "Damage", "damage")
+    )
+    d.assists = firstNumber(
+      g(selfTm, "AssistNum"), g(selfTm, "Assists"), g(selfTm, "AssistCount"),
+      valFrom(sources, "BP_myassist", "myassist", "AssistNum", "Assists", "AssistCount")
+    )
+    d.knocks = firstNumber(
+      g(selfTm, "KnockDownCount"), g(selfTm, "KnockdownCount"), g(selfTm, "Knockouts"),
+      g(selfTm, "KnockNum"), g(selfTm, "KnockNumber"), g(selfTm, "KnockDowns"),
+      valFrom(sources, "KnockDownCount", "KnockdownCount", "Knockouts", "KnockNum", "KnockNumber", "KnockDowns", "knockdowns", "BP_myknockout", "myknockout")
+    )
+    d.headshots = firstNumber(
+      g(selfTm, "HeadShotNum"), g(selfTm, "HeadshotNum"), g(selfTm, "Headshots"),
+      valFrom(sources, "HeadShotNum", "HeadshotNum", "Headshots", "HeadShotCount")
+    )
+    d.revives = firstNumber(
+      g(selfTm, "rescueTimes"), g(selfTm, "Revives"), g(selfTm, "RescueCount"),
+      valFrom(sources, "rescueTimes", "Revives", "RescueCount", "revives")
+    )
+    d.survival = firstNumber(
+      g(selfTm, "surviveTime"), g(selfTm, "SurvivalTime"), g(selfTm, "SurviveTime"),
+      valFrom(sources, "BP_MySurviveTime_f", "SurviveTime", "survival_time", "BP_MySurviveTime")
+    )
+    d.distance = firstNumber(
+      g(selfTm, "travelDistance"), g(selfTm, "TravelDistance"),
+      valFrom(sources, "travelDistance", "TravelDistance", "Distance", "distance")
+    )
+    d.healing = firstNumber(
+      g(selfTm, "HealAmount"), g(selfTm, "Healing"),
+      valFrom(sources, "HealAmount", "Healing", "heal_amount")
+    )
+    d.score = firstNumber(
+      g(selfTm, "FinalScore"), g(selfTm, "FinalScore_f"), g(selfTm, "Score"),
+      valFrom(sources, "FinalScore", "FinalScore_f", "Score", "score")
+    )
+    d.isMVP = firstBool(g(selfTm, "IsMVP"), valFrom(sources, "IsMVP", "isMVP")) == true
+
+    local shotsFired = firstNumber(g(result, "ShootWeaponShotNum"), valFrom(sources, "ShootWeaponShotNum"))
+    local shotsHit = firstNumber(g(result, "ShootWeaponShotAndHitPlayerNum"), valFrom(sources, "ShootWeaponShotAndHitPlayerNum"))
+    d.shotsFired = shotsFired
+    d.shotsHit = shotsHit
+    if shotsFired and shotsFired > 0 and shotsHit then
+      d.accuracy = shotsHit / shotsFired * 100
+    end
+    d.healTimes = firstNumber(g(result, "HealTimes"), valFrom(sources, "HealTimes"))
+    d.vehicles = firstNumber(g(result, "destroyVehicleNum"), valFrom(sources, "destroyVehicleNum"))
+    d.exp = firstNumber(g(result, "add_exp"), g(result, "char_add_exp"), valFrom(sources, "add_exp", "char_add_exp"))
+    d.gold = firstNumber(g(result, "add_gold"), valFrom(sources, "add_gold"))
+    d.seasonCoin = firstNumber(g(result, "seasonGold"), g(g(result, "SeasonCoinInfo"), "add_coin_cnt"))
+    d.careerScore = firstNumber(g(result, "careerScore"))
+
+    local headshotRatio = firstNumber(g(result, "HeadShotRatio"), valFrom(sources, "HeadShotRatio"))
+    if headshotRatio then
+      if headshotRatio <= 1 then headshotRatio = headshotRatio * 100 end
+      d.headshotRate = headshotRatio
+    end
+
+    local rating = g(result, "rating") or g(result, "BP_STRUCT_BTRating")
+    if type(rating) ~= "table" then
+      for _, src in ipairs(sources) do
+        local candidate = g(src, "rating") or g(src, "BP_STRUCT_BTRating")
+        if type(candidate) == "table" then
+          rating = candidate
+          break
+        end
+      end
+    end
+    rating = rating or {}
+
+    d.rankPoints = firstNumber(
+      g(rating, "rank_rating"), g(rating, "rankRating"),
+      valFrom(sources, "rank_rating", "rankRating")
+    )
+    d.rankDelta = firstNumber(
+      g(rating, "change_rank_rating"), g(rating, "changeRankRating")
+    )
+    d.oldSegment = firstNumber(g(rating, "old_segment"), g(rating, "oldSegment"))
+    d.newSegment = firstNumber(g(rating, "new_segment"), g(rating, "newSegment"))
+    d.killRating = firstNumber(g(rating, "kill_rating"), g(rating, "killRating"))
+    d.killDelta = firstNumber(g(rating, "change_kill_rating"), g(rating, "changeKillRating"))
+    d.winRating = firstNumber(g(rating, "win_rating"), g(rating, "winRating"))
+    d.winDelta = firstNumber(g(rating, "change_win_rating"), g(rating, "changeWinRating"))
+    d.season = firstNumber(
+      g(result, "SeasonNumber"), g(result, "seasonNumber"),
+      _G.DataMgr and _G.DataMgr.season_id
+    )
+    if d.rankPoints and d.rankDelta then
+      d.oldPoints = math.max(0, d.rankPoints - d.rankDelta)
+    end
+    d.newRankName = rankLabel(d.newSegment, d.season)
+    d.oldRankName = rankLabel(d.oldSegment, d.season)
+    if d.newRankName and d.oldRankName and d.newRankName ~= d.oldRankName then
+      d.rankTier = d.oldRankName .. " → " .. d.newRankName
+    else
+      d.rankTier = d.newRankName or d.oldRankName
+    end
+
+    local protections = {}
+    local protect = g(result, "BP_STRUCT_BTRatingProtect") or g(result, "rating_protect")
+    if type(protect) == "table" then
+      local protectType = g(protect, "protect_type")
+      if protectType ~= nil and tostring(protectType) ~= "" and tostring(protectType) ~= "0" then
+        protections[#protections + 1] = tostring(protectType)
+      end
+      local protectValue = firstNumber(g(protect, "value"))
+      if protectValue and protectValue > 0 then
+        protections[#protections + 1] = "value " .. fmtInt(protectValue)
+      end
+    end
+    if g(result, "segment_protect") == true then protections[#protections + 1] = "Segment protect" end
+    if g(result, "is_rank_protect") == true then protections[#protections + 1] = "Rank protect" end
+    if g(result, "is_time_card_protect") == true or g(result, "is_times_card_protect") == true then
+      protections[#protections + 1] = "Time card"
+    end
+    if g(result, "is_activity_protect") == true then protections[#protections + 1] = "Activity" end
+    if g(result, "is_player_return_protect") == true then protections[#protections + 1] = "Return protect" end
+    if g(result, "double_rating") == true then protections[#protections + 1] = "Double rating" end
+    if #protections > 0 then d.protection = table.concat(protections, ", ") end
+
+    local personRank = d.personRank
+    local teamRank = d.teamRank
+    d.teamWin = d.isTeam == true and teamRank == 1
+    d.win = reason == "win" or reason == "winner" or reason == "chicken"
+    if not d.win and d.isTeam ~= true and personRank == 1
+        and (reason == "" or reason == "win" or reason == "winner") then
+      d.win = true
+    end
+    if not d.win and d.teamWin then d.win = true end
+
+    if d.teamWin then
+      d.statusHtml = "<b>TEAM WIN</b> 🏆"
+    elseif d.win then
+      d.statusHtml = "<b>WIN</b> 🏆"
+    elseif reason == "dead" then
+      d.statusHtml = "<b>ELIMINATED</b>"
+    elseif reason ~= "" then
+      d.statusHtml = "<b>" .. esc(string.upper(reason)) .. "</b>"
+    else
+      d.statusHtml = "<b>FINISHED</b>"
+    end
+
+    d.map = resolveMap(sources, d.subMode)
+    d.mode = resolveMode(sources, d.battleType, d.subMode)
+    d.perspective = resolvePerspective(d.subMode, d.battleType)
+    return d
+  end
+
+  local function formatFeedback(d)
+    local lines = {}
+    local function add(line) lines[#lines + 1] = line end
+    local function bullet(label, value)
+      if value ~= nil and tostring(value) ~= "" then
+        add("• " .. label .. ": " .. tostring(value))
+      end
+    end
+
+    add("🎯 <b>RAPZHANG MATCH REPORT</b>")
+    add("━━━━━━━━━━━━━━━━━━")
+    bullet("Player", "<code>" .. esc(clip(d.myName or "Unknown", 32)) .. "</code>")
+    bullet("UID", "<code>" .. esc(d.reporterUIDMasked or "unknown") .. "</code>")
+    bullet("Variant", esc(d.variant or "PUBGM: Unknown"))
+    if (d.variant == nil or d.variant == "PUBGM: Unknown") and d.region then
+      bullet("Region", esc(d.region))
+    end
+    bullet("Client", esc(d.clientVersion))
+    add("")
+    add("🏁 <b>RESULT</b>")
+    bullet("Status", d.statusHtml or "<b>FINISHED</b>")
+    if d.isTeam == true then
+      local denom = d.totalTeams and d.totalTeams > 0 and (" / " .. fmtCount(d.totalTeams, "team")) or ""
+      bullet("Team placement", "<b>#" .. (fmtInt(d.teamRank) or "?") .. "</b>" .. denom)
+      local pdenom = d.totalPlayers and d.totalPlayers > 0 and (" / " .. fmtCount(d.totalPlayers, "player")) or ""
+      bullet("Personal rank", "<b>#" .. (fmtInt(d.personRank) or "?") .. "</b>" .. pdenom)
+    else
+      local denom = d.totalPlayers and d.totalPlayers > 0 and (" / " .. fmtCount(d.totalPlayers, "player")) or ""
+      bullet("Placement", "<b>#" .. (fmtInt(d.personRank) or "?") .. "</b>" .. denom)
+    end
+    if d.remainingPlayers ~= nil or d.remainingTeams ~= nil then
+      local parts = {}
+      if d.remainingPlayers ~= nil then parts[#parts + 1] = fmtCount(d.remainingPlayers, "player") end
+      if d.remainingTeams ~= nil then parts[#parts + 1] = fmtCount(d.remainingTeams, "team") end
+      bullet("Remaining", table.concat(parts, " / "))
+    end
+    bullet("Map", esc(d.map))
+    bullet("Mode", esc(d.mode))
+    bullet("View", esc(d.perspective))
+
+    add("")
+    add("📊 <b>COMBAT</b>")
+    local combatStart = #lines + 1
+    bullet("Kills", fmtInt(d.kills))
+    bullet("Damage", fmtInt(d.damage))
+    bullet("Assists", fmtInt(d.assists))
+    bullet("Knocks", fmtInt(d.knocks))
+    bullet("Headshots", fmtInt(d.headshots))
+    bullet("Headshot rate", fmtPercent(d.headshotRate))
+    bullet("Revives", fmtInt(d.revives))
+    if d.shotsFired ~= nil or d.shotsHit ~= nil then
+      local shots = (fmtInt(d.shotsHit) or "0") .. " / " .. (fmtInt(d.shotsFired) or "0")
+      if d.accuracy then shots = shots .. " (" .. fmtPercent(d.accuracy) .. ")" end
+      bullet("Shots hit", shots)
+    end
+    bullet("Survival", fmtDuration(d.survival))
+    bullet("Distance", fmtDistance(d.distance))
+    bullet("Healing", fmtInt(d.healing))
+    bullet("Heals used", fmtInt(d.healTimes))
+    bullet("Vehicles destroyed", fmtInt(d.vehicles))
+    local scoreText = fmtNum(d.score, 1)
+    if scoreText and d.isMVP then scoreText = scoreText .. " · MVP" end
+    bullet("Score", scoreText)
+    if #lines < combatStart then add("• No combat data available") end
+
+    local rewardParts = {}
+    if d.exp and d.exp > 0 then rewardParts[#rewardParts + 1] = "EXP +" .. fmtInt(d.exp) end
+    if d.gold and d.gold > 0 then rewardParts[#rewardParts + 1] = "BP +" .. fmtInt(d.gold) end
+    if d.seasonCoin and d.seasonCoin > 0 then rewardParts[#rewardParts + 1] = "Season coin +" .. fmtInt(d.seasonCoin) end
+    if d.careerScore and d.careerScore > 0 then rewardParts[#rewardParts + 1] = "Career +" .. fmtInt(d.careerScore) end
+    if #rewardParts > 0 then
+      add("")
+      add("💰 <b>REWARDS</b>")
+      add("• " .. table.concat(rewardParts, " · "))
+    end
+
+    add("")
+    add("🏅 <b>RANK</b>")
+    local hasRank = d.rankTier ~= nil or d.rankPoints ~= nil
+      or d.killRating ~= nil or d.winRating ~= nil or d.protection ~= nil
+    bullet("Tier", esc(d.rankTier))
+    if d.rankPoints ~= nil then
+      local points
+      if d.oldPoints ~= nil then
+        points = fmtInt(d.oldPoints) .. " → <b>" .. fmtInt(d.rankPoints) .. "</b>"
+      else
+        points = "<b>" .. fmtInt(d.rankPoints) .. "</b>"
+      end
+      if d.rankDelta ~= nil and d.rankDelta ~= 0 then
+        points = points .. " (" .. fmtSigned(d.rankDelta) .. ")"
+      end
+      bullet("Points", points)
+    end
+    local ratingParts = {}
+    if d.killRating ~= nil then
+      local part = "Kill " .. fmtInt(d.killRating)
+      if d.killDelta ~= nil then part = part .. " (" .. fmtSigned(d.killDelta) .. ")" end
+      ratingParts[#ratingParts + 1] = part
+    end
+    if d.winRating ~= nil then
+      local part = "Win " .. fmtInt(d.winRating)
+      if d.winDelta ~= nil then part = part .. " (" .. fmtSigned(d.winDelta) .. ")" end
+      ratingParts[#ratingParts + 1] = part
+    end
+    if #ratingParts > 0 then bullet("Rating", esc(table.concat(ratingParts, " · "))) end
+    if hasRank then
+      bullet("Protection", esc(d.protection))
+      bullet("Season", fmtInt(d.season))
+    else
+      add("• No ranked data (unranked match)")
+    end
+
+    if d.teamList and #d.teamList > 1 then
+      local totalKills, totalAssists, totalDamage = 0, 0, 0
+      for _, tm in ipairs(d.teamList) do
+        totalKills = totalKills + (tonumber(g(tm, "Kill")) or 0)
+        totalAssists = totalAssists + (tonumber(g(tm, "AssistNum")) or 0)
+        totalDamage = totalDamage + (tonumber(g(tm, "DamageAmount")) or 0)
+      end
+      add("")
+      add(string.format("👥 <b>SQUAD</b> (%d players · %sK · %sA · %sD)",
+        #d.teamList, fmtInt(totalKills), fmtInt(totalAssists), fmtInt(totalDamage)))
+      local shown = 0
+      for _, tm in ipairs(d.teamList) do
+        if shown >= 4 then break end
+        local rawName = tostring(g(tm, "Name") or "Unknown")
+        local name = esc(clip(rawName, 20))
+        local uid = g(tm, "UID")
+        local isSelf = (d.myUID ~= nil and uid ~= nil and tostring(uid) == tostring(d.myUID))
+          or (d.myName ~= nil and rawName == tostring(d.myName))
+        local kills = tonumber(g(tm, "Kill")) or 0
+        local assists = tonumber(g(tm, "AssistNum")) or 0
+        local damage = tonumber(g(tm, "DamageAmount")) or 0
+        local suffix = isSelf and " <i>(you)</i>" or ""
+        local mvp = g(tm, "IsMVP") == true and " · MVP" or ""
+        add("• " .. name .. suffix .. " — " .. fmtInt(kills) .. "K / " .. fmtInt(assists) .. "A / " .. fmtInt(damage) .. "D" .. mvp)
+        shown = shown + 1
+      end
+      if #d.teamList > shown then
+        add("• +" .. tostring(#d.teamList - shown) .. " more")
+      end
+    end
+
+    add("")
+    add("🧩 <b>SESSION</b>")
+    bullet("Match ID", "<code>" .. esc(d.matchID or "-") .. "</code>")
+    bullet("Active", esc(d.active or "None"))
+    bullet("Reporter", esc(clip(d.reporterName or "Player", 32)) .. " (" .. esc(d.reporterUIDMasked or "unknown") .. ")")
+    bullet("Logged", esc(d.logged or ""))
+
+    return trimMessage(table.concat(lines, "\n"))
+  end
+
+  local function emit(d)
+    local text = formatFeedback(d)
+    if not sendToTargets(text) then
+      print("[RAPZHANG] Auto feedback: Telegram transport/target unavailable")
+    end
+  end
+
+  local function formatReport(d, targetName, targetUID, matchID)
+    local lines = {}
+    local function add(line) lines[#lines + 1] = line end
+    local function bullet(label, value)
+      if value ~= nil and tostring(value) ~= "" then
+        add("• " .. label .. ": " .. tostring(value))
+      end
+    end
+    add("🚨 <b>PLAYER REPORT</b>")
+    add("━━━━━━━━━━━━━━━━━━")
+    bullet("Target", "<code>" .. esc(clip(targetName or "Unknown", 32)) .. "</code>")
+    bullet("UID", "<code>" .. esc(tostring(targetUID or "unknown")) .. "</code>")
+    bullet("Match ID", "<code>" .. esc(tostring(matchID or d.matchID or "-")) .. "</code>")
+    bullet("Reason", "Cheating")
+    add("")
+    add("📊 <b>REPORTER</b>")
+    bullet("Name", esc(clip(d.reporterName or "Player", 32)))
+    bullet("UID", esc(d.reporterUIDMasked or "unknown"))
+    bullet("Kills", fmtInt(d.kills))
+    bullet("Rank", esc(d.rankTier))
+    bullet("Points", fmtInt(d.rankPoints))
+    bullet("Mode", esc(d.mode))
+    bullet("Time", esc(d.logged or ""))
+    return trimMessage(table.concat(lines, "\n"))
+  end
+
+  function AF.SendReport(playerName, playerUID, matchID)
+    local ok, err = pcall(function()
+      local d = buildFeedback(matchID)
+      local text = formatReport(d, playerName, playerUID, d.matchID)
+      if not sendToTargets(text) then
+        print("[RAPZHANG] Player report: Telegram transport/target unavailable")
+      end
+    end)
+    if not ok then print("[RAPZHANG] Player report error: " .. tostring(err)) end
+  end
+
+  function AF.Send(kills, rank, segment, matchID)
+    local ok, err = pcall(function()
+      local d = buildFeedback(matchID)
+      if (d.kills == nil or d.kills == 0) and (tonumber(kills) or 0) > 0 then
+        d.kills = tonumber(kills)
+      end
+      if (d.rankPoints == nil or d.rankPoints == 0) and (tonumber(rank) or 0) > 0 then
+        d.rankPoints = tonumber(rank)
+      end
+      if (d.newSegment == nil or d.newSegment == 0) and (tonumber(segment) or 0) > 0 then
+        d.newSegment = tonumber(segment)
+        d.newRankName = rankLabel(d.newSegment, d.season)
+        d.rankTier = d.newRankName or d.rankTier
+      end
+      emit(d)
+    end)
+    if not ok then print("[RAPZHANG] Auto feedback error: " .. tostring(err)) end
+  end
+
+  function AF.HandleShowUI(config, params)
+    local ui = _G.UIManager
+    local inGame = ui and ui.UI_Config_InGame
+    local countdown = inGame and inGame.GameOverCountDown_UIBP
+    if not countdown or config ~= countdown then return end
+
+    local d = buildFeedback(nil)
+    local reason = string.lower(tostring((params and params.Reason) or d.reason or ""))
+    local isWin = d.win == true or reason == "win" or reason == "winner" or reason == "chicken"
+    local cfg = (_G.RapzhangConfig and _G.RapzhangConfig.AutoFeedbackConfig) or {}
+    local sendOnWin = cfg.SendOnWin ~= false
+    local sendOnLoss = cfg.SendOnLoss ~= false
+    if isWin and not sendOnWin then return end
+    if (not isWin) and not sendOnLoss then return end
+
+    local matchID = tostring(d.matchID or "")
+    if matchID == "" or matchID == "0" then matchID = tostring(os.time()) end
+    if AF._lastMatchSent == matchID then return end
+    AF._lastMatchSent = matchID
+
+    if not addTimerOnce(1.5, function() emit(d) end) then
+      emit(d)
+    end
+  end
+
+  function AF.Install()
+    if not (_G.RapzhangConfig and _G.RapzhangConfig.AutoFeedbackEnabled == true) then return end
+    local ui = _G.UIManager
+    if not ui or type(ui.ShowUI) ~= "function" then
+      if not AF._installQueued then
+        AF._installQueued = true
+        addTimerOnce(3.0, function()
+          AF._installQueued = false
+          AF.Install()
+        end)
+      end
+      return
+    end
+    if ui._RapzhangAutoTextFeedbackHookedV2 then return end
+    local old = ui.ShowUI
+    ui.ShowUI = function(config, params, ...)
+      local result = old(config, params, ...)
+      local current = _G.RapzhangAutoTextFeedback
+      if current and type(current.HandleShowUI) == "function" then
+        pcall(current.HandleShowUI, config, params)
+      end
       return result
     end
-    ui._RapzhangAutoTextFeedbackHooked=true
+    ui._RapzhangAutoTextFeedbackHookedV2 = true
   end
-end
+
+  return AF
+end)()
 local function UpdateIndependentWallhack(GameplayData, localPlayer)
     -- Wallhack is deliberately independent from ESP/UI state.
     pcall(function()
