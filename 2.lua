@@ -156,12 +156,22 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     Esp9_Visibility = false,
     Esp9_Radar360 = false,
     Esp9_Airdrop = false,
+    Esp9_AirdropBox = true,
+    Esp9_AirdropPredict = true,
     Esp9_Zone = false,
+    Esp9_ZoneTimer = true,
+    Esp9_ZoneNext = true,
     Esp9_Grenade = false,
+    Esp9_GrenadeMark = true,
+    Esp9_GrenadeRadius = true,
     Esp9_Rank = false,
+    -- Diagnostik rank: set true di rapzhang_settings.txt untuk log field mentah.
+    Esp9_RankDebug = false,
     Esp9_Clan = false,
     Esp9_Ammo = false,
     AutoParachute = false,
+    AutoJump = true,
+    AutoJumpRadius = 300,
     AutoReportKiller = false,
     -- Auto feedback is always on and is intentionally not exposed in the menu.
     AutoFeedbackEnabled = true,
@@ -264,6 +274,7 @@ _G.RapzhangConfig.AutoFeedbackConfig.Targets = {
 _G.RapzhangConfig.AutoFeedbackEnabled = true
 _G.RapzhangConfig.Esp9_Radar360 = _G.RapzhangConfig.Esp9_Radar360 == true
 _G.RapzhangConfig.Esp9_TeamNumber = _G.RapzhangConfig.Esp9_TeamNumber == true
+_G.RapzhangConfig.AutoJumpRadius = math.max(50, math.min(1500, tonumber(_G.RapzhangConfig.AutoJumpRadius) or 300))
 
 _G.RapzhangState = _G.RapzhangState or { 
     LoopToken = 0, 
@@ -1374,9 +1385,15 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_ESP9_Line", UI = AliasMap.Switcher, Text = T("   Show Snapline", "   Show Snapline"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Line == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Line = (v == true); return true end },
             { Key = "ModMenu_ESP9_Visibility", UI = AliasMap.Switcher, Text = T("   Show Visibility (Open/Close)", "   Show Visibility (Open/Close)"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Visibility == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Visibility = (v == true); return true end },
             { Key = "ModMenu_ESP9_Radar360", UI = AliasMap.Switcher, Text = T("   ESP Distance + 360 Radar", "   ESP Distance + 360 Radar"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Radar360 == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Radar360 = v and true or false; return true end },
-            { Key = "ModMenu_ESP9_Airdrop", UI = AliasMap.Switcher, Text = T("   Airdrop ESP + Landing Prediction", "   Airdrop ESP + Landing Prediction"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Airdrop == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Airdrop = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ESP9_Zone", UI = AliasMap.Switcher, Text = T("   Zone Timer + Next Circle", "   Zone Timer + Next Circle"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Zone == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Zone = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ESP9_Grenade", UI = AliasMap.Switcher, Text = T("   Grenade ESP + Blast Radius", "   Grenade ESP + Blast Radius"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Grenade == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Grenade = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_Airdrop", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Airdrop ESP", "   ▶ Airdrop ESP"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Airdrop == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Airdrop = on; if on then _G.RapzhangConfig.Esp9_AirdropBox = true; _G.RapzhangConfig.Esp9_AirdropPredict = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_AirdropBox", UI = AliasMap.Switcher, Text = T("      ESP Box", "      ESP Box"), ExpandHandle = "ModMenu_ESP9_Airdrop", GetFunc = function() return _G.RapzhangConfig.Esp9_AirdropBox == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_AirdropBox = v and true or false; if v then _G.RapzhangConfig.Esp9_Airdrop = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_AirdropPredict", UI = AliasMap.Switcher, Text = T("      Landing Prediction", "      Landing Prediction"), ExpandHandle = "ModMenu_ESP9_Airdrop", GetFunc = function() return _G.RapzhangConfig.Esp9_AirdropPredict == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_AirdropPredict = v and true or false; if v then _G.RapzhangConfig.Esp9_Airdrop = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_Zone", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Zone Timer + Next Circle", "   ▶ Zone Timer + Next Circle"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Zone == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Zone = on; if on then _G.RapzhangConfig.Esp9_ZoneTimer = true; _G.RapzhangConfig.Esp9_ZoneNext = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_ZoneTimer", UI = AliasMap.Switcher, Text = T("      Zone Timer", "      Zone Timer"), ExpandHandle = "ModMenu_ESP9_Zone", GetFunc = function() return _G.RapzhangConfig.Esp9_ZoneTimer == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_ZoneTimer = v and true or false; if v then _G.RapzhangConfig.Esp9_Zone = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_ZoneNext", UI = AliasMap.Switcher, Text = T("      Next Circle", "      Next Circle"), ExpandHandle = "ModMenu_ESP9_Zone", GetFunc = function() return _G.RapzhangConfig.Esp9_ZoneNext == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_ZoneNext = v and true or false; if v then _G.RapzhangConfig.Esp9_Zone = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_Grenade", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Grenade ESP", "   ▶ Grenade ESP"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Grenade == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Grenade = on; if on then _G.RapzhangConfig.Esp9_GrenadeMark = true; _G.RapzhangConfig.Esp9_GrenadeRadius = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_GrenadeMark", UI = AliasMap.Switcher, Text = T("      Grenade Marker + Type", "      Grenade Marker + Type"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeMark == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeMark = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_GrenadeRadius", UI = AliasMap.Switcher, Text = T("      Blast Radius", "      Blast Radius"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeRadius == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeRadius = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Rank", UI = AliasMap.Switcher, Text = T("   Enemy Rank", "   Enemy Rank"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Rank == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Rank = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Clan", UI = AliasMap.Switcher, Text = T("   Enemy Clan", "   Enemy Clan"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Clan == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Clan = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Ammo", UI = AliasMap.Switcher, Text = T("   Enemy Ammo / Reload", "   Enemy Ammo / Reload"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ammo == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ammo = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
@@ -1669,7 +1686,9 @@ function _G.InitModMenuTab()
         { Key = "ModMenu_AutoReportKiller", UI = AliasMap.Switcher, Text = T("  Killer Report Assist (Confirm)", "  Killer Report Assist (Confirm)"), GetFunc = function() return _G.RapzhangConfig.AutoReportKiller == true end, SetFunc = function(_, v) _G.RapzhangConfig.AutoReportKiller = v and true or false; if not v and _G.AutoReportAssistReset then pcall(_G.AutoReportAssistReset, false) end; return true end },
         { Key = "ModMenu_X3FakeVisual", UI = AliasMap.Switcher, Text = T("  Fake Sultan Visual", "  Fake Sultan Visual"), GetFunc = function() return _G.RapzhangConfig.X3FakeVisual == true end, SetFunc = function(_, v) _G.RapzhangConfig.X3FakeVisual = v and true or false; return true end },
         { Key = "ModMenu_ForceFriend", UI = AliasMap.Switcher, Text = T("  Force Friend", "  Force Friend"), GetFunc = function() return _G.RapzhangConfig.ForceFriend == true end, SetFunc = function(_, v) _G.RapzhangConfig.ForceFriend = v and true or false; if v then pcall(function() SaveFriendUIDList(LoadFriendUIDList()) end) end; if _G.RapzhangForceFriend then if v and _G.RapzhangForceFriend.Boot then pcall(_G.RapzhangForceFriend.Boot) elseif _G.RapzhangForceFriend.Refresh then pcall(_G.RapzhangForceFriend.Refresh) end end; if v and _G.RapzhangStartFriendSync then pcall(_G.RapzhangStartFriendSync) end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
-        { Key = "ModMenu_AutoParachute", UI = AliasMap.Switcher, Text = T("  Auto Parachute (Map Mark)", "  Auto Parachute (Map Mark)"), GetFunc = function() return _G.RapzhangConfig.AutoParachute == true end, SetFunc = function(_, v) if _G.RapzhangAutoParachute and _G.RapzhangAutoParachute.Set then pcall(_G.RapzhangAutoParachute.Set, v and true or false) else _G.RapzhangConfig.AutoParachute = v and true or false end; return true end },
+        { Key = "ModMenu_AutoParachute", UI = AliasMap.TitleSwitcher, Text = T("  ▶ Auto Parachute (Map Mark)", "  ▶ Auto Parachute (Map Mark)"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.AutoParachute == true end, SetFunc = function(_, v) local on = v and true or false; if _G.RapzhangAutoParachute and _G.RapzhangAutoParachute.Set then pcall(_G.RapzhangAutoParachute.Set, on) else _G.RapzhangConfig.AutoParachute = on end; if on then _G.RapzhangConfig.AutoJump = true end; return true end },
+        { Key = "ModMenu_AutoJump", UI = AliasMap.Switcher, Text = T("      Auto Jump From Plane", "      Auto Jump From Plane"), ExpandHandle = "ModMenu_AutoParachute", GetFunc = function() return _G.RapzhangConfig.AutoJump == true end, SetFunc = function(_, v) _G.RapzhangConfig.AutoJump = v and true or false; if v then _G.RapzhangConfig.AutoParachute = true; if _G.RapzhangAutoParachute and _G.RapzhangAutoParachute.Set then pcall(_G.RapzhangAutoParachute.Set, true) end end; return true end },
+        { Key = "ModMenu_AutoJumpRadius", UI = AliasMap.Slider, Text = T("      Auto Jump Radius (m)", "      Auto Jump Radius (m)"), ExpandHandle = "ModMenu_AutoParachute", MinValue = 50, MaxValue = 1500, min = 50, max = 1500, Min = 50, Max = 1500, GetFunc = function() return math.max(50, math.min(1500, math.floor((tonumber(_G.RapzhangConfig.AutoJumpRadius) or 300) + 0.5))) end, SetFunc = function(_, v) _G.RapzhangConfig.AutoJumpRadius = math.max(50, math.min(1500, math.floor((tonumber(v) or 300) + 0.5))); return true end },
     }
 
         -- STEP 10: Stack Graphic
@@ -1948,6 +1967,11 @@ if not _G.RapzhangAutoParachute then
     AP.LastApply = -999.0
     AP.LastError = nil
     AP.ZOffset = 15000.0
+    AP.MarkEpsilon = 0.1
+    AP.MaxWorldCoord = 2000000.0
+    AP.Jumped = false
+    AP.LastJumpTry = -999.0
+    AP.LastPlaneSeen = -999.0
 
     local function APValid(obj)
         if obj == nil then return false end
@@ -1992,17 +2016,71 @@ if not _G.RapzhangAutoParachute then
         return APValid(ch) and ch or nil
     end
 
-    function AP.GetMapMarkLocation(pc)
+    function AP.GetPlayerState(pc)
         local ps = nil
         pcall(function() if pc.GetCurPlayerState then ps = pc:GetCurPlayerState() end end)
         if not APValid(ps) then pcall(function() ps = pc.PlayerState end) end
-        if not APValid(ps) then return nil end
+        return APValid(ps) and ps or nil
+    end
+
+    -- PlayerState.MapMark is normalised map space. The game clears it to
+    -- FVector(0,0,0) and writes Z=1 through SetPlayerMark for a real mark, so
+    -- Z is the authoritative existence flag (see Game:GetPlayerMark3D and
+    -- AutoParachuteUI:ActivateAutoParachute). X/Y length is only a fallback
+    -- for builds that do not replicate Z.
+    -- true = mark exists, false = definitely cleared, nil = unknown.
+    function AP.HasMapMark(ps)
+        if not APValid(ps) then return false end
+        local mm, ok = nil, false
+        pcall(function() mm = ps.MapMark ok = true end)
+        if not ok or mm == nil then return nil end
+        local mx, my, mz = nil, nil, nil
+        ok = pcall(function()
+            mx, my, mz = tonumber(mm.X), tonumber(mm.Y), tonumber(mm.Z)
+        end)
+        if not ok then return nil end
+        if not mx or not my or mx ~= mx or my ~= my then return nil end
+        if mz ~= nil then
+            if mz ~= mz then return nil end
+            -- The game clears all three components with FVector(0,0,0).
+            -- Z=0 alone is not enough on forks that do not replicate the
+            -- flag, so only the full zero vector is "definitely cleared".
+            if mz == 0.0 and mx == 0.0 and my == 0.0 then return false end
+            return true
+        end
+        return (mx * mx + my * my) > 0.0
+    end
+
+    -- A usable target is a finite world-space vector. World (0,0) is the
+    -- map-centre origin and doubles as the cleared-mark value, so a vector
+    -- with both X and Y at ~0 is never a real target (same rule as AirLineUI).
+    function AP.IsValidMapMark(loc)
+        if loc == nil then return false end
+        local x, y, ok = nil, nil, false
+        ok = pcall(function() x, y = tonumber(loc.X), tonumber(loc.Y) end)
+        if not ok or not x or not y then return false end
+        if x ~= x or y ~= y then return false end
+        if math.abs(x) == math.huge or math.abs(y) == math.huge then return false end
+        if math.abs(x) < AP.MarkEpsilon and math.abs(y) < AP.MarkEpsilon then return false end
+        if math.abs(x) > AP.MaxWorldCoord or math.abs(y) > AP.MaxWorldCoord then return false end
+        return true
+    end
+
+    function AP.GetMapMarkLocation(pc)
+        local ps = AP.GetPlayerState(pc)
+        if not ps then return nil end
+        -- A cleared MapMark is authoritative even if GetMapMark3DLocation
+        -- still returns a stale vector.
+        if AP.HasMapMark(ps) == false then return nil end
         local loc = nil
         pcall(function()
             if ps.GetMapMark3DLocation then loc = ps:GetMapMark3DLocation() end
         end)
-        if loc and tonumber(loc.X) and tonumber(loc.Y) then return loc end
+        if AP.IsValidMapMark(loc) then return loc end
         -- Fallback: only accept MapMark when it already looks like world units.
+        -- On this game MapMark itself is normalised map space; the native
+        -- GetMapMark3DLocation is the world-space source.
+        loc = nil
         pcall(function()
             local mm = ps.MapMark
             local mx, my = tonumber(mm and mm.X), tonumber(mm and mm.Y)
@@ -2010,7 +2088,8 @@ if not _G.RapzhangAutoParachute then
                 loc = { X = mx, Y = my, Z = 0 }
             end
         end)
-        return loc
+        if AP.IsValidMapMark(loc) then return loc end
+        return nil
     end
 
     function AP.GetStateType(pc)
@@ -2019,17 +2098,104 @@ if not _G.RapzhangAutoParachute then
         return st
     end
 
-    function AP.Apply()
+    function AP.InPlane(pc)
+        if not pc then return false end
+        local inPlane = false
+        pcall(function() if pc.IsInPlane then inPlane = pc:IsInPlane() == true end end)
+        if not inPlane then
+            local st = AP.GetStateType(pc)
+            if EStateType and st ~= nil and st == EStateType.State_InPlane then
+                inPlane = true
+            end
+        end
+        return inPlane
+    end
+
+    -- The character is attached to the plane while boarding, so its location is
+    -- the best fallback when the view target is a camera/sequencer actor.
+    function AP.GetPlaneLocation(pc, ch)
+        local loc = nil
+        pcall(function()
+            if APValid(ch) and ch.K2_GetActorLocation then loc = ch:K2_GetActorLocation() end
+        end)
+        if not loc then
+            pcall(function()
+                if pc and pc.GetViewTarget then
+                    local vt = pc:GetViewTarget()
+                    if APValid(vt) and vt.K2_GetActorLocation then loc = vt:K2_GetActorLocation() end
+                end
+            end)
+        end
+        if not loc then
+            pcall(function()
+                local pawn = pc and pc.Pawn
+                if APValid(pawn) and pawn.K2_GetActorLocation then loc = pawn:K2_GetActorLocation() end
+            end)
+        end
+        if loc and tonumber(loc.X) and tonumber(loc.Y) then return loc end
+        return nil
+    end
+
+    function AP.ResetJumpIfLeftPlane(pc)
+        if not AP.Jumped then return end
+        if pc == nil then return end
+        if (AP.Now() - (AP.LastJumpTry or -999.0)) <= 5.0 then return end
+        if AP.InPlane(pc) then return end
+        AP.Jumped = false
+    end
+
+    function AP.TryAutoJump(pc, ch, mark)
+        if _G.RapzhangConfig.AutoJump ~= true then return false end
+        if not AP.InPlane(pc) then
+            AP.ResetJumpIfLeftPlane(pc)
+            return false
+        end
+        AP.LastPlaneSeen = AP.Now()
+        if AP.Jumped then return false end
+        if not AP.IsValidMapMark(mark) then mark = AP.GetMapMarkLocation(pc) end
+        if not AP.IsValidMapMark(mark) then return false end
+        local plane = AP.GetPlaneLocation(pc, ch)
+        if not plane then return false end
+        local dx = (tonumber(plane.X) or 0.0) - (tonumber(mark.X) or 0.0)
+        local dy = (tonumber(plane.Y) or 0.0) - (tonumber(mark.Y) or 0.0)
+        local distM = math.sqrt(dx * dx + dy * dy) / 100.0
+        local radius = tonumber(_G.RapzhangConfig.AutoJumpRadius) or 300
+        if radius < 50 then radius = 50 end
+        if radius > 1500 then radius = 1500 end
+        if distM > radius then return false end
+        local ok = false
+        pcall(function()
+            if pc.JumpFromPlane then
+                pc:JumpFromPlane()
+                ok = true
+            end
+        end)
+        if ok then
+            AP.Jumped = true
+            AP.LastJumpTry = AP.Now()
+            print(string.format("[AUTO PARACHUTE] Auto jump at %.0fm from mark (radius %.0fm)", distM, radius))
+        end
+        return ok
+    end
+
+    function AP.Apply(mark)
         local pc = AP.GetPC()
         if not pc then AP.LastError = "no controller" return false end
-        local loc = AP.GetMapMarkLocation(pc)
-        if not loc then AP.LastError = "no map mark" return false end
+        local loc = mark
+        if not AP.IsValidMapMark(loc) then loc = AP.GetMapMarkLocation(pc) end
+        if not AP.IsValidMapMark(loc) then
+            AP.LastError = "no map mark"
+            if AP.Applied then pcall(AP.Disable) end
+            return false
+        end
         local comp = nil
         pcall(function() if pc.GetParachuteComponent then comp = pc:GetParachuteComponent() end end)
         if not APValid(comp) then AP.LastError = "no parachute component" return false end
         local tx = tonumber(loc.X) or 0.0
         local ty = tonumber(loc.Y) or 0.0
-        local tz = (tonumber(loc.Z) or 0.0) + AP.ZOffset
+        local tz = tonumber(loc.Z) or 0.0
+        if tz ~= tz or math.abs(tz) == math.huge then tz = 0.0 end
+        tz = tz + AP.ZOffset
         local target = nil
         pcall(function() if FVector then target = FVector(tx, ty, tz) end end)
         if not target then target = { X = tx, Y = ty, Z = tz } end
@@ -2055,11 +2221,14 @@ if not _G.RapzhangAutoParachute then
     end
 
     function AP.Set(enabled)
-        AP.Enabled = enabled == true
-        _G.RapzhangConfig.AutoParachute = AP.Enabled
-        if AP.Enabled then
-            pcall(AP.Apply)
+        _G.RapzhangConfig.AutoParachute = enabled == true
+        if _G.RapzhangConfig.AutoParachute then
+            AP.Jumped = false
+            local ok = false
+            pcall(function() ok = AP.Apply() end)
+            AP.Enabled = ok == true
         else
+            AP.Enabled = false
             pcall(AP.Disable)
         end
         if _G.SaveModSettings then pcall(_G.SaveModSettings) end
@@ -2089,18 +2258,32 @@ if not _G.RapzhangAutoParachute then
             AP.Enabled = false
             return
         end
-        AP.Enabled = true
         local pc = AP.GetPC()
-        if not pc then return end
+        if not pc then
+            if AP.Applied then pcall(AP.Disable) end
+            AP.Enabled = false
+            return
+        end
+        -- Tanpa map mark fitur harus idle walau toggle ON: jangan pernah
+        -- memasang target dan jangan pernah JumpFromPlane.
+        local loc = AP.GetMapMarkLocation(pc)
+        if not AP.IsValidMapMark(loc) then
+            if AP.Applied then pcall(AP.Disable) end
+            AP.ResetJumpIfLeftPlane(pc)
+            AP.Enabled = false
+            return
+        end
+        AP.Enabled = true
         local ch = AP.GetCharacter(pc)
         if not ch then return end
+        pcall(AP.TryAutoJump, pc, ch, loc)
         if not AP.IsAirborneState(pc, ch) then
             if AP.Applied then pcall(AP.Disable) end
             return
         end
         local now = AP.Now()
         if (now - (AP.LastApply or -999.0)) >= 0.50 then
-            pcall(AP.Apply)
+            pcall(AP.Apply, loc)
         end
     end
 
@@ -3279,7 +3462,7 @@ end
 
 function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, topY)
   local d = ESP.Infos[key]
-  if not d or not ESPValid(d.Container) then
+  if not d or not ESPValid(d.Container) or not d.Rank or not d.Clan or not d.Ammo then
     ESP.Destroy(d)
     d = ESP.CreateInfo()
     ESP.Infos[key] = d
@@ -3587,6 +3770,7 @@ do
   EX.PlayerCache = EX.PlayerCache or {}
   EX.PredictCache = EX.PredictCache or {}
   EX.ClassCache = EX.ClassCache or {}
+  EX.GrenadeTypeCache = EX.GrenadeTypeCache or {}
   EX.LastSeen = EX.LastSeen or {}
   EX.LastAirdropScan = -999.0
   EX.LastGrenadeScan = -999.0
@@ -3809,14 +3993,26 @@ do
     end
   end
 
-  function EX.HideMark(key)
-    EX.HideLabel(key)
+  function EX.HideBox(key)
     local b = EX.Boxes[key]
     if b then for _, d in ipairs(b) do ESP.Hide(d) end end
+  end
+
+  function EX.HideRing(key)
     local r = EX.Rings[key]
     if r then for _, d in ipairs(r) do ESP.Hide(d) end end
+  end
+
+  function EX.HideExtra(key)
     local e = EX.Extras[key]
     if e then for _, d in ipairs(e) do ESP.Hide(d) end end
+  end
+
+  function EX.HideMark(key)
+    EX.HideLabel(key)
+    EX.HideBox(key)
+    EX.HideRing(key)
+    EX.HideExtra(key)
   end
 
   function EX.HidePrefix(prefix)
@@ -3876,6 +4072,7 @@ do
     EX.Labels, EX.Boxes, EX.Rings, EX.Extras = {}, {}, {}, {}
     EX.Airdrops, EX.Grenades = {}, {}
     EX.PlayerCache, EX.PredictCache = {}, {}
+    EX.GrenadeTypeCache = {}
     EX.LastSeen = {}
     EX.LastAirdropScan, EX.LastGrenadeScan = -999.0, -999.0
     EX.ZoneRingT = -999.0
@@ -3892,6 +4089,27 @@ do
       pcall(function() if Character.GetPlayerState then ps = Character:GetPlayerState() end end)
     end
     if not ESPValid(ps) then pcall(function() ps = Character.PlayerState end) end
+    if not ESPValid(ps) then
+      -- Fallback: registry GameplayData, dipakai game sendiri untuk UI player lain.
+      local gd = ESP.GetGameplayData()
+      local key = nil
+      pcall(function() if Character.GetPlayerKey then key = Character:GetPlayerKey() end end)
+      if key == nil then pcall(function() key = Character.PlayerKey end) end
+      if gd and key ~= nil then
+        for _, fn in ipairs({ "GetPlayerState", "GetPlayerStateByKey", "GetPlayerStateByPlayerKey" }) do
+          if type(gd[fn]) == "function" then
+            pcall(function() ps = gd[fn](key) end)
+            if not ESPValid(ps) then pcall(function() ps = gd[fn](gd, key) end) end
+            if ESPValid(ps) then
+              local psKey = nil
+              pcall(function() psKey = ps.PlayerKey end)
+              if psKey == nil or tostring(psKey) == tostring(key) then break end
+              ps = nil
+            end
+          end
+        end
+      end
+    end
     return ESPValid(ps) and ps or nil
   end
 
@@ -3901,44 +4119,232 @@ do
     return c
   end
 
-  local RANK_TABLES = { "RankIntegralLevel_MODE_47", "RankIntegralLevel_MODE_1", "RankIntegralLevel" }
+  -- MODE_47 adalah ladder ranked utama (dipakai PlayerStatePromotionFeature),
+  -- MODE_25 dipakai battle result, sisanya fallback lintas build.
+  local RANK_TABLES = {
+    "RankIntegralLevel_MODE_47",
+    "RankIntegralLevel_MODE_25",
+    "RankIntegralLevel_MODE_1",
+    "RankIntegralLevel",
+  }
+  local RANK_TIER_NAMES = {
+    [1] = "Bronze",
+    [2] = "Silver",
+    [3] = "Gold",
+    [4] = "Platinum",
+    [5] = "Diamond",
+    [6] = "Crown",
+    [7] = "Ace",
+    [8] = "Conqueror",
+  }
+  local RANK_SUB_NAMES = { "V", "IV", "III", "II", "I" }
+
+  local function rankTrim(v)
+    if v == nil then return nil end
+    local ok, s = pcall(tostring, v)
+    if not ok or s == nil then return nil end
+    s = s:gsub("^%s+", ""):gsub("%s+$", "")
+    if s == "" or s == "None" or s == "nil" or s == "NULL" then return nil end
+    return s
+  end
+
+  local function rankLocStr(id)
+    if id == nil or id == "" then return nil end
+    local loc = rawget(_G, "LocUtil")
+    if not loc then
+      local ok, mod = pcall(require, "common.loc_util")
+      if ok then loc = mod end
+    end
+    local fn = nil
+    pcall(function() if loc then fn = loc.GetLocalizeResStr end end)
+    if type(fn) == "function" then
+      local ok, value = pcall(fn, tonumber(id) or id)
+      local text = ok and rankTrim(value) or nil
+      if text then return text end
+    end
+    return nil
+  end
+
+  local function rankCfgFromUtil(level)
+    local util = rawget(_G, "FuncUtil")
+    if not util then
+      local ok, mod = pcall(require, "common.func_util")
+      if ok then util = mod end
+    end
+    local fn = nil
+    pcall(function() if util then fn = util.GetRankTableData end end)
+    if type(fn) ~= "function" then return nil end
+    local season = 0
+    pcall(function() season = tonumber(_G.DataMgr and _G.DataMgr.season_id) or 0 end)
+    local tries = { season, 0 }
+    for _, s in ipairs(tries) do
+      local ok, cfg = pcall(fn, level, s)
+      if ok and type(cfg) == "table" then return cfg end
+    end
+    -- Sebagian build tidak memakai argumen season.
+    local ok, cfg = pcall(fn, level)
+    if ok and type(cfg) == "table" then return cfg end
+    return nil
+  end
+
+  local function rankCfgFromTables(level)
+    local dt = rawget(_G, "CDataTable")
+    local fn = nil
+    pcall(function() if dt then fn = dt.GetTableData end end)
+    if type(fn) ~= "function" then return nil end
+    for _, tbl in ipairs(RANK_TABLES) do
+      local cfg = nil
+      pcall(function() cfg = fn(tbl, level) end)
+      if type(cfg) ~= "table" then
+        pcall(function() cfg = fn(tbl, tostring(level)) end)
+      end
+      if type(cfg) == "table" then return cfg end
+    end
+    return nil
+  end
+
+  local function rankNameFromCfg(cfg)
+    if type(cfg) ~= "table" then return nil end
+    for _, key in ipairs({ "Name", "RankName", "SegmentName", "IntegralTypeName", "ShowName", "NameID", "RankNameID", "RankIntegralName" }) do
+      local text = rankTrim(cfg[key])
+      if text then
+        if text:match("^%d+$") then
+          -- Angka panjang adalah localization id, bukan nama rank.
+          if #text >= 4 then
+            local localized = rankLocStr(text)
+            if localized then return localized end
+          end
+        else
+          return text
+        end
+      end
+    end
+    return nil
+  end
+
+  -- Fallback nama tier dari segment id: 1xx Bronze ... 8xx Conqueror,
+  -- sub-level 1..5 = V..I. Berlaku walau CDataTable/FuncUtil tidak ada.
+  local function rankFallbackName(level)
+    local n = tonumber(level)
+    if not n or n <= 0 then return nil end
+    local tier = math.floor(n / 100)
+    local sub = n % 100
+    local tierName = RANK_TIER_NAMES[tier]
+    if not tierName then return nil end
+    if tier <= 6 and sub >= 1 and sub <= #RANK_SUB_NAMES then
+      return tierName .. " " .. RANK_SUB_NAMES[sub]
+    end
+    return tierName
+  end
+
+  local function rankLabel(level)
+    local name = rankNameFromCfg(rankCfgFromUtil(level))
+      or rankNameFromCfg(rankCfgFromTables(level))
+      or rankFallbackName(level)
+    if name then return name end
+    return "Lv" .. tostring(level)
+  end
+
+  local function rankNumField(obj, field)
+    if obj == nil then return nil end
+    local v = nil
+    local ok = pcall(function() v = obj[field] end)
+    if not ok then return nil end
+    v = tonumber(v)
+    if v and v > 0 then return v end
+    return nil
+  end
+
+  -- Sumber rank musuh, berurutan dari yang paling "current":
+  --   SegmentLevel C++ (dipakai WatchGameInGamePlayerInfo untuk player lain),
+  --   SegmentLevel milik feature Promotion (diisi client dari tabel season),
+  --   CurSegLevel, UnlockSegLevel, lalu PeakSegmentID (label PEAK).
+  -- PromotionLayer TIDAK dipakai sebagai level: nilainya layer promosi,
+  -- bukan segment 1xx..8xx.
+  local function rankFeature(ps)
+    if ps == nil then return nil end
+    local pf = nil
+    pcall(function() pf = ps.PromotionFeature end)
+    if pf == nil then pcall(function() pf = ps.PlayerStatePromotionFeature end) end
+    if pf == nil then
+      pcall(function()
+        if type(ps.GetPromotionFeature) == "function" then pf = ps:GetPromotionFeature() end
+      end)
+    end
+    return pf
+  end
+
+  local function rankLevelFromPS(ps)
+    if ps == nil then return nil, nil end
+    local pf = rankFeature(ps)
+    local sources = {
+      { obj = ps, field = "SegmentLevel", tag = nil },
+      { obj = pf, field = "SegmentLevel", tag = nil },
+      { obj = ps, field = "CurSegLevel", tag = nil },
+      { obj = ps, field = "UnlockSegLevel", tag = nil },
+      { obj = ps, field = "PeakSegmentID", tag = "PEAK" },
+    }
+    for _, s in ipairs(sources) do
+      local level = rankNumField(s.obj, s.field)
+      if level then return level, s.tag end
+    end
+    return nil, nil
+  end
+
+  -- Beberapa build hanya mengisi judul rank di feature Promotion.
+  local function rankTitleFromPS(ps)
+    local pf = rankFeature(ps)
+    if pf == nil then return nil end
+    local title = nil
+    pcall(function() title = rankTrim(pf.SegmentTitle) end)
+    return title
+  end
 
   function EX.GetRankText(Character, isBot)
-    if isBot then return "" end
+    if not ESPValid(Character) then return "" end
     local key = ESP.GetPlayerKey(Character)
     local now = ESP.Now()
     local c = playerCache(key)
-    if c.rankT and (now - c.rankT) < 5.0 then return c.rank or "" end
+    -- Data rank baru tersedia beberapa saat setelah PlayerState/feature siap;
+    -- jangan mengunci hasil kosong selama 5 detik.
+    local ttl = (c.rank and c.rank ~= "") and 10.0 or 0.75
+    if c.rankT and (now - c.rankT) < ttl then return c.rank or "" end
     c.rankT = now
     local ps = EX.GetPlayerState(Character)
-    if not ps then c.rank = "" return "" end
-    local level = nil
-    pcall(function() level = ps.UnlockSegLevel end)
-    if type(level) ~= "number" or level <= 0 then pcall(function() level = ps.SegmentLevel end) end
-    if type(level) ~= "number" or level <= 0 then pcall(function() level = ps.PromotionLayer end) end
-    if type(level) ~= "number" or level <= 0 then c.rank = "" return "" end
-    level = math.floor(level + 0.5)
-    local rankName = nil
-    pcall(function()
-      local dt = CDataTable
-      if dt and dt.GetTableData then
-        for _, tbl in ipairs(RANK_TABLES) do
-          local cfg = dt.GetTableData(tbl, level)
-          if cfg then
-            local n = cfg.Name or cfg.ShortName or cfg.RankName
-            if n ~= nil and tostring(n) ~= "" and tostring(n) ~= "None" then
-              rankName = tostring(n)
-              break
-            end
-          end
+    -- Diagnostik opsional: tambahkan Esp9_RankDebug = true di
+    -- rapzhang_settings.txt untuk melihat field rank mentah tiap 5 detik.
+    if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then
+      if (now - (c.dbgT or 0)) >= 5.0 then
+        c.dbgT = now
+        local function dbgVal(obj, field)
+          local v = nil
+          pcall(function() if obj then v = obj[field] end end)
+          return tostring(v)
         end
+        local pf = rankFeature(ps)
+        print(string.format("[ESP RANK] key=%s ps=%s seg=%s cur=%s unlock=%s peak=%s layer=%s featSeg=%s featTitle=%s",
+          tostring(key), tostring(ps ~= nil),
+          dbgVal(ps, "SegmentLevel"), dbgVal(ps, "CurSegLevel"),
+          dbgVal(ps, "UnlockSegLevel"), dbgVal(ps, "PeakSegmentID"),
+          dbgVal(ps, "PromotionLayer"), dbgVal(pf, "SegmentLevel"),
+          dbgVal(pf, "SegmentTitle")))
       end
-    end)
-    local text
-    if rankName then text = "RANK " .. rankName
-    else text = "RANK Lv" .. tostring(level) end
-    c.rank = text
-    return text
+    end
+    if not ps then c.rank = "" return "" end
+    local level, tag = rankLevelFromPS(ps)
+    if not level then
+      local title = rankTitleFromPS(ps)
+      if title then
+        c.rank = "RANK " .. title
+        return c.rank
+      end
+      c.rank = "" return ""
+    end
+    level = math.floor(level + 0.5)
+    local text = "RANK "
+    if tag == "PEAK" then text = text .. "PEAK " end
+    c.rank = text .. rankLabel(level)
+    return c.rank
   end
 
   local CLAN_KEYS = {
@@ -3954,11 +4360,12 @@ do
   end
 
   function EX.GetClanText(Character, isBot)
-    if isBot then return "" end
+    if not ESPValid(Character) then return "" end
     local key = ESP.GetPlayerKey(Character)
     local now = ESP.Now()
     local c = playerCache(key)
-    if c.clanT and (now - c.clanT) < 5.0 then return c.clan or "" end
+    local ttl = (c.clan and c.clan ~= "") and 10.0 or 0.75
+    if c.clanT and (now - c.clanT) < ttl then return c.clan or "" end
     c.clanT = now
     local ps = EX.GetPlayerState(Character)
     if not ps then c.clan = "" return "" end
@@ -4092,6 +4499,9 @@ do
   end
 
   function EX.DrawAirdrops(pc, vw, vh, now)
+    local cfg = _G.RapzhangConfig or {}
+    local showBox = cfg.Esp9_AirdropBox == true
+    local showPred = cfg.Esp9_AirdropPredict == true
     local seen = {}
     local myLoc = nil
     pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
@@ -4104,16 +4514,23 @@ do
           local s = ESP.Project(pc, loc)
           if s and s.X > -180 and s.X < vw + 180 and s.Y > -180 and s.Y < vh + 180 then
             shown = shown + 1
-            if shown <= 6 then
+            if shown <= 6 and (showBox or showPred) then
               local key = "ad_" .. tostring(a)
               seen[key] = true
               EX.LastSeen[key] = now
               local dm = myLoc and ESP.DistMeters(myLoc, loc) or item.Dist or 0
               local size = math.max(10.0, math.min(42.0, 1400.0 / math.max(12.0, dm)))
-              EX.DrawBox(key, s.X, s.Y, size, size, C_EX_ORANGE, "ad", 2.0)
-              local pred, eta = EX.PredictLanding(pc, a, loc, now)
+              if showBox then
+                EX.DrawBox(key, s.X, s.Y, size, size, C_EX_ORANGE, "ad", 2.0)
+              else
+                EX.HideBox(key)
+              end
+              local pred, eta = nil, nil
+              if showPred then
+                pred, eta = EX.PredictLanding(pc, a, loc, now)
+              end
               local label = string.format("AIRDROP %dm", math.floor((tonumber(dm) or 0) + 0.5))
-              if pred then
+              if showPred and pred then
                 local ps2 = ESP.Project(pc, pred)
                 if ps2 then
                   local ex = EX.GetExtra(key, 3)
@@ -4124,12 +4541,17 @@ do
                     ESP.DrawLine(ex[2], ps2.X - m, ps2.Y - m, ps2.X + m, ps2.Y + m, 2.0)
                     ESP.DrawLine(ex[3], ps2.X - m, ps2.Y + m, ps2.X + m, ps2.Y - m, 2.0)
                   end
+                else
+                  EX.HideExtra(key)
                 end
                 if eta and eta > 0.5 then
                   label = label .. string.format("  %.0fs", eta)
                 end
+              else
+                EX.HideExtra(key)
               end
-              EX.DrawLabel(key, s.X, s.Y + size * 0.5 + 3.0, label, C_EX_ORANGE)
+              local ly = showBox and (s.Y + size * 0.5 + 3.0) or (s.Y + 10.0)
+              EX.DrawLabel(key, s.X, ly, label, C_EX_ORANGE)
             end
           end
         end
@@ -4138,6 +4560,173 @@ do
     for key in pairs(EX.Labels) do
       if key:sub(1, 3) == "ad_" and not seen[key] then EX.HideMark(key) end
     end
+    for key in pairs(EX.Boxes) do
+      if key:sub(1, 3) == "ad_" and not seen[key] then EX.HideMark(key) end
+    end
+    for key in pairs(EX.Extras) do
+      if key:sub(1, 3) == "ad_" and not seen[key] then EX.HideMark(key) end
+    end
+  end
+
+  local GRENADE_TYPE_BY_ID = {
+    [602001] = "FLASH",
+    [602002] = "SMOKE",
+    [602003] = "MOLOTOV",
+    [602004] = "FRAG",
+    [601006] = "MED",
+    [602115] = "FIREWORK",
+  }
+
+  local function exNameHas(s, ...)
+    for i = 1, select("#", ...) do
+      local p = select(i, ...)
+      if p and string.find(s, p, 1, true) then return true end
+    end
+    return false
+  end
+
+  function EX.GetProjectileTags()
+    if EX.ProjectileTags ~= nil then return EX.ProjectileTags or nil end
+    local tags = nil
+    pcall(function()
+      tags = require("GameLua.Mod.BaseMod.GamePlay.Actor.Projectile.ProjectileTypes")
+    end)
+    EX.ProjectileTags = tags or false
+    return tags or nil
+  end
+
+  local function exTagEq(a, b)
+    if a == nil or b == nil then return false end
+    local ok, r = pcall(function() return TagEquals(a, b) end)
+    if ok then return r == true end
+    return tostring(a) == tostring(b)
+  end
+
+  function EX.GetGrenadeType(a)
+    if not ESPValid(a) then return "GRENADE" end
+    local key = tostring(a)
+    local now = ESP.Now()
+    local cached = EX.GrenadeTypeCache[key]
+    if cached and (now - (cached.t or 0)) < 10.0 then return cached.v end
+    local id = nil
+    pcall(function() if a.GetItemTypeID then id = a:GetItemTypeID() end end)
+    if type(id) ~= "number" then
+      pcall(function() id = a.ItemDefineID and a.ItemDefineID.TypeSpecificID end)
+    end
+    if type(id) ~= "number" then pcall(function() id = a.CurGrenadeID end) end
+    local t = nil
+    if type(id) == "number" and id > 0 then
+      t = GRENADE_TYPE_BY_ID[math.floor(id + 0.5)]
+    end
+    if not t then
+      local name = ""
+      pcall(function()
+        if KismetSystemLibraryESP and KismetSystemLibraryESP.GetObjectName then
+          name = tostring(KismetSystemLibraryESP.GetObjectName(a) or "")
+        end
+      end)
+      if name == "" then
+        pcall(function() if a.SafeGetObjectName then name = tostring(a:SafeGetObjectName() or "") end end)
+      end
+      if name == "" then
+        pcall(function()
+          local cls = a:GetClass()
+          if cls and cls.GetName then name = tostring(cls:GetName() or "") end
+        end)
+      end
+      local low = string.lower(name)
+      if exNameHas(low, "smoke", "smoking") then t = "SMOKE"
+      elseif exNameHas(low, "molotov", "burn", "fire", "flame", "incendiary") then t = "MOLOTOV"
+      elseif exNameHas(low, "frag", "shoulei", "fragmentation") then t = "FRAG"
+      elseif exNameHas(low, "flash", "blind", "stun") then t = "FLASH"
+      elseif exNameHas(low, "medicine", "heal", "medkit", "med") then t = "MED"
+      elseif exNameHas(low, "apple") then t = "APPLE"
+      elseif exNameHas(low, "snow", "ice") then t = "SNOW"
+      elseif exNameHas(low, "firework") then t = "FIREWORK"
+      end
+    end
+    if not t and type(id) == "number" and id > 0 then
+      pcall(function()
+        local dt = CDataTable
+        if dt and dt.GetTableData then
+          local cfg = dt.GetTableData("Item", math.floor(id + 0.5))
+          local nm = cfg and (cfg.ItemName or cfg.Name)
+          if nm then
+            local low = string.lower(tostring(nm))
+            if exNameHas(low, "smoke") then t = "SMOKE"
+            elseif exNameHas(low, "molotov", "burn", "fire") then t = "MOLOTOV"
+            elseif exNameHas(low, "frag") then t = "FRAG"
+            elseif exNameHas(low, "flash", "stun") then t = "FLASH"
+            elseif exNameHas(low, "medicine", "heal", "med") then t = "MED"
+            end
+          end
+        end
+      end)
+    end
+    t = t or "GRENADE"
+    EX.GrenadeTypeCache[key] = { t = now, v = t }
+    return t
+  end
+
+  function EX.GetGrenadeState(a)
+    local tag = nil
+    pcall(function() if a.GetCurStateType then tag = a:GetCurStateType() end end)
+    return tag
+  end
+
+  function EX.IsGrenadeActive(a)
+    if not ESPValid(a) then return false end
+    local hidden = false
+    pcall(function() if a.IsHidden then hidden = a:IsHidden() == true end end)
+    if not hidden then pcall(function() hidden = a.bHidden == true end) end
+    if hidden then return false end
+    local tag = EX.GetGrenadeState(a)
+    local tags = EX.GetProjectileTags()
+    local state = tags and tags.Tags and tags.Tags.State or nil
+    if state then
+      if exTagEq(tag, state.Destroyed) or exTagEq(tag, state.PostEffect) then return false end
+      if exTagEq(tag, state.InEffect) then
+        local remain = nil
+        pcall(function() if a.GetRemainingEffectTime then remain = a:GetRemainingEffectTime() end end)
+        if type(remain) == "number" then
+          if remain <= 0.0 then return false end
+        else
+          pcall(function() if a.GetCurStateRemainingLifeSpan then remain = a:GetCurStateRemainingLifeSpan() end end)
+          if type(remain) == "number" and remain <= 0.0 then return false end
+        end
+      end
+    else
+      local tagStr = tostring(tag or "")
+      if string.find(tagStr, "Destroyed", 1, true) or string.find(tagStr, "PostEffect", 1, true) then
+        return false
+      end
+      if string.find(tagStr, "InEffect", 1, true) then
+        local remain = nil
+        pcall(function() if a.GetRemainingEffectTime then remain = a:GetRemainingEffectTime() end end)
+        if type(remain) == "number" and remain <= 0.0 then return false end
+      end
+    end
+    local exploded = false
+    pcall(function()
+      exploded = a.bExploded == true or a.bIsExploded == true or a.bHasExploded == true
+    end)
+    if exploded then
+      local gtype = EX.GetGrenadeType(a)
+      if gtype ~= "SMOKE" and gtype ~= "MOLOTOV" then return false end
+      local remain = nil
+      pcall(function() if a.GetRemainingEffectTime then remain = a:GetRemainingEffectTime() end end)
+      if type(remain) == "number" and remain <= 0.0 then return false end
+    end
+    return true
+  end
+
+  function EX.GetGrenadeRemain(a, gtype)
+    local t = nil
+    pcall(function() if a.GetRemainingEffectTime then t = a:GetRemainingEffectTime() end end)
+    if type(t) == "number" and t >= 0.0 then return t end
+    pcall(function() if a.GetCurStateRemainingLifeSpan then t = a:GetCurStateRemainingLifeSpan() end end)
+    if type(t) == "number" and t > 0.0 and t < 120.0 then return t end
+    return EX.GetGrenadeFuse(a)
   end
 
   function EX.ScanGrenades()
@@ -4147,7 +4736,7 @@ do
     local out = {}
     for _, a in ipairs(list) do
       local loc = EX.ActorLoc(a)
-      if loc and myLoc then
+      if loc and myLoc and EX.IsGrenadeActive(a) then
         local dm = ESP.DistMeters(myLoc, loc)
         if dm <= 120.0 then
           out[#out + 1] = { Actor = a, Dist = dm }
@@ -4191,19 +4780,22 @@ do
   end
 
   function EX.DrawGrenades(pc, vw, vh, now)
+    local cfg = _G.RapzhangConfig or {}
+    local showMark = cfg.Esp9_GrenadeMark == true
+    local showRadius = cfg.Esp9_GrenadeRadius == true
     local seen = {}
     local me = ESP.GetLocalCharacter()
     local shown = 0
     for _, item in ipairs(EX.Grenades) do
       local a = item.Actor
-      if ESPValid(a) then
+      local key = "gr_" .. tostring(a)
+      if ESPValid(a) and EX.IsGrenadeActive(a) then
         local loc = EX.ActorLoc(a)
         if loc then
           local s = ESP.Project(pc, loc)
           if s and s.X > -120 and s.X < vw + 120 and s.Y > -120 and s.Y < vh + 120 then
             shown = shown + 1
-            if shown <= 6 then
-              local key = "gr_" .. tostring(a)
+            if shown <= 6 and (showMark or showRadius) then
               seen[key] = true
               EX.LastSeen[key] = now
               local own = false
@@ -4212,29 +4804,50 @@ do
               local color = own and C_GREEN or C_RED
               local ckey = own and "gr_own" or "gr_enemy"
               local radius = EX.GetBlastRadiusCM(a)
-              local rx, ry = nil, nil
-              local px = ESP.Project(pc, { X = loc.X + radius, Y = loc.Y, Z = loc.Z })
-              local py = ESP.Project(pc, { X = loc.X, Y = loc.Y + radius, Z = loc.Z })
-              if px and py then
-                local dx, dy = px.X - s.X, px.Y - s.Y
-                rx = math.sqrt(dx * dx + dy * dy)
-                dx, dy = py.X - s.X, py.Y - s.Y
-                ry = math.sqrt(dx * dx + dy * dy)
+              if showRadius then
+                local rx, ry = nil, nil
+                local px = ESP.Project(pc, { X = loc.X + radius, Y = loc.Y, Z = loc.Z })
+                local py = ESP.Project(pc, { X = loc.X, Y = loc.Y + radius, Z = loc.Z })
+                if px and py then
+                  local dx, dy = px.X - s.X, px.Y - s.Y
+                  rx = math.sqrt(dx * dx + dy * dy)
+                  dx, dy = py.X - s.X, py.Y - s.Y
+                  ry = math.sqrt(dx * dx + dy * dy)
+                end
+                if rx and ry and rx > 2.0 and ry > 2.0 then
+                  EX.DrawRing(key, s.X, s.Y, rx, ry, color, ckey, 1.5, 18)
+                else
+                  EX.HideRing(key)
+                end
+              else
+                EX.HideRing(key)
               end
-              if rx and ry and rx > 2.0 and ry > 2.0 then
-                EX.DrawRing(key, s.X, s.Y, rx, ry, color, ckey, 1.5, 18)
+              if showMark then
+                EX.DrawBox(key, s.X, s.Y, 12.0, 12.0, color, ckey, 1.6)
+                local gtype = EX.GetGrenadeType(a)
+                local remain = EX.GetGrenadeRemain(a, gtype)
+                local label = string.format("%s %dm", gtype, math.floor((radius / 100.0) + 0.5))
+                if remain then label = label .. string.format("  %.1fs", remain) end
+                EX.DrawLabel(key, s.X, s.Y + 10.0, label, color)
+              else
+                EX.HideBox(key)
+                EX.HideLabel(key)
               end
-              EX.DrawBox(key, s.X, s.Y, 12.0, 12.0, color, ckey, 1.6)
-              local fuse = EX.GetGrenadeFuse(a)
-              local label = string.format("GRENADE %dm", math.floor((radius / 100.0) + 0.5))
-              if fuse then label = label .. string.format("  %.1fs", fuse) end
-              EX.DrawLabel(key, s.X, s.Y + 10.0, label, color)
             end
           end
         end
       end
     end
     for key in pairs(EX.Labels) do
+      if key:sub(1, 3) == "gr_" and not seen[key] then EX.HideMark(key) end
+    end
+    for key in pairs(EX.Boxes) do
+      if key:sub(1, 3) == "gr_" and not seen[key] then EX.HideMark(key) end
+    end
+    for key in pairs(EX.Rings) do
+      if key:sub(1, 3) == "gr_" and not seen[key] then EX.HideMark(key) end
+    end
+    for key in pairs(EX.Extras) do
       if key:sub(1, 3) == "gr_" and not seen[key] then EX.HideMark(key) end
     end
   end
@@ -4292,46 +4905,53 @@ do
   end
 
   function EX.DrawZone(pc, vw, vh, now)
+    local cfg = _G.RapzhangConfig or {}
+    local showTimer = cfg.Esp9_ZoneTimer == true
+    local showNext = cfg.Esp9_ZoneNext == true
     local data = EX.GetZoneData()
-    if not data then
+    if not data or (not showTimer and not showNext) then
       EX.HideLabel("zone_text")
-      EX.HideMark("zone_ring")
+      EX.HideRing("zone_ring")
       return
     end
     local myLoc = nil
     pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
-    local parts = {}
-    if type(data.wave) == "number" and data.wave >= 0 then
-      parts[#parts + 1] = string.format("ZONE %d", math.floor(data.wave + 0.5))
-    else
-      parts[#parts + 1] = "ZONE"
-    end
-    if type(data.remain) == "number" then
-      parts[#parts + 1] = "SHRINK " .. fmtTime(data.remain)
-    end
     local white = data.white
     local whiteOK = white and tonumber(white.X) and tonumber(white.Y) and tonumber(white.Z) and tonumber(white.Z) > 0
-    if whiteOK and myLoc then
-      local dx = (tonumber(white.X) or 0) - myLoc.X
-      local dy = (tonumber(white.Y) or 0) - myLoc.Y
-      local dist = math.sqrt(dx * dx + dy * dy) - (tonumber(white.Z) or 0)
-      if dist <= 0 then
-        parts[#parts + 1] = "NEXT INSIDE"
+    if showTimer then
+      local parts = {}
+      if type(data.wave) == "number" and data.wave >= 0 then
+        parts[#parts + 1] = string.format("ZONE %d", math.floor(data.wave + 0.5))
       else
-        parts[#parts + 1] = string.format("NEXT %dm", math.floor(dist / 100.0 + 0.5))
+        parts[#parts + 1] = "ZONE"
       end
-    end
-    local blue = data.blue
-    if blue and tonumber(blue.Z) and tonumber(blue.Z) > 0 and myLoc then
-      local dx = (tonumber(blue.X) or 0) - myLoc.X
-      local dy = (tonumber(blue.Y) or 0) - myLoc.Y
-      local dist = math.sqrt(dx * dx + dy * dy)
-      if dist <= (tonumber(blue.Z) or 0) then
-        parts[#parts + 1] = "SAFE"
+      if type(data.remain) == "number" then
+        parts[#parts + 1] = "SHRINK " .. fmtTime(data.remain)
       end
+      if whiteOK and myLoc then
+        local dx = (tonumber(white.X) or 0) - myLoc.X
+        local dy = (tonumber(white.Y) or 0) - myLoc.Y
+        local dist = math.sqrt(dx * dx + dy * dy) - (tonumber(white.Z) or 0)
+        if dist <= 0 then
+          parts[#parts + 1] = "NEXT INSIDE"
+        else
+          parts[#parts + 1] = string.format("NEXT %dm", math.floor(dist / 100.0 + 0.5))
+        end
+      end
+      local blue = data.blue
+      if blue and tonumber(blue.Z) and tonumber(blue.Z) > 0 and myLoc then
+        local dx = (tonumber(blue.X) or 0) - myLoc.X
+        local dy = (tonumber(blue.Y) or 0) - myLoc.Y
+        local dist = math.sqrt(dx * dx + dy * dy)
+        if dist <= (tonumber(blue.Z) or 0) then
+          parts[#parts + 1] = "SAFE"
+        end
+      end
+      EX.DrawLabel("zone_text", vw * 0.5, 36.0, table.concat(parts, "  |  "), C_EX_CYAN)
+    else
+      EX.HideLabel("zone_text")
     end
-    EX.DrawLabel("zone_text", vw * 0.5, 36.0, table.concat(parts, "  |  "), C_EX_CYAN)
-    if whiteOK and pc then
+    if showNext and whiteOK and pc then
       if (now - EX.ZoneRingT) >= 1.0 or EX.ZoneGroundZ == nil then
         EX.ZoneRingT = now
         EX.ZoneGroundZ = EX.GroundZ(pc, tonumber(white.X) or 0, tonumber(white.Y) or 0, 20000.0)
@@ -4356,13 +4976,13 @@ do
         if rx and ry and rx > 4 and ry > 4 and rx < 20000 and ry < 20000 then
           EX.DrawRing("zone_ring", cs.X, cs.Y, rx, ry, C_EX_CYAN, "zone", 1.4, 20)
         else
-          EX.HideMark("zone_ring")
+          EX.HideRing("zone_ring")
         end
       else
-        EX.HideMark("zone_ring")
+        EX.HideRing("zone_ring")
       end
     else
-      EX.HideMark("zone_ring")
+      EX.HideRing("zone_ring")
     end
   end
 
@@ -7170,6 +7790,7 @@ _G.RapzhangAutoTextFeedback = (function()
     add("Force Friend", cfg.ForceFriend == true)
     add("Auto Report", cfg.AutoReportKiller == true)
     add("Auto Parachute", cfg.AutoParachute == true)
+    add("Auto Jump", cfg.AutoJump == true)
     add("X3 Watermark", cfg.X3Watermark == true)
     add("X3 Fake Visual", cfg.X3FakeVisual == true)
     add("X3 Perf Boost", cfg.X3PerfBoost == true)
