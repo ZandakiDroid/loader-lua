@@ -5429,26 +5429,415 @@ _G.RapzhangAutoTextFeedback = (function()
     return nil
   end
 
+  local function rankSeason()
+    local season = tonumber(_G.DataMgr and _G.DataMgr.season_id)
+    if season and season > 0 then return season end
+    return nil
+  end
+
   local function rankCfg(segment, season)
     local n = tonumber(segment)
     if n == nil or n <= 0 then return nil end
     local util = rawget(_G, "FuncUtil") or mod("common.func_util")
     if util and type(util.GetRankTableData) == "function" then
-      local ok, cfg = pcall(util.GetRankTableData, n, tonumber(season) or 0)
+      local wanted, current = tonumber(season), rankSeason()
+      local tries, seen = {}, {}
+      if wanted and wanted > 0 then tries[#tries + 1] = wanted end
+      if current and current ~= wanted then tries[#tries + 1] = current end
+      tries[#tries + 1] = 0
+      for _, s in ipairs(tries) do
+        if not seen[s] then
+          seen[s] = true
+          local ok, cfg = pcall(util.GetRankTableData, n, s)
+          if ok and type(cfg) == "table" then return cfg end
+        end
+      end
+      -- Some builds expose the lookup without a season argument.
+      local ok, cfg = pcall(util.GetRankTableData, n)
       if ok and type(cfg) == "table" then return cfg end
     end
     return nil
   end
 
-  local function rankLabel(segment, season)
-    local cfg = rankCfg(segment, season)
-    if cfg then
-      local name = cfg.Name or cfg.IntegralTypeName
-      if name ~= nil and tostring(name) ~= "" then return tostring(name) end
+  local function rankNameFromCfg(cfg)
+    if type(cfg) ~= "table" then return nil end
+    for _, key in ipairs({ "Name", "RankName", "SegmentName", "IntegralTypeName", "ShowName" }) do
+      local value = cfg[key]
+      if value ~= nil and tostring(value) ~= "" then
+        local text = tostring(value):match("^%s*(.-)%s*$")
+        if text ~= "" then
+          if text:match("^%d+$") then
+            -- Numeric field: a long number is a localization id, not a name.
+            if #text >= 4 then
+              local localized = locStr(text)
+              if localized and localized ~= "" then return localized end
+            end
+          else
+            return text
+          end
+        end
+      end
     end
-    local n = tonumber(segment)
-    if n and n > 0 then return "Rank " .. tostring(n) end
     return nil
+  end
+
+  -- Direct table lookup; works even when FuncUtil is not exposed to Lua mods.
+  local function rankCfgFromTables(segment)
+    local n = tonumber(segment)
+    if n == nil or n <= 0 then return nil end
+    local firstCfg = nil
+    for _, name in ipairs({
+      "RankIntegralLevel_MODE_25",
+      "RankIntegralLevel_MODE_47",
+      "RankIntegralLevel",
+    }) do
+      local cfg = tableData(name, n)
+      if type(cfg) == "table" then
+        firstCfg = firstCfg or cfg
+        if rankNameFromCfg(cfg) then return cfg end
+      end
+    end
+    return firstCfg
+  end
+
+  -- Last resort when every table lookup fails: derive the tier from the
+  -- segment id (1xx Bronze ... 8xx Conqueror, sub-level 1=V ... 5=I).
+  local RANK_TIER_NAMES = {
+    [1] = "Bronze",
+    [2] = "Silver",
+    [3] = "Gold",
+    [4] = "Platinum",
+    [5] = "Diamond",
+    [6] = "Crown",
+    [7] = "Ace",
+    [8] = "Conqueror",
+  }
+  local RANK_SUB_NAMES = { "V", "IV", "III", "II", "I" }
+
+  local function rankFallbackName(segment)
+    local n = tonumber(segment)
+    if n == nil or n <= 0 then return nil end
+    local tier = math.floor(n / 100)
+    local sub = n % 100
+    local tierName = RANK_TIER_NAMES[tier]
+    if tierName == nil then return nil end
+    if tier <= 6 and sub >= 1 and sub <= #RANK_SUB_NAMES then
+      return tierName .. " " .. RANK_SUB_NAMES[sub]
+    end
+    return tierName
+  end
+
+  local function rankLabel(segment, season)
+    local n = tonumber(segment)
+    if n == nil or n <= 0 then return nil end
+    local name = rankNameFromCfg(rankCfg(n, season)) or rankNameFromCfg(rankCfgFromTables(n))
+    if name then return name end
+    return rankFallbackName(n) or ("Rank " .. tostring(n))
+  end
+
+  -- ==========================================================================
+  -- ULTIMATE ROYALE (separate ladder: Vanguard ... Legend)
+  -- ==========================================================================
+  -- UR rating starts at 1,000 points; each mini-tier is 100 points and each
+  -- full tier is 500 points. Legend starts at 3,000.
+  local UR_TIER_NAMES = { "Vanguard", "Exceed", "Supreme", "Peerless", "Legend" }
+  local UR_SUB_NAMES = { "V", "IV", "III", "II", "I" }
+  local UR_BASE_POINTS = 1000
+  local UR_SUB_STEP = 100
+
+  local function urTierFromPoints(points)
+    local n = tonumber(points)
+    if n == nil or n < UR_BASE_POINTS then return nil end
+    local index = math.floor((n - UR_BASE_POINTS) / UR_SUB_STEP)
+    if index >= 20 then return "Legend" end
+    local tier = math.floor(index / 5) + 1
+    local sub = (index % 5) + 1
+    return UR_TIER_NAMES[tier] .. " " .. UR_SUB_NAMES[sub]
+  end
+
+  -- Some builds expose a numeric UR segment instead of rating points. Accept
+  -- the common 1..25 and 1001..1025 id layouts. Classic 1xx segments are not
+  -- accepted here because they collide with Bronze/Silver ids.
+  local function urTierFromSegment(segment)
+    local n = tonumber(segment)
+    if n == nil or n <= 0 then return nil end
+    local id = n
+    if id >= 1000 and id < 1100 then id = id - 1000 end
+    if id < 1 or id > 25 then return nil end
+    local tier = math.floor((id - 1) / 5) + 1
+    if tier >= 5 then return "Legend" end
+    local sub = (id - 1) % 5 + 1
+    return UR_TIER_NAMES[tier] .. " " .. UR_SUB_NAMES[sub]
+  end
+
+  local function urText(value)
+    if value == nil then return nil end
+    local text = tostring(value):match("^%s*(.-)%s*$")
+    if text == "" then return nil end
+    if text:match("^%d+$") then
+      if #text >= 4 then
+        local localized = locStr(text)
+        if localized and localized ~= "" then return localized end
+      end
+      return nil
+    end
+    return text
+  end
+
+  local function textLooksUR(value)
+    if value == nil then return false end
+    local text = tostring(value)
+    if text == "" then return false end
+    text = text:lower()
+    if text:find("ultimate", 1, true) then return true end
+    if text:find("%f[%a]ur%f[%A]") then return true end
+    return false
+  end
+
+  local UR_CONTAINER_KEYS = {
+    "ur_rating", "urRating", "URRating",
+    "ur_rating_info", "urRatingInfo", "URRatingInfo",
+    "ur_info", "urInfo", "URInfo",
+    "ur_data", "urData", "URData",
+    "ultimate_royale_rating", "ultimateRoyaleRating", "UltimateRoyaleRating",
+    "ultimate_royale_rating_info", "ultimateRoyaleRatingInfo", "UltimateRoyaleRatingInfo",
+    "ultimate_royale", "ultimateRoyale", "UltimateRoyale",
+    "ultimate_royale_info", "ultimateRoyaleInfo", "UltimateRoyaleInfo",
+    "ultimate_royale_data", "ultimateRoyaleData", "UltimateRoyaleData",
+    "BP_STRUCT_URRating", "BP_STRUCT_UltimateRoyaleRating",
+    "BP_STRUCT_URRatingInfo", "BP_STRUCT_UltimateRoyaleRatingInfo",
+  }
+
+  local function collectURTables(sources, result, rating)
+    local out, seen = {}, {}
+    local function add(t)
+      if type(t) == "table" and not seen[t] then
+        seen[t] = true
+        out[#out + 1] = t
+      end
+    end
+    local function addContainers(t)
+      if type(t) ~= "table" then return end
+      for _, key in ipairs(UR_CONTAINER_KEYS) do add(g(t, key)) end
+    end
+    for _, src in ipairs(sources) do
+      addContainers(src)
+      addContainers(g(src, "rating") or g(src, "BP_STRUCT_BTRating"))
+    end
+    addContainers(result)
+    addContainers(rating)
+    -- One level of common nesting plus array entries.
+    local base = #out
+    for i = 1, base do
+      local t = out[i]
+      for _, key in ipairs({
+        "rating_info", "ratingInfo", "RatingInfo",
+        "info", "Info", "data", "Data", "detail", "Detail",
+        "rating", "Rating",
+      }) do
+        add(g(t, key))
+      end
+      pcall(function()
+        for _, value in ipairs(t) do add(value) end
+      end)
+    end
+    return out
+  end
+
+  local UR_CFG_POINT_KEYS = {
+    "rating", "rank_rating", "rankRating", "ur_rating", "urRating",
+    "score", "points", "cur_rating", "current_rating", "curRating", "currentRating",
+    "rating_point", "ratingPoint", "rank_point", "rankPoint",
+    "integral", "Integral", "cur_score", "curScore",
+  }
+  local UR_CFG_DELTA_KEYS = {
+    "change_rating", "changeRating", "rating_change", "ratingChange",
+    "change_rank_rating", "changeRankRating",
+    "change_ur_rating", "changeURRating",
+    "delta", "change", "change_score", "changeScore",
+    "add_rating", "addRating", "add_point", "addPoint",
+  }
+  local UR_CFG_SEGMENT_KEYS = {
+    "segment", "segment_id", "segmentId", "new_segment", "newSegment",
+    "cur_segment", "curSegment", "current_segment", "currentSegment",
+  }
+  local UR_CFG_OLD_SEGMENT_KEYS = {
+    "old_segment", "oldSegment", "pre_segment", "preSegment",
+    "last_segment", "lastSegment",
+  }
+  local UR_CFG_TIER_TEXT_KEYS = {
+    "tier_name", "tierName", "TierName",
+    "rank_name", "rankName", "RankName",
+    "segment_name", "segmentName", "SegmentName",
+    "show_name", "showName", "ShowName",
+    "display_name", "displayName", "DisplayName",
+  }
+  local UR_POINT_KEYS = {
+    "ur_rating", "urRating", "URRating",
+    "ur_rank_rating", "urRankRating", "URRankRating",
+    "ultimate_royale_rating", "ultimateRoyaleRating", "UltimateRoyaleRating",
+    "ultimate_royale_rank_rating", "ultimateRoyaleRankRating",
+    "ur_score", "urScore", "ur_points", "urPoints",
+  }
+  local UR_DELTA_KEYS = {
+    "ur_change_rating", "urChangeRating",
+    "ur_rating_change", "urRatingChange",
+    "ur_delta", "urDelta",
+    "change_ur_rating", "changeURRating",
+    "ultimate_royale_change_rating", "ultimateRoyaleChangeRating",
+    "ultimate_royale_rating_change", "ultimateRoyaleRatingChange",
+    "ultimate_royale_delta", "ultimateRoyaleDelta",
+    "change_ultimate_royale_rating", "changeUltimateRoyaleRating",
+  }
+  local UR_SEGMENT_KEYS = {
+    "ur_segment", "urSegment", "URSegment",
+    "ur_new_segment", "urNewSegment",
+    "ultimate_royale_segment", "ultimateRoyaleSegment",
+    "ultimate_royale_new_segment", "ultimateRoyaleNewSegment",
+  }
+  local UR_OLD_SEGMENT_KEYS = {
+    "ur_old_segment", "urOldSegment",
+    "ultimate_royale_old_segment", "ultimateRoyaleOldSegment",
+  }
+  local UR_TIER_TEXT_KEYS = {
+    "ur_tier_name", "urTierName", "urTier",
+    "ur_rank_name", "urRankName", "urSegmentName",
+    "ultimate_royale_tier_name", "ultimateRoyaleTierName",
+    "ultimate_royale_rank_name", "ultimateRoyaleRankName",
+    "ultimate_royale_segment_name", "ultimateRoyaleSegmentName",
+  }
+
+  local function firstFromTables(tables, keys)
+    for _, t in ipairs(tables) do
+      if type(t) == "table" then
+        for _, key in ipairs(keys) do
+          local n = firstNumber(g(t, key))
+          if n ~= nil then return n end
+        end
+      end
+    end
+    return nil
+  end
+
+  local function firstTextFromTables(tables, keys)
+    for _, t in ipairs(tables) do
+      if type(t) == "table" then
+        for _, key in ipairs(keys) do
+          local text = urText(g(t, key))
+          if text then return text end
+        end
+      end
+    end
+    return nil
+  end
+
+  local function finalizeUR(ur)
+    if type(ur) ~= "table" then return nil end
+    if ur.points ~= nil and ur.points < UR_BASE_POINTS then ur.points = nil end
+    if ur.segment ~= nil and ur.segment <= 0 then ur.segment = nil end
+    if ur.oldSegment ~= nil and ur.oldSegment <= 0 then ur.oldSegment = nil end
+    if ur.oldPoints == nil and ur.points ~= nil and ur.delta ~= nil then
+      ur.oldPoints = math.max(0, ur.points - ur.delta)
+    end
+    if type(ur.tier) == "string" and ur.tier ~= "" then
+      ur.tierName = ur.tierName or ur.tier
+    end
+    if type(ur.oldTier) == "string" and ur.oldTier ~= "" then
+      ur.oldTierName = ur.oldTierName or ur.oldTier
+    end
+    ur.tier = ur.tierName or urTierFromPoints(ur.points) or urTierFromSegment(ur.segment)
+    ur.oldTier = ur.oldTierName or urTierFromPoints(ur.oldPoints) or urTierFromSegment(ur.oldSegment)
+    if ur.tier and ur.oldTier and ur.tier ~= ur.oldTier then
+      ur.tierLabel = ur.oldTier .. " → " .. ur.tier
+    else
+      ur.tierLabel = ur.tier or ur.oldTier
+    end
+    if ur.tier == nil and ur.points == nil then return nil end
+    return ur
+  end
+
+  local function extractUR(sources, result, rating, allowClassic)
+    local containers = collectURTables(sources, result, rating)
+    local ur = {}
+
+    local flat = {}
+    for _, src in ipairs(sources) do flat[#flat + 1] = src end
+    if type(result) == "table" then flat[#flat + 1] = result end
+    if type(rating) == "table" then flat[#flat + 1] = rating end
+    local rd = _G.DataMgr and _G.DataMgr.roleData
+    if type(rd) == "table" then flat[#flat + 1] = rd end
+
+    -- Explicit UR-prefixed fields are the most reliable source.
+    ur.points = firstFromTables(flat, UR_POINT_KEYS)
+    ur.delta = firstFromTables(flat, UR_DELTA_KEYS)
+    ur.segment = firstFromTables(flat, UR_SEGMENT_KEYS)
+    ur.oldSegment = firstFromTables(flat, UR_OLD_SEGMENT_KEYS)
+    ur.tierName = firstTextFromTables(flat, UR_TIER_TEXT_KEYS)
+
+    -- Then nested UR structs.
+    ur.points = ur.points or firstFromTables(containers, UR_CFG_POINT_KEYS)
+    ur.delta = ur.delta or firstFromTables(containers, UR_CFG_DELTA_KEYS)
+    ur.segment = ur.segment or firstFromTables(containers, UR_CFG_SEGMENT_KEYS)
+    ur.oldSegment = ur.oldSegment or firstFromTables(containers, UR_CFG_OLD_SEGMENT_KEYS)
+    ur.tierName = ur.tierName or firstTextFromTables(containers, UR_CFG_TIER_TEXT_KEYS)
+
+    -- UR matches may reuse the classic rating struct for the active ladder.
+    -- In that case the generic rating fields carry UR values.
+    if allowClassic and type(rating) == "table" then
+      ur.points = ur.points or firstNumber(
+        g(rating, "rating"), g(rating, "score"), g(rating, "points"), g(rating, "rank_rating")
+      )
+      ur.delta = ur.delta or firstNumber(
+        g(rating, "change_rating"), g(rating, "rating_change"),
+        g(rating, "delta"), g(rating, "change_rank_rating")
+      )
+      ur.segment = ur.segment or firstNumber(g(rating, "new_segment"), g(rating, "segment"))
+      ur.oldSegment = ur.oldSegment or firstNumber(g(rating, "old_segment"))
+    end
+
+    return finalizeUR(ur)
+  end
+
+  local UR_FLAG_KEYS = {
+    "IsUltimateRoyale", "isUltimateRoyale", "is_ultimate_royale", "bIsUltimateRoyale",
+    "URMode", "ur_mode", "isUR", "is_ur", "bIsUR", "bIsUr",
+    "UltimateRoyaleMode", "ultimate_royale_mode",
+  }
+  local UR_MODE_TEXT_KEYS = {
+    "ModeName", "ModeNameInternal", "Name", "ShowName", "GameMode", "ModeType",
+    "ModeDesc", "Desc", "Description", "UIName", "TeamModeName",
+  }
+
+  local function modeLooksUR(mode, sources, subMode)
+    if textLooksUR(mode) then return true end
+    local cfg = tableData("BTMode", subMode)
+    if type(cfg) == "table" then
+      for _, key in ipairs(UR_MODE_TEXT_KEYS) do
+        local value = g(cfg, key)
+        if type(value) == "string" and textLooksUR(value) then return true end
+        if type(value) == "number" then
+          local text = locStr(value)
+          if text and textLooksUR(text) then return true end
+        end
+      end
+    end
+    local dm = rawget(_G, "DataMgr")
+    if dm and type(dm.GetModeName) == "function" and subMode then
+      local ok, name = pcall(dm.GetModeName, subMode)
+      if ok and textLooksUR(name) then return true end
+    end
+    for _, src in ipairs(sources) do
+      for _, key in ipairs(UR_FLAG_KEYS) do
+        local value = g(src, key)
+        if value == true then return true end
+        if type(value) == "number" and value == 1 then return true end
+        if type(value) == "string" then
+          local lower = value:lower()
+          if lower == "1" or lower == "true" or textLooksUR(value) then return true end
+        end
+      end
+    end
+    return false
   end
 
   local function displayName()
@@ -6220,6 +6609,7 @@ _G.RapzhangAutoTextFeedback = (function()
 
     d.battleType = firstNumber(valFrom(sources, "battle_type", "battleType", "BATTLETYPE_MODE"))
     d.subMode = firstNumber(valFrom(sources, "sub_mode", "subMode", "ModeId", "mode_id"))
+    d.mode = resolveMode(sources, d.battleType, d.subMode)
     d.isTeam = firstBool(g(result, "is_team_result"), g(result, "IsTeamResult"))
     if d.isTeam == nil then
       d.isTeam = #teamList > 1
@@ -6311,32 +6701,53 @@ _G.RapzhangAutoTextFeedback = (function()
     end
     rating = rating or {}
 
-    d.rankPoints = firstNumber(
-      g(rating, "rank_rating"), g(rating, "rankRating"),
-      valFrom(sources, "rank_rating", "rankRating")
-    )
-    d.rankDelta = firstNumber(
-      g(rating, "change_rank_rating"), g(rating, "changeRankRating")
-    )
-    d.oldSegment = firstNumber(g(rating, "old_segment"), g(rating, "oldSegment"))
-    d.newSegment = firstNumber(g(rating, "new_segment"), g(rating, "newSegment"))
-    d.killRating = firstNumber(g(rating, "kill_rating"), g(rating, "killRating"))
-    d.killDelta = firstNumber(g(rating, "change_kill_rating"), g(rating, "changeKillRating"))
-    d.winRating = firstNumber(g(rating, "win_rating"), g(rating, "winRating"))
-    d.winDelta = firstNumber(g(rating, "change_win_rating"), g(rating, "changeWinRating"))
     d.season = firstNumber(
       g(result, "SeasonNumber"), g(result, "seasonNumber"),
       _G.DataMgr and _G.DataMgr.season_id
     )
-    if d.rankPoints and d.rankDelta then
-      d.oldPoints = math.max(0, d.rankPoints - d.rankDelta)
+
+    local urTables = collectURTables(sources, result, rating)
+    local urMode = modeLooksUR(d.mode, sources, d.subMode)
+    if not urMode then
+      -- 1..25 and 1001..1025 are not classic segments; they identify UR even
+      -- when the result does not expose the mode name.
+      local urSegment = firstNumber(g(rating, "new_segment"), g(rating, "newSegment"))
+      if urSegment and urTierFromSegment(urSegment) ~= nil then urMode = true end
     end
-    d.newRankName = rankLabel(d.newSegment, d.season)
-    d.oldRankName = rankLabel(d.oldSegment, d.season)
-    if d.newRankName and d.oldRankName and d.newRankName ~= d.oldRankName then
-      d.rankTier = d.oldRankName .. " → " .. d.newRankName
+    local urData = nil
+    if urMode or #urTables > 0 then
+      urData = extractUR(sources, result, rating, urMode)
+    end
+    if not urMode and urData ~= nil then urMode = true end
+    d.urMatch = urMode
+    if urMode then
+      -- Ultimate Royale has its own ladder; do not feed its segment into the
+      -- classic rank table, and do not label classic points as UR points.
+      d.ur = urData
     else
-      d.rankTier = d.newRankName or d.oldRankName
+      d.rankPoints = firstNumber(
+        g(rating, "rank_rating"), g(rating, "rankRating"),
+        valFrom(sources, "rank_rating", "rankRating")
+      )
+      d.rankDelta = firstNumber(
+        g(rating, "change_rank_rating"), g(rating, "changeRankRating")
+      )
+      d.oldSegment = firstNumber(g(rating, "old_segment"), g(rating, "oldSegment"))
+      d.newSegment = firstNumber(g(rating, "new_segment"), g(rating, "newSegment"))
+      d.killRating = firstNumber(g(rating, "kill_rating"), g(rating, "killRating"))
+      d.killDelta = firstNumber(g(rating, "change_kill_rating"), g(rating, "changeKillRating"))
+      d.winRating = firstNumber(g(rating, "win_rating"), g(rating, "winRating"))
+      d.winDelta = firstNumber(g(rating, "change_win_rating"), g(rating, "changeWinRating"))
+      if d.rankPoints and d.rankDelta then
+        d.oldPoints = math.max(0, d.rankPoints - d.rankDelta)
+      end
+      d.newRankName = rankLabel(d.newSegment, d.season)
+      d.oldRankName = rankLabel(d.oldSegment, d.season)
+      if d.newRankName and d.oldRankName and d.newRankName ~= d.oldRankName then
+        d.rankTier = d.oldRankName .. " → " .. d.newRankName
+      else
+        d.rankTier = d.newRankName or d.oldRankName
+      end
     end
 
     local protections = {}
@@ -6384,7 +6795,6 @@ _G.RapzhangAutoTextFeedback = (function()
     end
 
     d.map = resolveMap(sources, d.subMode)
-    d.mode = resolveMode(sources, d.battleType, d.subMode)
     d.perspective = resolvePerspective(d.subMode, d.battleType)
     return d
   end
@@ -6475,40 +6885,65 @@ _G.RapzhangAutoTextFeedback = (function()
       add("• " .. table.concat(rewardParts, " · "))
     end
 
-    add("")
-    add("🏅 <b>RANK</b>")
     local hasRank = d.rankTier ~= nil or d.rankPoints ~= nil
-      or d.killRating ~= nil or d.winRating ~= nil or d.protection ~= nil
-    bullet("Tier", esc(d.rankTier))
-    if d.rankPoints ~= nil then
-      local points
-      if d.oldPoints ~= nil then
-        points = fmtInt(d.oldPoints) .. " → <b>" .. fmtInt(d.rankPoints) .. "</b>"
+      or d.killRating ~= nil or d.winRating ~= nil
+      or (d.protection ~= nil and not d.urMatch)
+    if hasRank or d.ur == nil then
+      add("")
+      add("🏅 <b>RANK</b>")
+      bullet("Tier", esc(d.rankTier))
+      if d.rankPoints ~= nil then
+        local points
+        if d.oldPoints ~= nil then
+          points = fmtInt(d.oldPoints) .. " → <b>" .. fmtInt(d.rankPoints) .. "</b>"
+        else
+          points = "<b>" .. fmtInt(d.rankPoints) .. "</b>"
+        end
+        if d.rankDelta ~= nil and d.rankDelta ~= 0 then
+          points = points .. " (" .. fmtSigned(d.rankDelta) .. ")"
+        end
+        bullet("Points", points)
+      end
+      local ratingParts = {}
+      if d.killRating ~= nil then
+        local part = "Kill " .. fmtInt(d.killRating)
+        if d.killDelta ~= nil then part = part .. " (" .. fmtSigned(d.killDelta) .. ")" end
+        ratingParts[#ratingParts + 1] = part
+      end
+      if d.winRating ~= nil then
+        local part = "Win " .. fmtInt(d.winRating)
+        if d.winDelta ~= nil then part = part .. " (" .. fmtSigned(d.winDelta) .. ")" end
+        ratingParts[#ratingParts + 1] = part
+      end
+      if #ratingParts > 0 then bullet("Rating", esc(table.concat(ratingParts, " · "))) end
+      if hasRank then
+        bullet("Protection", esc(d.protection))
+        bullet("Season", fmtInt(d.season))
+      elseif d.urMatch then
+        add("• Ultimate Royale data unavailable")
       else
-        points = "<b>" .. fmtInt(d.rankPoints) .. "</b>"
+        add("• No ranked data (unranked match)")
       end
-      if d.rankDelta ~= nil and d.rankDelta ~= 0 then
-        points = points .. " (" .. fmtSigned(d.rankDelta) .. ")"
+    end
+
+    if d.ur then
+      add("")
+      add("🎯 <b>ULTIMATE ROYALE</b>")
+      bullet("Tier", esc(d.ur.tierLabel))
+      if d.ur.points ~= nil then
+        local points
+        if d.ur.oldPoints ~= nil then
+          points = fmtInt(d.ur.oldPoints) .. " → <b>" .. fmtInt(d.ur.points) .. "</b>"
+        else
+          points = "<b>" .. fmtInt(d.ur.points) .. "</b>"
+        end
+        if d.ur.delta ~= nil and d.ur.delta ~= 0 then
+          points = points .. " (" .. fmtSigned(d.ur.delta) .. ")"
+        end
+        bullet("Points", points)
       end
-      bullet("Points", points)
-    end
-    local ratingParts = {}
-    if d.killRating ~= nil then
-      local part = "Kill " .. fmtInt(d.killRating)
-      if d.killDelta ~= nil then part = part .. " (" .. fmtSigned(d.killDelta) .. ")" end
-      ratingParts[#ratingParts + 1] = part
-    end
-    if d.winRating ~= nil then
-      local part = "Win " .. fmtInt(d.winRating)
-      if d.winDelta ~= nil then part = part .. " (" .. fmtSigned(d.winDelta) .. ")" end
-      ratingParts[#ratingParts + 1] = part
-    end
-    if #ratingParts > 0 then bullet("Rating", esc(table.concat(ratingParts, " · "))) end
-    if hasRank then
       bullet("Protection", esc(d.protection))
       bullet("Season", fmtInt(d.season))
-    else
-      add("• No ranked data (unranked match)")
     end
 
     if d.teamList and #d.teamList > 1 then
@@ -6581,8 +7016,14 @@ _G.RapzhangAutoTextFeedback = (function()
     bullet("Name", esc(clip(maskPlayerName(d.reporterName) or "Player", 48)))
     bullet("UID", esc(d.reporterUIDMasked or "unknown"))
     bullet("Kills", fmtInt(d.kills))
-    bullet("Rank", esc(d.rankTier))
-    bullet("Points", fmtInt(d.rankPoints))
+    if d.ur then
+      bullet("Ladder", "Ultimate Royale")
+      bullet("Rank", esc(d.ur.tierLabel))
+      bullet("Points", fmtInt(d.ur.points))
+    else
+      bullet("Rank", esc(d.rankTier))
+      bullet("Points", fmtInt(d.rankPoints))
+    end
     bullet("Mode", esc(d.mode))
     bullet("Time", esc(d.logged or ""))
     return trimMessage(table.concat(lines, "\n"))
@@ -6605,13 +7046,34 @@ _G.RapzhangAutoTextFeedback = (function()
       if (d.kills == nil or d.kills == 0) and (tonumber(kills) or 0) > 0 then
         d.kills = tonumber(kills)
       end
-      if (d.rankPoints == nil or d.rankPoints == 0) and (tonumber(rank) or 0) > 0 then
-        d.rankPoints = tonumber(rank)
+      local rankArg = tonumber(rank)
+      local segmentArg = tonumber(segment)
+      -- A UR segment id from the caller is a strong signal even when the
+      -- battle result did not expose the mode name.
+      if not d.urMatch and segmentArg and urTierFromSegment(segmentArg) ~= nil then
+        d.urMatch = true
+        d.ur = d.ur or { segment = segmentArg }
       end
-      if (d.newSegment == nil or d.newSegment == 0) and (tonumber(segment) or 0) > 0 then
-        d.newSegment = tonumber(segment)
-        d.newRankName = rankLabel(d.newSegment, d.season)
-        d.rankTier = d.newRankName or d.rankTier
+      if d.urMatch then
+        if (rankArg and rankArg > 0) or (segmentArg and segmentArg > 0) then
+          d.ur = d.ur or {}
+          if rankArg and rankArg > 0 and (d.ur.points == nil or d.ur.points == 0) then
+            d.ur.points = rankArg
+          end
+          if segmentArg and segmentArg > 0 and (d.ur.segment == nil or d.ur.segment == 0) then
+            d.ur.segment = segmentArg
+          end
+          d.ur = finalizeUR(d.ur)
+        end
+      else
+        if (d.rankPoints == nil or d.rankPoints == 0) and (rankArg or 0) > 0 then
+          d.rankPoints = rankArg
+        end
+        if (d.newSegment == nil or d.newSegment == 0) and (segmentArg or 0) > 0 then
+          d.newSegment = segmentArg
+          d.newRankName = rankLabel(d.newSegment, d.season)
+          d.rankTier = d.newRankName or d.rankTier
+        end
       end
       emit(d)
     end)
