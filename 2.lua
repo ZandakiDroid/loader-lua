@@ -155,6 +155,13 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     Esp9_Line = false,
     Esp9_Visibility = false,
     Esp9_Radar360 = false,
+    Esp9_Airdrop = false,
+    Esp9_Zone = false,
+    Esp9_Grenade = false,
+    Esp9_Rank = false,
+    Esp9_Clan = false,
+    Esp9_Ammo = false,
+    AutoParachute = false,
     AutoReportKiller = false,
     -- Auto feedback is always on and is intentionally not exposed in the menu.
     AutoFeedbackEnabled = true,
@@ -1367,6 +1374,12 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_ESP9_Line", UI = AliasMap.Switcher, Text = T("   Show Snapline", "   Show Snapline"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Line == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Line = (v == true); return true end },
             { Key = "ModMenu_ESP9_Visibility", UI = AliasMap.Switcher, Text = T("   Show Visibility (Open/Close)", "   Show Visibility (Open/Close)"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Visibility == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Visibility = (v == true); return true end },
             { Key = "ModMenu_ESP9_Radar360", UI = AliasMap.Switcher, Text = T("   ESP Distance + 360 Radar", "   ESP Distance + 360 Radar"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Radar360 == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Radar360 = v and true or false; return true end },
+            { Key = "ModMenu_ESP9_Airdrop", UI = AliasMap.Switcher, Text = T("   Airdrop ESP + Landing Prediction", "   Airdrop ESP + Landing Prediction"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Airdrop == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Airdrop = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_Zone", UI = AliasMap.Switcher, Text = T("   Zone Timer + Next Circle", "   Zone Timer + Next Circle"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Zone == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Zone = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_Grenade", UI = AliasMap.Switcher, Text = T("   Grenade ESP + Blast Radius", "   Grenade ESP + Blast Radius"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Grenade == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Grenade = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_Rank", UI = AliasMap.Switcher, Text = T("   Enemy Rank", "   Enemy Rank"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Rank == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Rank = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_Clan", UI = AliasMap.Switcher, Text = T("   Enemy Clan", "   Enemy Clan"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Clan == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Clan = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_Ammo", UI = AliasMap.Switcher, Text = T("   Enemy Ammo / Reload", "   Enemy Ammo / Reload"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ammo == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ammo = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
         }
 
         local RequestMenuRefresh = function() end
@@ -1656,6 +1669,7 @@ function _G.InitModMenuTab()
         { Key = "ModMenu_AutoReportKiller", UI = AliasMap.Switcher, Text = T("  Killer Report Assist (Confirm)", "  Killer Report Assist (Confirm)"), GetFunc = function() return _G.RapzhangConfig.AutoReportKiller == true end, SetFunc = function(_, v) _G.RapzhangConfig.AutoReportKiller = v and true or false; if not v and _G.AutoReportAssistReset then pcall(_G.AutoReportAssistReset, false) end; return true end },
         { Key = "ModMenu_X3FakeVisual", UI = AliasMap.Switcher, Text = T("  Fake Sultan Visual", "  Fake Sultan Visual"), GetFunc = function() return _G.RapzhangConfig.X3FakeVisual == true end, SetFunc = function(_, v) _G.RapzhangConfig.X3FakeVisual = v and true or false; return true end },
         { Key = "ModMenu_ForceFriend", UI = AliasMap.Switcher, Text = T("  Force Friend", "  Force Friend"), GetFunc = function() return _G.RapzhangConfig.ForceFriend == true end, SetFunc = function(_, v) _G.RapzhangConfig.ForceFriend = v and true or false; if v then pcall(function() SaveFriendUIDList(LoadFriendUIDList()) end) end; if _G.RapzhangForceFriend then if v and _G.RapzhangForceFriend.Boot then pcall(_G.RapzhangForceFriend.Boot) elseif _G.RapzhangForceFriend.Refresh then pcall(_G.RapzhangForceFriend.Refresh) end end; if v and _G.RapzhangStartFriendSync then pcall(_G.RapzhangStartFriendSync) end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
+        { Key = "ModMenu_AutoParachute", UI = AliasMap.Switcher, Text = T("  Auto Parachute (Map Mark)", "  Auto Parachute (Map Mark)"), GetFunc = function() return _G.RapzhangConfig.AutoParachute == true end, SetFunc = function(_, v) if _G.RapzhangAutoParachute and _G.RapzhangAutoParachute.Set then pcall(_G.RapzhangAutoParachute.Set, v and true or false) else _G.RapzhangConfig.AutoParachute = v and true or false end; return true end },
     }
 
         -- STEP 10: Stack Graphic
@@ -1918,6 +1932,183 @@ if not _G.RapzhangForceFriend then
     end
 
     print("[FORCE FRIEND] Module loaded (multi-UID, auto-retry 20x).")
+end
+
+-- ==========================================================
+-- [AUTO PARACHUTE] MODULE
+-- Uses the game's own auto-parachute path:
+--   ParachuteComponent:SetAutoParachuteLocation(mark + Z offset)
+--   PlayerController:EnableAutoParachute(true)
+-- Read/write only through pcall so unsupported builds stay safe.
+-- ==========================================================
+if not _G.RapzhangAutoParachute then
+    local AP = {}
+    AP.Enabled = false
+    AP.Applied = false
+    AP.LastApply = -999.0
+    AP.LastError = nil
+    AP.ZOffset = 15000.0
+
+    local function APValid(obj)
+        if obj == nil then return false end
+        local ok, v = pcall(function() return slua.isValid(obj) end)
+        return ok and v == true
+    end
+
+    function AP.Now()
+        local t = nil
+        pcall(function() if os and os.clock then t = os.clock() end end)
+        return tonumber(t) or 0.0
+    end
+
+    function AP.GetPC()
+        local pc = nil
+        pcall(function()
+            if _G.ESP and _G.ESP.GetController then pc = _G.ESP.GetController() end
+        end)
+        if not APValid(pc) then
+            pcall(function()
+                local gd = _G.ESP and _G.ESP.GetGameplayData and _G.ESP.GetGameplayData() or nil
+                if not gd then gd = require("GameLua.GameCore.Data.GameplayData") end
+                if gd and gd.GetPlayerController then pc = gd.GetPlayerController() end
+            end)
+        end
+        if not APValid(pc) then
+            pcall(function()
+                local hud = rawget(_G, "slua_GameFrontendHUD")
+                if hud and hud.GetPlayerController then pc = hud:GetPlayerController() end
+            end)
+        end
+        return APValid(pc) and pc or nil
+    end
+
+    function AP.GetCharacter(pc)
+        local ch = nil
+        pcall(function() if pc.GetPlayerCharacterSafety then ch = pc:GetPlayerCharacterSafety() end end)
+        if not APValid(ch) then
+            pcall(function() if pc.GetCurPlayerCharacter then ch = pc:GetCurPlayerCharacter() end end)
+        end
+        if not APValid(ch) then pcall(function() ch = pc.Pawn end) end
+        return APValid(ch) and ch or nil
+    end
+
+    function AP.GetMapMarkLocation(pc)
+        local ps = nil
+        pcall(function() if pc.GetCurPlayerState then ps = pc:GetCurPlayerState() end end)
+        if not APValid(ps) then pcall(function() ps = pc.PlayerState end) end
+        if not APValid(ps) then return nil end
+        local loc = nil
+        pcall(function()
+            if ps.GetMapMark3DLocation then loc = ps:GetMapMark3DLocation() end
+        end)
+        if loc and tonumber(loc.X) and tonumber(loc.Y) then return loc end
+        -- Fallback: only accept MapMark when it already looks like world units.
+        pcall(function()
+            local mm = ps.MapMark
+            local mx, my = tonumber(mm and mm.X), tonumber(mm and mm.Y)
+            if mx and my and (mx * mx + my * my) > 100000000 then
+                loc = { X = mx, Y = my, Z = 0 }
+            end
+        end)
+        return loc
+    end
+
+    function AP.GetStateType(pc)
+        local st = nil
+        pcall(function() if pc.GetCurrentStateType then st = pc:GetCurrentStateType() end end)
+        return st
+    end
+
+    function AP.Apply()
+        local pc = AP.GetPC()
+        if not pc then AP.LastError = "no controller" return false end
+        local loc = AP.GetMapMarkLocation(pc)
+        if not loc then AP.LastError = "no map mark" return false end
+        local comp = nil
+        pcall(function() if pc.GetParachuteComponent then comp = pc:GetParachuteComponent() end end)
+        if not APValid(comp) then AP.LastError = "no parachute component" return false end
+        local tx = tonumber(loc.X) or 0.0
+        local ty = tonumber(loc.Y) or 0.0
+        local tz = (tonumber(loc.Z) or 0.0) + AP.ZOffset
+        local target = nil
+        pcall(function() if FVector then target = FVector(tx, ty, tz) end end)
+        if not target then target = { X = tx, Y = ty, Z = tz } end
+        local ok = false
+        pcall(function()
+            comp:SetAutoParachuteLocation(target)
+            ok = true
+        end)
+        if not ok then AP.LastError = "set location failed" return false end
+        pcall(function() if pc.EnableAutoParachute then pc:EnableAutoParachute(true) end end)
+        AP.Applied = true
+        AP.LastApply = AP.Now()
+        AP.LastError = nil
+        return true
+    end
+
+    function AP.Disable()
+        local pc = AP.GetPC()
+        if pc then
+            pcall(function() if pc.EnableAutoParachute then pc:EnableAutoParachute(false) end end)
+        end
+        AP.Applied = false
+    end
+
+    function AP.Set(enabled)
+        AP.Enabled = enabled == true
+        _G.RapzhangConfig.AutoParachute = AP.Enabled
+        if AP.Enabled then
+            pcall(AP.Apply)
+        else
+            pcall(AP.Disable)
+        end
+        if _G.SaveModSettings then pcall(_G.SaveModSettings) end
+        return true
+    end
+
+    function AP.IsAirborneState(pc, ch)
+        local ps = nil
+        pcall(function() ps = ch.ParachuteState end)
+        if EParachuteState then
+            if ps == EParachuteState.PS_FreeFall or ps == EParachuteState.PS_Opening then
+                return true
+            end
+        end
+        local st = AP.GetStateType(pc)
+        if EStateType and st ~= nil then
+            if st == EStateType.State_InPlane or st == EStateType.State_ParachuteJump then
+                return true
+            end
+        end
+        return false
+    end
+
+    function AP.Tick()
+        if _G.RapzhangConfig.AutoParachute ~= true then
+            if AP.Applied then pcall(AP.Disable) end
+            AP.Enabled = false
+            return
+        end
+        AP.Enabled = true
+        local pc = AP.GetPC()
+        if not pc then return end
+        local ch = AP.GetCharacter(pc)
+        if not ch then return end
+        if not AP.IsAirborneState(pc, ch) then
+            if AP.Applied then pcall(AP.Disable) end
+            return
+        end
+        local now = AP.Now()
+        if (now - (AP.LastApply or -999.0)) >= 0.50 then
+            pcall(AP.Apply)
+        end
+    end
+
+    _G.RapzhangAutoParachute = AP
+    _G.RapzhangAutoParachuteTick = function()
+        pcall(AP.Tick)
+    end
+    print("[AUTO PARACHUTE] Module loaded.")
 end
 
 
@@ -2780,6 +2971,9 @@ function ESP.SyncMenuConfig()
   ESP.Menu.ShowVisibility = cfg.Esp9_Visibility == true
   -- esp new.lua has no weapon-icon or skeleton renderer.
   ESP.Menu.ShowWeapon = cfg.Esp9_Weapon == true
+  ESP.Menu.ShowRank = cfg.Esp9_Rank == true
+  ESP.Menu.ShowClan = cfg.Esp9_Clan == true
+  ESP.Menu.ShowAmmo = cfg.Esp9_Ammo == true
 end
 
 -- Team color mapping: jangan memakai teamID % jumlah warna karena Team 20,
@@ -2997,6 +3191,7 @@ function ESP.CreateInfo()
   local canvas = ESP.GetCanvas()
   if not ESPValid(canvas) then return nil end
   local container, tName, tDist, tState, tWeapon, tWeaponIcon = nil, nil, nil, nil, nil, nil
+  local tRank, tClan, tAmmo = nil, nil, nil
   pcall(function() container = CGame:NewObjectFromPath("/Script/UMG.CanvasPanel", canvas) end)
   if not ESPValid(container) then return nil end
   pcall(function() tName = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
@@ -3004,7 +3199,11 @@ function ESP.CreateInfo()
   pcall(function() tState = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
   pcall(function() tWeapon = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
   pcall(function() tWeaponIcon = CGame:NewObjectFromPath("/Script/UMG.Image", container) end)
-  if not ESPValid(tName) or not ESPValid(tDist) or not ESPValid(tState) or not ESPValid(tWeapon) or not ESPValid(tWeaponIcon) then
+  pcall(function() tRank = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
+  pcall(function() tClan = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
+  pcall(function() tAmmo = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
+  if not ESPValid(tName) or not ESPValid(tDist) or not ESPValid(tState) or not ESPValid(tWeapon) or not ESPValid(tWeaponIcon)
+     or not ESPValid(tRank) or not ESPValid(tClan) or not ESPValid(tAmmo) then
     ESP.Destroy({ Widget = container })
     return nil
   end
@@ -3013,34 +3212,52 @@ function ESP.CreateInfo()
     tDist:SetText("0m")
     tState:SetText("Open")
     tWeapon:SetText("")
+    tRank:SetText("")
+    tClan:SetText("")
+    tAmmo:SetText("")
     tWeapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
     tName:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
     tDist:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
     tState:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
     tWeapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
     tWeaponIcon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
+    tRank:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
+    tClan:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
+    tAmmo:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
     if tName.SetJustification then tName:SetJustification(1) end
     if tDist.SetJustification then tDist:SetJustification(1) end
     if tState.SetJustification then tState:SetJustification(1) end
     if tWeapon.SetJustification then tWeapon:SetJustification(1) end
+    if tRank.SetJustification then tRank:SetJustification(1) end
+    if tClan.SetJustification then tClan:SetJustification(1) end
+    if tAmmo.SetJustification then tAmmo:SetJustification(1) end
   end)
   ESP.SetTextColor(tName, C_BLUE)
   ESP.SetTextColor(tDist, C_WHITE)
   ESP.SetTextColor(tState, C_GREEN)
   ESP.SetTextColor(tWeapon, C_YELLOW)
+  ESP.SetTextColor(tRank, C_YELLOW)
+  ESP.SetTextColor(tClan, ESPMKC(0.35, 0.90, 1.0, 1.0))
+  ESP.SetTextColor(tAmmo, C_WHITE)
   ESP.SetFont(tName, CFG.NameFontSize)
   ESP.SetFont(tDist, CFG.DistFontSize)
   ESP.SetFont(tState, CFG.StateFontSize)
   ESP.SetFont(tWeapon, CFG.DistFontSize)
+  ESP.SetFont(tRank, CFG.DistFontSize)
+  ESP.SetFont(tClan, CFG.DistFontSize)
+  ESP.SetFont(tAmmo, CFG.DistFontSize)
   local s1, s2, s3, s4, ms = nil, nil, nil, nil, nil
   pcall(function() s1 = container:AddChildToCanvas(tName) end)
   pcall(function() s2 = container:AddChildToCanvas(tDist) end)
   pcall(function() s3 = container:AddChildToCanvas(tState) end)
   pcall(function() s4 = container:AddChildToCanvas(tWeapon) end)
-  local s5 = nil
+  local s5, s6, s7, s8 = nil, nil, nil, nil
   pcall(function() s5 = container:AddChildToCanvas(tWeaponIcon) end)
+  pcall(function() s6 = container:AddChildToCanvas(tRank) end)
+  pcall(function() s7 = container:AddChildToCanvas(tClan) end)
+  pcall(function() s8 = container:AddChildToCanvas(tAmmo) end)
   pcall(function() ms = canvas:AddChildToCanvas(container) end)
-  if not s1 or not s2 or not s3 or not s4 or not s5 or not ms then
+  if not s1 or not s2 or not s3 or not s4 or not s5 or not s6 or not s7 or not s8 or not ms then
     ESP.Destroy({ Widget = container })
     return nil
   end
@@ -3050,10 +3267,14 @@ function ESP.CreateInfo()
     s3:SetAutoSize(true) s3:SetAlignment(ESPV2(0.5, 0.5)) s3:SetZOrder(36)
     s4:SetAutoSize(true) s4:SetAlignment(ESPV2(0.5, 0.5)) s4:SetZOrder(36)
     s5:SetAutoSize(false) s5:SetAlignment(ESPV2(0.5, 0.5)) s5:SetPosition(ESPV2(60.0, 74.0)) s5:SetSize(ESPV2(72.0, 36.0)) s5:SetZOrder(36)
+    s6:SetAutoSize(true) s6:SetAlignment(ESPV2(0.5, 0.5)) s6:SetZOrder(36)
+    s7:SetAutoSize(true) s7:SetAlignment(ESPV2(0.5, 0.5)) s7:SetZOrder(36)
+    s8:SetAutoSize(true) s8:SetAlignment(ESPV2(0.5, 0.5)) s8:SetZOrder(36)
     ms:SetAutoSize(false) ms:SetZOrder(35)
   end)
   return { Container = container, Name = tName, Dist = tDist, State = tState, Weapon = tWeapon, WeaponIcon = tWeaponIcon,
-           S1 = s1, S2 = s2, S3 = s3, S4 = s4, S5 = s5, Slot = ms }
+           Rank = tRank, Clan = tClan, Ammo = tAmmo,
+           S1 = s1, S2 = s2, S3 = s3, S4 = s4, S5 = s5, S6 = s6, S7 = s7, S8 = s8, Slot = ms }
 end
 
 function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, topY)
@@ -3091,6 +3312,12 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
   end
   local weapon = weaponCache.text or ""
   local weaponInfo = weaponCache.info
+  local rankText, clanText, ammoText = "", "", ""
+  if ESP.Extra then
+    if menu.ShowRank then rankText = ESP.Extra.GetRankText(Character, isBot) or "" end
+    if menu.ShowClan then clanText = ESP.Extra.GetClanText(Character, isBot) or "" end
+    if menu.ShowAmmo then ammoText = ESP.Extra.GetAmmoText(Character, isBot) or "" end
+  end
   -- Visibility: Open (green) / Close (red)
   local st = bVisible and "Open" or "Close"
   local stKey = bVisible and "open" or "close"
@@ -3109,6 +3336,9 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       else ESP.SetTextColor(d.State, C_RED) end
     end
     if d.LastW ~= weapon then d.LastW = weapon end
+    if d.LastRank ~= rankText then d.Rank:SetText(rankText) d.LastRank = rankText end
+    if d.LastClan ~= clanText then d.Clan:SetText(clanText) d.LastClan = clanText end
+    if d.LastAmmo ~= ammoText then d.Ammo:SetText(ammoText) d.LastAmmo = ammoText end
     pcall(function() d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
     if menu.ShowWeapon and weaponInfo and weaponInfo.WeaponID then
       if d.LastWeaponID ~= weaponInfo.WeaponID then
@@ -3120,19 +3350,23 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
     end
     if d.LastK ~= stKey then d.LastK = stKey end
   end)
-  -- 3 lines, centered under feet (pos cache, flicker fix)
+  -- 6 lines, centered under feet (pos cache, flicker fix)
   local w = 120.0
-  local h1, h2, h3 = 20.0, 17.0, 17.0
+  local h1, h2, h3, h4, h5, h6 = 20.0, 17.0, 17.0, 15.0, 15.0, 15.0
+  local panelH = h1 + h2 + h3 + h4 + h5 + h6 + 30.0
   local x = RND(footX - w * 0.5)
   local y = RND(footY + 4.0)
   if d.ix == nil or math.abs(d.ix - x) >= 1.0 or math.abs((d.iy or 0) - y) >= 1.0 then
     d.ix, d.iy = x, y
     pcall(function()
       d.Slot:SetPosition(ESPV2(x, y))
-      d.Slot:SetSize(ESPV2(w, h1 + h2 + h3 + 30.0))
+      d.Slot:SetSize(ESPV2(w, panelH))
       d.S1:SetPosition(ESPV2(w * 0.5, h1 * 0.5))
       d.S2:SetPosition(ESPV2(w * 0.5, h1 + h2 * 0.5 + CFG.TextGap))
       d.S3:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 * 0.5 + CFG.TextGap * 2.0))
+      d.S6:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + h4 * 0.5 + CFG.TextGap * 3.0))
+      d.S7:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + h4 + h5 * 0.5 + CFG.TextGap * 4.0))
+      d.S8:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + h4 + h5 + h6 * 0.5 + CFG.TextGap * 5.0))
       -- Weapon icon: above the target box/head, not in the bottom text panel.
       local iconY = ((tonumber(topY) or (footY - 50.0)) - footY) - 18.0
       d.S5:SetPosition(ESPV2(w * 0.5, iconY))
@@ -3142,6 +3376,9 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
       d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
       d.State:SetWidgetVisibility(menu.ShowVisibility and visible or hidden)
+      d.Rank:SetWidgetVisibility((menu.ShowRank and rankText ~= "") and visible or hidden)
+      d.Clan:SetWidgetVisibility((menu.ShowClan and clanText ~= "") and visible or hidden)
+      d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
       d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
       d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
       d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
@@ -3153,6 +3390,9 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
       d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
       d.State:SetWidgetVisibility(menu.ShowVisibility and visible or hidden)
+      d.Rank:SetWidgetVisibility((menu.ShowRank and rankText ~= "") and visible or hidden)
+      d.Clan:SetWidgetVisibility((menu.ShowClan and clanText ~= "") and visible or hidden)
+      d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
       d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
       d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
       d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
@@ -3249,6 +3489,7 @@ end
 
 function ESP.ResetWidgets()
   ESP.ClearRadarMarks()
+  if ESP.Extra and ESP.Extra.Reset then pcall(ESP.Extra.Reset) end
   for _, d in pairs(ESP.Lines) do ESP.Destroy(d) end
   for _, t in pairs(ESP.Corners) do for _, d in pairs(t) do ESP.Destroy(d) end end
   for _, d in pairs(ESP.HealthBg) do ESP.Destroy(d) end
@@ -3324,6 +3565,841 @@ function ESP.UpdateRadarMarks(items)
   end)
   if not ok then ESP.RadarMarks = ESP.RadarMarks or {} end
 end
+
+-- ============================================================
+-- ESP EXTRA PACK
+-- Airdrop ESP + landing prediction, zone timer + next circle,
+-- grenade ESP + blast radius, enemy rank, clan peek, ammo/reload.
+-- Everything here is read-only and pcall-guarded.
+-- ============================================================
+ESP.Extra = ESP.Extra or {}
+do
+  local EX = ESP.Extra
+  local C_EX_CYAN   = ESPMKC(0.35, 0.90, 1.00, 1.0)
+  local C_EX_ORANGE = ESPMKC(1.00, 0.55, 0.15, 1.0)
+
+  EX.Labels = EX.Labels or {}
+  EX.Boxes = EX.Boxes or {}
+  EX.Rings = EX.Rings or {}
+  EX.Extras = EX.Extras or {}
+  EX.Airdrops = EX.Airdrops or {}
+  EX.Grenades = EX.Grenades or {}
+  EX.PlayerCache = EX.PlayerCache or {}
+  EX.PredictCache = EX.PredictCache or {}
+  EX.ClassCache = EX.ClassCache or {}
+  EX.LastSeen = EX.LastSeen or {}
+  EX.LastAirdropScan = -999.0
+  EX.LastGrenadeScan = -999.0
+  EX.ZoneRingT = -999.0
+  EX.ZoneGroundZ = nil
+  EX.HitResult = nil
+
+  function EX.ImportClass(path, alias)
+    local cached = EX.ClassCache[path]
+    if cached ~= nil then return cached or nil end
+    local cls = nil
+    pcall(function()
+      cls = import(path)
+      if not cls and alias and alias ~= path then cls = import(alias) end
+    end)
+    EX.ClassCache[path] = cls or false
+    return cls or nil
+  end
+
+  function EX.ScanActors(classPath, alias)
+    local list = {}
+    if not GameplayStaticsESP or not GameplayStaticsESP.GetAllActorsOfClass then return list end
+    local cls = EX.ImportClass(classPath, alias)
+    if not cls then return list end
+    pcall(function()
+      local pc = ESP.GetController()
+      if not pc then return end
+      local actorClass = EX.ImportClass("/Script/Engine.Actor")
+      if not actorClass then return end
+      local arr = slua.Array(UEnums.EPropertyClass.Object, actorClass)
+      GameplayStaticsESP.GetAllActorsOfClass(pc, cls, arr)
+      if arr then
+        for _, a in pairs(arr) do
+          if a and ESPValid(a) then list[#list + 1] = a end
+        end
+      end
+    end)
+    return list
+  end
+
+  function EX.ActorLoc(a)
+    local loc = nil
+    pcall(function()
+      if a.K2_GetActorLocation then loc = a:K2_GetActorLocation()
+      elseif Game and Game.GetActorLocation then loc = Game:GetActorLocation(a) end
+    end)
+    return loc
+  end
+
+  function EX.ActorVelocity(a)
+    local vx, vy, vz = 0.0, 0.0, 0.0
+    pcall(function()
+      local v = nil
+      if a.GetVelocity then v = a:GetVelocity() end
+      if not v then v = a.Velocity end
+      if v then
+        vx = tonumber(v.X) or 0.0
+        vy = tonumber(v.Y) or 0.0
+        vz = tonumber(v.Z) or 0.0
+      end
+    end)
+    return vx, vy, vz
+  end
+
+  function EX.GetOwnerActor(a)
+    local owner = nil
+    pcall(function()
+      if a.GetOwner then owner = a:GetOwner() end
+      if not owner then owner = a.Owner end
+    end)
+    return owner
+  end
+
+  function EX.GroundZ(pc, x, y, z)
+    if not KismetSystemLibraryESP or not KismetSystemLibraryESP.LineTraceSingle then return 0.0 end
+    if not EX.HitResult then
+      pcall(function()
+        if HitResultClassESP then EX.HitResult = HitResultClassESP() end
+      end)
+    end
+    if not EX.HitResult then return 0.0 end
+    local gz = 0.0
+    pcall(function()
+      local start = { X = x, Y = y, Z = z }
+      local endPos = { X = x, Y = y, Z = z - 500000.0 }
+      local hit = KismetSystemLibraryESP.LineTraceSingle(pc, start, endPos, 0, false, nil, 0, EX.HitResult, true)
+      if hit then
+        local l = EX.HitResult.Location or EX.HitResult.ImpactPoint
+        if l and tonumber(l.Z) then gz = tonumber(l.Z) end
+      end
+    end)
+    return gz
+  end
+
+  function EX.GetLabel(key)
+    local d = EX.Labels[key]
+    if d and ESPValid(d.Container) and ESPValid(d.Text) then return d end
+    if d then ESP.Destroy(d) end
+    local canvas = ESP.GetCanvas()
+    if not ESPValid(canvas) then return nil end
+    local container, txt = nil, nil
+    pcall(function() container = CGame:NewObjectFromPath("/Script/UMG.CanvasPanel", canvas) end)
+    if not ESPValid(container) then return nil end
+    pcall(function() txt = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
+    if not ESPValid(txt) then
+      ESP.Destroy({ Widget = container })
+      return nil
+    end
+    local child, slot = nil, nil
+    pcall(function() child = container:AddChildToCanvas(txt) end)
+    pcall(function() slot = canvas:AddChildToCanvas(container) end)
+    if not child or not slot then
+      ESP.Destroy({ Widget = container })
+      return nil
+    end
+    pcall(function()
+      txt:SetText("")
+      txt:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
+      if txt.SetJustification then txt:SetJustification(1) end
+      child:SetAutoSize(true)
+      child:SetAlignment(ESPV2(0.5, 0.5))
+      child:SetZOrder(37)
+      slot:SetAutoSize(true)
+      slot:SetAlignment(ESPV2(0.5, 0.0))
+      slot:SetZOrder(37)
+    end)
+    ESP.SetFont(txt, 11)
+    d = { Container = container, Text = txt, Slot = slot, Child = child }
+    EX.Labels[key] = d
+    return d
+  end
+
+  function EX.DrawLabel(key, x, y, text, color)
+    local d = EX.GetLabel(key)
+    if not d then return end
+    if d.lastText ~= text then
+      pcall(function() d.Text:SetText(text) end)
+      d.lastText = text
+    end
+    if d.lastColor ~= color then
+      ESP.SetTextColor(d.Text, color)
+      d.lastColor = color
+    end
+    local px, py = RND(x), RND(y)
+    if d.px ~= px or d.py ~= py then
+      pcall(function() d.Slot:SetPosition(ESPV2(px, py)) end)
+      d.px, d.py = px, py
+    end
+    pcall(function() d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible) end)
+  end
+
+  function EX.HideLabel(key)
+    local d = EX.Labels[key]
+    if d and ESPValid(d.Container) then
+      pcall(function() d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
+    end
+  end
+
+  function EX.GetBox(key)
+    local t = EX.Boxes[key]
+    if t then return t end
+    t = {}
+    for i = 1, 8 do t[i] = ESP.NewLine(C_WHITE, 34) end
+    EX.Boxes[key] = t
+    return t
+  end
+
+  function EX.GetRing(key, n)
+    local t = EX.Rings[key]
+    if t and #t == n then return t end
+    if t then for _, d in ipairs(t) do ESP.Destroy(d) end end
+    t = {}
+    for i = 1, n do t[i] = ESP.NewLine(C_WHITE, 33) end
+    EX.Rings[key] = t
+    return t
+  end
+
+  function EX.GetExtra(key, n)
+    local t = EX.Extras[key]
+    if t and #t == n then return t end
+    if t then for _, d in ipairs(t) do ESP.Destroy(d) end end
+    t = {}
+    for i = 1, n do t[i] = ESP.NewLine(C_WHITE, 33) end
+    EX.Extras[key] = t
+    return t
+  end
+
+  function EX.DrawBox(key, cx, cy, w, h, color, colorKey, th)
+    local t = EX.GetBox(key)
+    if not t then return end
+    local L, R = cx - w * 0.5, cx + w * 0.5
+    local T, B = cy - h * 0.5, cy + h * 0.5
+    local arm = math.max(4.0, math.min(10.0, math.min(w, h) * 0.30))
+    th = th or 1.8
+    for i = 1, 8 do ESP.SetBrush(t[i], color, colorKey) end
+    ESP.DrawLine(t[1], L, T, L + arm, T, th)
+    ESP.DrawLine(t[2], L, T, L, T + arm, th)
+    ESP.DrawLine(t[3], R, T, R - arm, T, th)
+    ESP.DrawLine(t[4], R, T, R, T + arm, th)
+    ESP.DrawLine(t[5], L, B, L + arm, B, th)
+    ESP.DrawLine(t[6], L, B, L, B - arm, th)
+    ESP.DrawLine(t[7], R, B, R - arm, B, th)
+    ESP.DrawLine(t[8], R, B, R, B - arm, th)
+  end
+
+  function EX.DrawRing(key, cx, cy, rx, ry, color, colorKey, th, n)
+    n = n or 16
+    local t = EX.GetRing(key, n)
+    if not t then return end
+    rx = math.max(2.0, rx or 2.0)
+    ry = math.max(2.0, ry or 2.0)
+    th = th or 1.5
+    for i = 1, n do
+      ESP.SetBrush(t[i], color, colorKey)
+      local a1 = ((i - 1) / n) * math.pi * 2.0
+      local a2 = (i / n) * math.pi * 2.0
+      ESP.DrawLine(t[i],
+        cx + math.cos(a1) * rx, cy + math.sin(a1) * ry,
+        cx + math.cos(a2) * rx, cy + math.sin(a2) * ry, th)
+    end
+  end
+
+  function EX.HideMark(key)
+    EX.HideLabel(key)
+    local b = EX.Boxes[key]
+    if b then for _, d in ipairs(b) do ESP.Hide(d) end end
+    local r = EX.Rings[key]
+    if r then for _, d in ipairs(r) do ESP.Hide(d) end end
+    local e = EX.Extras[key]
+    if e then for _, d in ipairs(e) do ESP.Hide(d) end end
+  end
+
+  function EX.HidePrefix(prefix)
+    local n = #prefix
+    for key in pairs(EX.Labels) do
+      if key:sub(1, n) == prefix then EX.HideMark(key) end
+    end
+    for key in pairs(EX.Boxes) do
+      if key:sub(1, n) == prefix then EX.HideMark(key) end
+    end
+    for key in pairs(EX.Rings) do
+      if key:sub(1, n) == prefix then EX.HideMark(key) end
+    end
+    for key in pairs(EX.Extras) do
+      if key:sub(1, n) == prefix then EX.HideMark(key) end
+    end
+  end
+
+  function EX.DestroyMark(key)
+    local d = EX.Labels[key]
+    if d then ESP.Destroy(d) EX.Labels[key] = nil end
+    local b = EX.Boxes[key]
+    if b then
+      for _, x in ipairs(b) do ESP.Destroy(x) end
+      EX.Boxes[key] = nil
+    end
+    local r = EX.Rings[key]
+    if r then
+      for _, x in ipairs(r) do ESP.Destroy(x) end
+      EX.Rings[key] = nil
+    end
+    local e = EX.Extras[key]
+    if e then
+      for _, x in ipairs(e) do ESP.Destroy(x) end
+      EX.Extras[key] = nil
+    end
+  end
+
+  -- Buang widget aktor yang sudah tidak terlihat (grenade/airdrop lama).
+  function EX.Sweep(now, ttl)
+    ttl = ttl or 3.0
+    for key, seen in pairs(EX.LastSeen) do
+      if (now - (tonumber(seen) or 0)) > ttl then
+        EX.LastSeen[key] = nil
+        if key:sub(1, 4) ~= "zone" then
+          EX.DestroyMark(key)
+        end
+      end
+    end
+  end
+
+  function EX.Reset()
+    for _, d in pairs(EX.Labels) do ESP.Destroy(d) end
+    for _, t in pairs(EX.Boxes) do for _, d in ipairs(t) do ESP.Destroy(d) end end
+    for _, t in pairs(EX.Rings) do for _, d in ipairs(t) do ESP.Destroy(d) end end
+    for _, t in pairs(EX.Extras) do for _, d in ipairs(t) do ESP.Destroy(d) end end
+    EX.Labels, EX.Boxes, EX.Rings, EX.Extras = {}, {}, {}, {}
+    EX.Airdrops, EX.Grenades = {}, {}
+    EX.PlayerCache, EX.PredictCache = {}, {}
+    EX.LastSeen = {}
+    EX.LastAirdropScan, EX.LastGrenadeScan = -999.0, -999.0
+    EX.ZoneRingT = -999.0
+    EX.ZoneGroundZ = nil
+  end
+
+  function EX.GetPlayerState(Character)
+    if not ESPValid(Character) then return nil end
+    local ps = nil
+    pcall(function()
+      if Character.GetPlayerStateSafety then ps = Character:GetPlayerStateSafety() end
+    end)
+    if not ESPValid(ps) then
+      pcall(function() if Character.GetPlayerState then ps = Character:GetPlayerState() end end)
+    end
+    if not ESPValid(ps) then pcall(function() ps = Character.PlayerState end) end
+    return ESPValid(ps) and ps or nil
+  end
+
+  local function playerCache(key)
+    local c = EX.PlayerCache[key]
+    if not c then c = {} EX.PlayerCache[key] = c end
+    return c
+  end
+
+  local RANK_TABLES = { "RankIntegralLevel_MODE_47", "RankIntegralLevel_MODE_1", "RankIntegralLevel" }
+
+  function EX.GetRankText(Character, isBot)
+    if isBot then return "" end
+    local key = ESP.GetPlayerKey(Character)
+    local now = ESP.Now()
+    local c = playerCache(key)
+    if c.rankT and (now - c.rankT) < 5.0 then return c.rank or "" end
+    c.rankT = now
+    local ps = EX.GetPlayerState(Character)
+    if not ps then c.rank = "" return "" end
+    local level = nil
+    pcall(function() level = ps.UnlockSegLevel end)
+    if type(level) ~= "number" or level <= 0 then pcall(function() level = ps.SegmentLevel end) end
+    if type(level) ~= "number" or level <= 0 then pcall(function() level = ps.PromotionLayer end) end
+    if type(level) ~= "number" or level <= 0 then c.rank = "" return "" end
+    level = math.floor(level + 0.5)
+    local rankName = nil
+    pcall(function()
+      local dt = CDataTable
+      if dt and dt.GetTableData then
+        for _, tbl in ipairs(RANK_TABLES) do
+          local cfg = dt.GetTableData(tbl, level)
+          if cfg then
+            local n = cfg.Name or cfg.ShortName or cfg.RankName
+            if n ~= nil and tostring(n) ~= "" and tostring(n) ~= "None" then
+              rankName = tostring(n)
+              break
+            end
+          end
+        end
+      end
+    end)
+    local text
+    if rankName then text = "RANK " .. rankName
+    else text = "RANK Lv" .. tostring(level) end
+    c.rank = text
+    return text
+  end
+
+  local CLAN_KEYS = {
+    "ClanName", "ClanTag", "ClanShortName", "GuildName", "GuildTag",
+    "AllianceName", "PlayerClanName", "TeamClanName", "CorpsName",
+  }
+
+  local function firstText(v)
+    if v == nil then return nil end
+    local s = tostring(v)
+    if s == "" or s == "None" or s == "nil" or s == "0" then return nil end
+    return s
+  end
+
+  function EX.GetClanText(Character, isBot)
+    if isBot then return "" end
+    local key = ESP.GetPlayerKey(Character)
+    local now = ESP.Now()
+    local c = playerCache(key)
+    if c.clanT and (now - c.clanT) < 5.0 then return c.clan or "" end
+    c.clanT = now
+    local ps = EX.GetPlayerState(Character)
+    if not ps then c.clan = "" return "" end
+    local value = nil
+    for _, field in ipairs(CLAN_KEYS) do
+      local v = nil
+      pcall(function() v = firstText(ps[field]) end)
+      if v then value = v break end
+    end
+    if not value then
+      local info = nil
+      pcall(function() info = ps.ClanInfo end)
+      if not info then pcall(function() info = ps.GuildInfo end) end
+      if not info then pcall(function() info = ps.PlayerClanInfo end) end
+      if info then
+        for _, field in ipairs(CLAN_KEYS) do
+          local v = nil
+          pcall(function() v = firstText(info[field]) end)
+          if v then value = v break end
+        end
+      end
+    end
+    if not value then c.clan = "" return "" end
+    local text = "CLAN " .. value
+    c.clan = text
+    return text
+  end
+
+  function EX.GetAmmoText(Character, isBot)
+    if not ESPValid(Character) then return "" end
+    local key = ESP.GetPlayerKey(Character)
+    local now = ESP.Now()
+    local c = playerCache(key)
+    if c.ammoT and (now - c.ammoT) < 0.25 then return c.ammo or "" end
+    c.ammoT = now
+    local weapon = nil
+    pcall(function()
+      if Character.GetCurrentWeapon then weapon = Character:GetCurrentWeapon() end
+    end)
+    if not ESPValid(weapon) then
+      pcall(function() weapon = Character.CurrentWeapon or Character.CurrentWeaponReplicated end)
+    end
+    if not ESPValid(weapon) then c.ammo = "" return "" end
+    local cur, max = nil, nil
+    pcall(function()
+      if weapon.GetCurrentBulletNumInClip then cur = weapon:GetCurrentBulletNumInClip(0) end
+    end)
+    pcall(function()
+      if weapon.GetMaxBulletNumInOneClipFromEntity then max = weapon:GetMaxBulletNumInOneClipFromEntity() end
+    end)
+    if type(cur) ~= "number" then
+      pcall(function()
+        if weapon.CurBulletInClip then cur = weapon.CurBulletInClip.CurBulletNumInClip end
+      end)
+    end
+    if type(max) ~= "number" then pcall(function() max = weapon.CurMaxBulletNumInOneClip end) end
+    if type(cur) ~= "number" then c.ammo = "" return "" end
+    cur = math.floor(cur + 0.5)
+    local reloading = false
+    pcall(function()
+      if weapon.bIsReloading == true or weapon.bReloading == true then reloading = true end
+    end)
+    if not reloading then
+      pcall(function()
+        if weapon.IsReloading and weapon:IsReloading() == true then reloading = true end
+      end)
+    end
+    local text
+    if type(max) == "number" and max > 0 then
+      text = string.format("AMMO %d/%d", cur, math.floor(max + 0.5))
+    else
+      text = string.format("AMMO %d", cur)
+    end
+    if reloading then text = text .. "  RELOAD" end
+    c.ammo = text
+    return text
+  end
+
+  function EX.ScanAirdrops()
+    local list = EX.ScanActors("/Script/ShadowTrackerExtra.AirDropBoxActor", "AirDropBoxActor")
+    local myLoc = nil
+    pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
+    local out = {}
+    for _, a in ipairs(list) do
+      local loc = EX.ActorLoc(a)
+      if loc and myLoc then
+        local dm = ESP.DistMeters(myLoc, loc)
+        if dm <= 800.0 then
+          out[#out + 1] = { Actor = a, Dist = dm }
+        end
+      end
+    end
+    table.sort(out, function(x, y) return (x.Dist or 99999) < (y.Dist or 99999) end)
+    EX.Airdrops = out
+  end
+
+  function EX.PredictLanding(pc, a, loc, now)
+    local key = tostring(a)
+    local cached = EX.PredictCache[key]
+    if cached and (now - (cached.t or 0)) < 0.50 then
+      return cached.pred, cached.eta
+    end
+    local gz = EX.GroundZ(pc, loc.X, loc.Y, loc.Z)
+    local vx, vy, vz = EX.ActorVelocity(a)
+    local h = (tonumber(loc.Z) or 0.0) - gz
+    if h < 0.0 then h = 0.0 end
+    local eta = 0.0
+    if h > 50.0 then
+      local g = 980.0
+      if vz < -10.0 then
+        if vz > -800.0 then
+          -- turun perlahan (parasut): kecepatan dianggap konstan
+          eta = h / (-vz)
+        else
+          -- jatuh bebas: gerak proyektil
+          eta = (-vz + math.sqrt(vz * vz + 2.0 * g * h)) / g
+        end
+      else
+        eta = h / 350.0
+      end
+    end
+    if eta < 0.0 then eta = 0.0 end
+    if eta > 45.0 then eta = 45.0 end
+    local pred = {
+      X = (tonumber(loc.X) or 0.0) + vx * eta,
+      Y = (tonumber(loc.Y) or 0.0) + vy * eta,
+      Z = gz + 25.0,
+    }
+    EX.PredictCache[key] = { t = now, pred = pred, eta = eta }
+    return pred, eta
+  end
+
+  function EX.DrawAirdrops(pc, vw, vh, now)
+    local seen = {}
+    local myLoc = nil
+    pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
+    local shown = 0
+    for _, item in ipairs(EX.Airdrops) do
+      local a = item.Actor
+      if ESPValid(a) then
+        local loc = EX.ActorLoc(a)
+        if loc then
+          local s = ESP.Project(pc, loc)
+          if s and s.X > -180 and s.X < vw + 180 and s.Y > -180 and s.Y < vh + 180 then
+            shown = shown + 1
+            if shown <= 6 then
+              local key = "ad_" .. tostring(a)
+              seen[key] = true
+              EX.LastSeen[key] = now
+              local dm = myLoc and ESP.DistMeters(myLoc, loc) or item.Dist or 0
+              local size = math.max(10.0, math.min(42.0, 1400.0 / math.max(12.0, dm)))
+              EX.DrawBox(key, s.X, s.Y, size, size, C_EX_ORANGE, "ad", 2.0)
+              local pred, eta = EX.PredictLanding(pc, a, loc, now)
+              local label = string.format("AIRDROP %dm", math.floor((tonumber(dm) or 0) + 0.5))
+              if pred then
+                local ps2 = ESP.Project(pc, pred)
+                if ps2 then
+                  local ex = EX.GetExtra(key, 3)
+                  if ex then
+                    for i = 1, 3 do ESP.SetBrush(ex[i], C_EX_ORANGE, "ad") end
+                    ESP.DrawLine(ex[1], s.X, s.Y, ps2.X, ps2.Y, 1.2)
+                    local m = 6.0
+                    ESP.DrawLine(ex[2], ps2.X - m, ps2.Y - m, ps2.X + m, ps2.Y + m, 2.0)
+                    ESP.DrawLine(ex[3], ps2.X - m, ps2.Y + m, ps2.X + m, ps2.Y - m, 2.0)
+                  end
+                end
+                if eta and eta > 0.5 then
+                  label = label .. string.format("  %.0fs", eta)
+                end
+              end
+              EX.DrawLabel(key, s.X, s.Y + size * 0.5 + 3.0, label, C_EX_ORANGE)
+            end
+          end
+        end
+      end
+    end
+    for key in pairs(EX.Labels) do
+      if key:sub(1, 3) == "ad_" and not seen[key] then EX.HideMark(key) end
+    end
+  end
+
+  function EX.ScanGrenades()
+    local list = EX.ScanActors("STExtraGrenadeBase", "/Script/ShadowTrackerExtra.STExtraGrenadeBase")
+    local myLoc = nil
+    pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
+    local out = {}
+    for _, a in ipairs(list) do
+      local loc = EX.ActorLoc(a)
+      if loc and myLoc then
+        local dm = ESP.DistMeters(myLoc, loc)
+        if dm <= 120.0 then
+          out[#out + 1] = { Actor = a, Dist = dm }
+        end
+      end
+    end
+    table.sort(out, function(x, y) return (x.Dist or 99999) < (y.Dist or 99999) end)
+    local trimmed = {}
+    for i = 1, math.min(#out, 8) do trimmed[i] = out[i] end
+    EX.Grenades = trimmed
+  end
+
+  local GRENADE_RADIUS_FIELDS = {
+    "ExplosionRadius", "ExplodeRadius", "DamageRadius", "DamageRadiusOuter",
+    "RealDamageRadiusOuter", "EffectRadius", "BlastRadius",
+  }
+
+  function EX.GetBlastRadiusCM(a)
+    local r = nil
+    pcall(function()
+      for _, f in ipairs(GRENADE_RADIUS_FIELDS) do
+        local v = a[f]
+        if type(v) == "number" and v > 0 then r = v break end
+      end
+    end)
+    if type(r) ~= "number" or r <= 0 then r = 800.0 end
+    if r < 200.0 then r = r * 100.0 end
+    return math.max(200.0, math.min(3000.0, r))
+  end
+
+  function EX.GetGrenadeFuse(a)
+    local t = nil
+    pcall(function()
+      if a.GetRemainingTimeBeforeExplode then t = a:GetRemainingTimeBeforeExplode() end
+    end)
+    if type(t) ~= "number" then pcall(function() t = a.RemainingTimeBeforeExplode end) end
+    if type(t) ~= "number" then pcall(function() t = a.RemainingTime end) end
+    if type(t) ~= "number" then pcall(function() t = a.LifeSpan end) end
+    if type(t) ~= "number" then return nil end
+    return math.max(0.0, t)
+  end
+
+  function EX.DrawGrenades(pc, vw, vh, now)
+    local seen = {}
+    local me = ESP.GetLocalCharacter()
+    local shown = 0
+    for _, item in ipairs(EX.Grenades) do
+      local a = item.Actor
+      if ESPValid(a) then
+        local loc = EX.ActorLoc(a)
+        if loc then
+          local s = ESP.Project(pc, loc)
+          if s and s.X > -120 and s.X < vw + 120 and s.Y > -120 and s.Y < vh + 120 then
+            shown = shown + 1
+            if shown <= 6 then
+              local key = "gr_" .. tostring(a)
+              seen[key] = true
+              EX.LastSeen[key] = now
+              local own = false
+              local owner = EX.GetOwnerActor(a)
+              if ESPValid(owner) and ESPValid(me) then own = (owner == me) end
+              local color = own and C_GREEN or C_RED
+              local ckey = own and "gr_own" or "gr_enemy"
+              local radius = EX.GetBlastRadiusCM(a)
+              local rx, ry = nil, nil
+              local px = ESP.Project(pc, { X = loc.X + radius, Y = loc.Y, Z = loc.Z })
+              local py = ESP.Project(pc, { X = loc.X, Y = loc.Y + radius, Z = loc.Z })
+              if px and py then
+                local dx, dy = px.X - s.X, px.Y - s.Y
+                rx = math.sqrt(dx * dx + dy * dy)
+                dx, dy = py.X - s.X, py.Y - s.Y
+                ry = math.sqrt(dx * dx + dy * dy)
+              end
+              if rx and ry and rx > 2.0 and ry > 2.0 then
+                EX.DrawRing(key, s.X, s.Y, rx, ry, color, ckey, 1.5, 18)
+              end
+              EX.DrawBox(key, s.X, s.Y, 12.0, 12.0, color, ckey, 1.6)
+              local fuse = EX.GetGrenadeFuse(a)
+              local label = string.format("GRENADE %dm", math.floor((radius / 100.0) + 0.5))
+              if fuse then label = label .. string.format("  %.1fs", fuse) end
+              EX.DrawLabel(key, s.X, s.Y + 10.0, label, color)
+            end
+          end
+        end
+      end
+    end
+    for key in pairs(EX.Labels) do
+      if key:sub(1, 3) == "gr_" and not seen[key] then EX.HideMark(key) end
+    end
+  end
+
+  function EX.GetGameState()
+    local gs = nil
+    pcall(function()
+      local GDP = ESP.GetGameplayData()
+      if GDP and GDP.GetGameState then gs = GDP.GetGameState() end
+    end)
+    if not ESPValid(gs) then pcall(function() gs = CGameState end) end
+    return ESPValid(gs) and gs or nil
+  end
+
+  local function fmtTime(sec)
+    sec = math.max(0, math.floor((tonumber(sec) or 0) + 0.5))
+    return string.format("%02d:%02d", math.floor(sec / 60), sec % 60)
+  end
+
+  function EX.GetZoneData()
+    local gs = EX.GetGameState()
+    if not gs then return nil end
+    local data = {}
+    pcall(function() if gs.GetCurCircleWave then data.wave = gs:GetCurCircleWave() end end)
+    pcall(function() data.blue = gs.BlueCircle end)
+    pcall(function() data.white = gs.WhiteCircle end)
+    local s = nil
+    pcall(function() if gs.GetCircleInfo then s = gs:GetCircleInfo() end end)
+    if type(s) == "string" and s ~= "" then
+      local tail = s:match(";([%-%d%.,]+)$")
+      if tail then
+        local nums = {}
+        for n in tail:gmatch("([%-%d%.]+)") do
+          local v = tonumber(n)
+          if v ~= nil then nums[#nums + 1] = v end
+        end
+        if #nums >= 5 then
+          local t = nums[2]
+          local dil = nums[3]
+          local stime = nums[4]
+          local nowS = nil
+          pcall(function()
+            if gs.GetServerWorldTimeSeconds then nowS = gs:GetServerWorldTimeSeconds() end
+          end)
+          if type(nowS) == "number" and type(stime) == "number" then
+            data.remain = math.max(0.0, (t or 0) - (nowS - stime) * (dil or 1))
+          else
+            data.remain = t
+          end
+          data.circleType = nums[1]
+        end
+      end
+    end
+    return data
+  end
+
+  function EX.DrawZone(pc, vw, vh, now)
+    local data = EX.GetZoneData()
+    if not data then
+      EX.HideLabel("zone_text")
+      EX.HideMark("zone_ring")
+      return
+    end
+    local myLoc = nil
+    pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
+    local parts = {}
+    if type(data.wave) == "number" and data.wave >= 0 then
+      parts[#parts + 1] = string.format("ZONE %d", math.floor(data.wave + 0.5))
+    else
+      parts[#parts + 1] = "ZONE"
+    end
+    if type(data.remain) == "number" then
+      parts[#parts + 1] = "SHRINK " .. fmtTime(data.remain)
+    end
+    local white = data.white
+    local whiteOK = white and tonumber(white.X) and tonumber(white.Y) and tonumber(white.Z) and tonumber(white.Z) > 0
+    if whiteOK and myLoc then
+      local dx = (tonumber(white.X) or 0) - myLoc.X
+      local dy = (tonumber(white.Y) or 0) - myLoc.Y
+      local dist = math.sqrt(dx * dx + dy * dy) - (tonumber(white.Z) or 0)
+      if dist <= 0 then
+        parts[#parts + 1] = "NEXT INSIDE"
+      else
+        parts[#parts + 1] = string.format("NEXT %dm", math.floor(dist / 100.0 + 0.5))
+      end
+    end
+    local blue = data.blue
+    if blue and tonumber(blue.Z) and tonumber(blue.Z) > 0 and myLoc then
+      local dx = (tonumber(blue.X) or 0) - myLoc.X
+      local dy = (tonumber(blue.Y) or 0) - myLoc.Y
+      local dist = math.sqrt(dx * dx + dy * dy)
+      if dist <= (tonumber(blue.Z) or 0) then
+        parts[#parts + 1] = "SAFE"
+      end
+    end
+    EX.DrawLabel("zone_text", vw * 0.5, 36.0, table.concat(parts, "  |  "), C_EX_CYAN)
+    if whiteOK and pc then
+      if (now - EX.ZoneRingT) >= 1.0 or EX.ZoneGroundZ == nil then
+        EX.ZoneRingT = now
+        EX.ZoneGroundZ = EX.GroundZ(pc, tonumber(white.X) or 0, tonumber(white.Y) or 0, 20000.0)
+      end
+      local center = {
+        X = tonumber(white.X) or 0,
+        Y = tonumber(white.Y) or 0,
+        Z = (EX.ZoneGroundZ or 0) + 30.0,
+      }
+      local cs = ESP.Project(pc, center)
+      if cs and cs.X > -200 and cs.X < vw + 200 and cs.Y > -200 and cs.Y < vh + 200 then
+        local r = tonumber(white.Z) or 0
+        local px = ESP.Project(pc, { X = center.X + r, Y = center.Y, Z = center.Z })
+        local py = ESP.Project(pc, { X = center.X, Y = center.Y + r, Z = center.Z })
+        local rx, ry = nil, nil
+        if px and py then
+          local dx, dy = px.X - cs.X, px.Y - cs.Y
+          rx = math.sqrt(dx * dx + dy * dy)
+          dx, dy = py.X - cs.X, py.Y - cs.Y
+          ry = math.sqrt(dx * dx + dy * dy)
+        end
+        if rx and ry and rx > 4 and ry > 4 and rx < 20000 and ry < 20000 then
+          EX.DrawRing("zone_ring", cs.X, cs.Y, rx, ry, C_EX_CYAN, "zone", 1.4, 20)
+        else
+          EX.HideMark("zone_ring")
+        end
+      else
+        EX.HideMark("zone_ring")
+      end
+    else
+      EX.HideMark("zone_ring")
+    end
+  end
+
+  function EX.Update(pc, vw, vh, camLoc, now)
+    if not pc then return end
+    now = now or ESP.Now()
+    local cfg = _G.RapzhangConfig or {}
+    if cfg.Esp9_Zone == true then
+      pcall(EX.DrawZone, pc, vw, vh, now)
+    else
+      EX.HideLabel("zone_text")
+      EX.HideMark("zone_ring")
+    end
+    if cfg.Esp9_Airdrop == true then
+      if (now - (EX.LastAirdropScan or -999)) >= 0.80 then
+        EX.LastAirdropScan = now
+        pcall(EX.ScanAirdrops)
+      end
+      pcall(EX.DrawAirdrops, pc, vw, vh, now)
+    else
+      if #(EX.Airdrops or {}) > 0 then EX.Airdrops = {} end
+      EX.HidePrefix("ad_")
+    end
+    if cfg.Esp9_Grenade == true then
+      if (now - (EX.LastGrenadeScan or -999)) >= 0.45 then
+        EX.LastGrenadeScan = now
+        pcall(EX.ScanGrenades)
+      end
+      pcall(EX.DrawGrenades, pc, vw, vh, now)
+    else
+      if #(EX.Grenades or {}) > 0 then EX.Grenades = {} end
+      EX.HidePrefix("gr_")
+    end
+    pcall(EX.Sweep, now, 3.0)
+  end
+end
+
 function ESP.Scan()
   local pc = ESP.GetController()
   local me = ESP.GetLocalCharacter()
@@ -3506,6 +4582,10 @@ function ESP.Update()
   end
   for k, _ in pairs(ESP.HealthBg) do
     if not seenCache[k] and not stillActive(k) then ESP.ReleaseTarget(k) end
+  end
+  -- Extra world ESP: airdrop, zone, grenade.
+  if ESP.Extra and ESP.Extra.Update then
+    pcall(ESP.Extra.Update, pc, vw, vh, camLoc, now)
   end
 end
 
@@ -6089,6 +7169,7 @@ _G.RapzhangAutoTextFeedback = (function()
     add("Enemy Weapon", cfg.EnemyWeapon == true)
     add("Force Friend", cfg.ForceFriend == true)
     add("Auto Report", cfg.AutoReportKiller == true)
+    add("Auto Parachute", cfg.AutoParachute == true)
     add("X3 Watermark", cfg.X3Watermark == true)
     add("X3 Fake Visual", cfg.X3FakeVisual == true)
     add("X3 Perf Boost", cfg.X3PerfBoost == true)
@@ -7386,6 +8467,8 @@ local function MainLoop()
             BulletTrackSmartHead.InstallSmartHeadHook()
         end
     end)
+    -- Auto Parachute harus tetap jalan walau pawn belum siap (guard internal).
+    if _G.RapzhangAutoParachuteTick then pcall(_G.RapzhangAutoParachuteTick) end
 
     if _G.RapzhangState.CustomTextData == nil then 
         _G.RapzhangState.CustomTextData = {OuterSpeed = 10, InnerSpeed = 10, HRecoil = 0.3, VRecoil = 0.3, MagicHead = 1.0, MagicBody = 1.0, MagicLegs = 1.0, IpadViewFOV = 120,
