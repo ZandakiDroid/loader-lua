@@ -169,6 +169,17 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     Esp9_RankDebug = false,
     Esp9_Clan = false,
     Esp9_Ammo = false,
+    -- Advanced overlay: satu parent switch, semua anak default OFF.
+    Esp9_Adv = false,
+    Esp9_Loot = false,
+    Esp9_LootBox = false,
+    Esp9_LootValuable = true,
+    Esp9_LootDist = 120,
+    Esp9_DmgDir = false,
+    Esp9_Ghost = false,
+    Esp9_Squad = false,
+    Esp9_VehIntel = false,
+    Esp9_SoundRadar = false,
     AutoParachute = false,
     AutoJump = true,
     AutoJumpRadius = 300,
@@ -274,6 +285,9 @@ _G.RapzhangConfig.AutoFeedbackConfig.Targets = {
 _G.RapzhangConfig.AutoFeedbackEnabled = true
 _G.RapzhangConfig.Esp9_Radar360 = _G.RapzhangConfig.Esp9_Radar360 == true
 _G.RapzhangConfig.Esp9_TeamNumber = _G.RapzhangConfig.Esp9_TeamNumber == true
+_G.RapzhangConfig.Esp9_Adv = _G.RapzhangConfig.Esp9_Adv == true
+_G.RapzhangConfig.Esp9_LootValuable = _G.RapzhangConfig.Esp9_LootValuable ~= false
+_G.RapzhangConfig.Esp9_LootDist = math.max(20, math.min(300, tonumber(_G.RapzhangConfig.Esp9_LootDist) or 120))
 _G.RapzhangConfig.AutoJumpRadius = math.max(50, math.min(1500, tonumber(_G.RapzhangConfig.AutoJumpRadius) or 300))
 
 _G.RapzhangState = _G.RapzhangState or { 
@@ -1398,6 +1412,19 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_ESP9_Clan", UI = AliasMap.Switcher, Text = T("   Enemy Clan", "   Enemy Clan"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Clan == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Clan = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_RankDebug", UI = AliasMap.Switcher, Text = T("   Debug Rank / Clan", "   Debug Rank / Clan"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_RankDebug == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_RankDebug = v and true or false; if _G.ESP and _G.ESP.ResetWidgets then pcall(_G.ESP.ResetWidgets) end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Ammo", UI = AliasMap.Switcher, Text = T("   Enemy Ammo / Reload", "   Enemy Ammo / Reload"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ammo == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ammo = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            -- =============================================
+            -- ADVANCED OVERLAY: parent ON/OFF + anak-anaknya
+            -- =============================================
+            { Key = "ModMenu_ADV_Ex", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Advanced Overlay", "   ▶ Advanced Overlay"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Adv == true end, SetFunc = function(_,v) local onv = v and true or false; _G.RapzhangConfig.Esp9_Adv = onv; if not onv then for _,k in ipairs({"Esp9_Loot","Esp9_LootBox","Esp9_DmgDir","Esp9_Ghost","Esp9_Squad","Esp9_VehIntel","Esp9_SoundRadar"}) do _G.RapzhangConfig[k] = false end end; pcall(function() if _G.ESP and _G.ESP.Adv then _G.ESP.Adv.ClearAll() end end); return true end },
+            { Key = "ModMenu_ADV_Loot", UI = AliasMap.Switcher, Text = T("      Loot ESP (ground)", "      Loot ESP (ground)"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Loot == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Loot = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; return true end },
+            { Key = "ModMenu_ADV_LootBox", UI = AliasMap.Switcher, Text = T("      Deathbox ESP + Contents", "      Deathbox ESP + Contents"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootBox == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootBox = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; return true end },
+            { Key = "ModMenu_ADV_LootVal", UI = AliasMap.Switcher, Text = T("      Only Valuable Items", "      Only Valuable Items"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootValuable ~= false end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootValuable = v and true or false; return true end },
+            { Key = "ModMenu_ADV_LootDist", UI = AliasMap.Slider, Text = T("      Scan Radius (20-300m)", "      Scan Radius (20-300m)"), ExpandHandle = "ModMenu_ADV_Ex", MinValue = 20, MaxValue = 300, min = 20, max = 300, Min = 20, Max = 300, GetFunc = function() return math.max(20, math.min(300, math.floor((_G.RapzhangConfig.Esp9_LootDist or 120) + 0.5))) end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootDist = math.max(20, math.min(300, math.floor(v + 0.5))); return true end },
+            { Key = "ModMenu_ADV_Dmg", UI = AliasMap.Switcher, Text = T("      Damage Direction + Attacker", "      Damage Direction + Attacker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_DmgDir == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_DmgDir = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true; pcall(function() if _G.ESP and _G.ESP.Adv then _G.ESP.Adv.InstallDamageHook() end end) end; return true end },
+            { Key = "ModMenu_ADV_Ghost", UI = AliasMap.Switcher, Text = T("      Ghost Last-Seen Marker", "      Ghost Last-Seen Marker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ghost == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ghost = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; return true end },
+            { Key = "ModMenu_ADV_Squad", UI = AliasMap.Switcher, Text = T("      Squad Strength Tracker", "      Squad Strength Tracker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Squad == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Squad = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; return true end },
+            { Key = "ModMenu_ADV_Veh", UI = AliasMap.Switcher, Text = T("      Vehicle Intel (Enemy)", "      Vehicle Intel (Enemy)"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_VehIntel == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_VehIntel = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; return true end },
+            { Key = "ModMenu_ADV_Sound", UI = AliasMap.Switcher, Text = T("      Sound Radar", "      Sound Radar"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_SoundRadar == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_SoundRadar = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; if not v and _G.ESP and _G.ESP.Adv and _G.ESP.Adv.UninstallSoundHook then pcall(_G.ESP.Adv.UninstallSoundHook) end; return true end },
         }
 
         local RequestMenuRefresh = function() end
@@ -3195,6 +3222,7 @@ function ESP.SyncMenuConfig()
   ESP.Menu.ShowRank = cfg.Esp9_Rank == true
   ESP.Menu.ShowClan = cfg.Esp9_Clan == true
   ESP.Menu.ShowAmmo = cfg.Esp9_Ammo == true
+  ESP.Menu.Adv = cfg.Esp9_Adv == true
 end
 
 -- Team color mapping: jangan memakai teamID % jumlah warna karena Team 20,
@@ -5702,6 +5730,1022 @@ function ESP.Scan()
   pcall(function() ESP.UpdateRadarMarks(trimmed) end)
   return pc, nReal, nBot
 end
+-- ==========================================================
+-- [ADV] ADVANCED OVERLAY — loot / damage / ghost / squad / vehicle / sound
+-- Master switch: Esp9_Adv. Semua overlay read-only dan pcall-guarded.
+-- ==========================================================
+do
+  local ADV = {}
+  ESP.Adv = ADV
+  ADV.Version = 1
+
+  local COL = {
+    white  = ESPMKC(0.93, 0.93, 0.93, 1.0),
+    gray   = ESPMKC(0.70, 0.72, 0.76, 1.0),
+    green  = ESPMKC(0.40, 1.00, 0.55, 1.0),
+    blue   = ESPMKC(0.38, 0.72, 1.00, 1.0),
+    purple = ESPMKC(0.85, 0.48, 1.00, 1.0),
+    gold   = ESPMKC(1.00, 0.62, 0.18, 1.0),
+    orange = ESPMKC(1.00, 0.55, 0.18, 1.0),
+    red    = ESPMKC(1.00, 0.22, 0.22, 1.0),
+    yellow = ESPMKC(1.00, 0.88, 0.30, 1.0),
+    cyan   = ESPMKC(0.30, 1.00, 0.95, 1.0),
+  }
+
+  local function cfg()
+    return _G.RapzhangConfig or {}
+  end
+
+  local function on(key)
+    local c = _G.RapzhangConfig
+    return c ~= nil and c[key] == true
+  end
+
+  local function masterOn()
+    local c = _G.RapzhangConfig
+    return c ~= nil and c.Esp9_Adv == true
+  end
+
+  local function worldGlobal(name)
+    local v = rawget(_G, name)
+    if v ~= nil then return v end
+    local ok, value = pcall(function() return _G[name] end)
+    if ok then return value end
+    return nil
+  end
+
+  local function subsystem(name)
+    local mgr = rawget(_G, "SubsystemMgr")
+    if not mgr then
+      pcall(function() mgr = require("GameLua.GameCore.Module.Subsystem.SubsystemMgr") end)
+    end
+    if not mgr then return nil end
+    local s = nil
+    pcall(function() s = mgr:Get(name) end)
+    return s
+  end
+
+  local function itemData(name, id)
+    local d = nil
+    pcall(function()
+      if CDataTable and CDataTable.GetTableData then
+        d = CDataTable.GetTableData(name, id)
+      end
+    end)
+    return d
+  end
+
+  local function hidePrefix(p)
+    pcall(function() ESP.Extra.HidePrefix(p) end)
+  end
+
+  local function atan2(y, x)
+    if math.atan2 then return math.atan2(y, x) end
+    if x > 0 then return math.atan(y / x) end
+    if x < 0 and y >= 0 then return math.atan(y / x) + math.pi end
+    if x < 0 and y < 0 then return math.atan(y / x) - math.pi end
+    if x == 0 and y > 0 then return math.pi * 0.5 end
+    if x == 0 and y < 0 then return -math.pi * 0.5 end
+    return 0
+  end
+
+  local function camYaw(pc)
+    local yaw = nil
+    pcall(function()
+      if pc and pc.GetControlRotation then
+        local rot = pc:GetControlRotation()
+        if rot then yaw = rot.Yaw or rot.yaw or rot.Pitch end
+      end
+    end)
+    return tonumber(yaw)
+  end
+
+  -- Sudut relatif terhadap kamera: 0 = depan, +90 = kanan.
+  local function bearing(meLoc, targetLoc, yaw)
+    if not meLoc or not targetLoc then return nil end
+    local dx = targetLoc.X - meLoc.X
+    local dy = targetLoc.Y - meLoc.Y
+    if dx == 0 and dy == 0 then return nil end
+    local ang = math.deg(atan2(dy, dx))
+    if yaw then ang = ang - yaw end
+    while ang <= -180.0 do ang = ang + 360.0 end
+    while ang > 180.0 do ang = ang - 360.0 end
+    return ang
+  end
+
+  local function class(path, alias)
+    local c = nil
+    pcall(function() c = ESP.Extra.ImportClass(path, alias) end)
+    return c
+  end
+
+  local function actorsOfClass(cls)
+    local list = {}
+    if not cls then return list end
+    local arr = nil
+    pcall(function()
+      local g = worldGlobal("Game")
+      if g and g.GetActorsByClass then arr = g:GetActorsByClass(cls) end
+    end)
+    if arr == nil then
+      pcall(function()
+        local pc = ESP.GetController()
+        local base = class("/Script/Engine.Actor")
+        if pc and base and GameplayStaticsESP and GameplayStaticsESP.GetAllActorsOfClass then
+          arr = slua.Array(UEnums.EPropertyClass.Object, base)
+          GameplayStaticsESP.GetAllActorsOfClass(pc, cls, arr)
+        end
+      end)
+    end
+    if arr then
+      for _, a in pairs(arr) do
+        if ESPValid(a) then list[#list + 1] = a end
+      end
+    end
+    return list
+  end
+
+  -- Query spasial milik game (CGame). Jauh lebih murah daripada
+  -- GetActorsByClass untuk loot/kendaraan. Mengembalikan nil jika API tidak
+  -- tersedia di client supaya pemanggil memakai fallback class scan.
+  local function queryList(fn)
+    local g = worldGlobal("Game")
+    if not g then return nil end
+    local arr = nil
+    local ok = pcall(function() arr = fn(g) end)
+    if not ok or arr == nil then return nil end
+    local list = {}
+    pcall(function()
+      for _, a in pairs(arr) do
+        if ESPValid(a) then list[#list + 1] = a end
+      end
+    end)
+    return list
+  end
+
+  -- Sebagian build mengekspos Query* hanya di DS dan mengembalikan tabel
+  -- kosong di client. Uji sekali: kalau class scan menemukan aktor sementara
+  -- query kosong, matikan query untuk fitur itu agar ESP tidak hilang diam-diam.
+  ADV.QueryOK = ADV.QueryOK or {}
+
+  local function queryOrScan(key, queryFn, scanFn)
+    local state = ADV.QueryOK[key]
+    if state ~= false then
+      local pool = queryList(queryFn)
+      if pool ~= nil then
+        if #pool > 0 then
+          ADV.QueryOK[key] = true
+          return pool
+        end
+        if state == true then return pool end
+        local alt = scanFn()
+        if #alt > 0 then
+          ADV.QueryOK[key] = false
+          return alt
+        end
+        ADV.QueryOK[key] = true
+        return pool
+      end
+      ADV.QueryOK[key] = false
+    end
+    return scanFn()
+  end
+
+  local function qualityColor(q)
+    q = tonumber(q) or 0
+    if q >= 5 then return COL.gold end
+    if q >= 4 then return COL.purple end
+    if q >= 3 then return COL.blue end
+    if q >= 2 then return COL.green end
+    return COL.white
+  end
+
+  local function isValuable(typ, id, data)
+    typ = tonumber(typ)
+    id = tonumber(id)
+    if typ == nil then return true end
+    if typ == 1 or typ == 5 then return true end
+    if typ == 2 then
+      return (tonumber(data and data.ItemQuality) or 0) >= 3
+    end
+    if typ == 6 then
+      -- 602xxx = throwable (frag/smoke/molotov/flash), selalu berguna.
+      if id and id >= 602000 and id < 603000 then return true end
+      return (tonumber(data and data.ItemQuality) or 0) >= 2
+    end
+    if typ == 10 then
+      return (tonumber(data and data.ItemQuality) or 0) >= 3
+    end
+    return false
+  end
+
+  local function itemEntry(id, typ, count)
+    local data = id and itemData("Item", id) or nil
+    local name = data and (data.ItemName or data.Name) or nil
+    if type(name) ~= "string" or name == "" then
+      name = "Item " .. tostring(id or "?")
+    end
+    if #name > 26 then name = name:sub(1, 26) .. ".." end
+    local n = tonumber(count) or 0
+    if n > 1 then name = name .. " x" .. tostring(math.floor(n)) end
+    return name, data
+  end
+
+  local function readDefineID(obj)
+    local id, typ, count = nil, nil, nil
+    pcall(function()
+      local d = obj.DefineID
+      if d then
+        id = tonumber(d.TypeSpecificID)
+        typ = tonumber(d.Type)
+      end
+    end)
+    if id == nil or id == 0 then
+      pcall(function()
+        local d = obj.ItemDefineID
+        if d then
+          id = tonumber(d.TypeSpecificID)
+          typ = tonumber(d.Type)
+        end
+      end)
+    end
+    if id == nil or id == 0 then pcall(function() id = tonumber(obj.ItemID) end) end
+    if id == 0 then id = nil end
+    for _, k in ipairs({ "ItemCount", "Count", "PickUpCount" }) do
+      if count == nil then
+        pcall(function() count = tonumber(obj[k]) end)
+      end
+    end
+    return id, typ, count
+  end
+
+  local function listItems(obj)
+    local out = {}
+    pcall(function()
+      if not obj.GetPickUpDataList then return end
+      local l = obj:GetPickUpDataList()
+      if not l then return end
+      local n = 0
+      pcall(function() n = tonumber(l:Num()) or 0 end)
+      if n <= 0 then
+        pcall(function() n = #l end)
+      end
+      if n <= 0 then return end
+      for i = 0, n - 1 do
+        local e = nil
+        pcall(function() e = l:Get(i) end)
+        if e == nil then e = l[i + 1] or l[i] end
+        if e then
+          local d = e.ID or e.DefineID or e.ItemDefineID
+          local id = d and tonumber(d.TypeSpecificID) or tonumber(e.ItemID)
+          local typ = d and tonumber(d.Type) or nil
+          if id and id > 0 then
+            out[#out + 1] = { id = id, typ = typ, count = tonumber(e.Count) or 1 }
+          end
+        end
+      end
+    end)
+    return out
+  end
+
+  local function actorKey(prefix, loc)
+    return string.format("%s%d_%d_%d", prefix,
+      math.floor(loc.X / 10.0), math.floor(loc.Y / 10.0), math.floor(loc.Z / 10.0))
+  end
+
+  -- Key stabil per aktor: nama objek UE unik dalam satu world. Fallback ke
+  -- koordinat kalau SafeGetObjectName tidak tersedia. Ini mencegah label
+  -- kendaraan/loot dibuat ulang setiap kali aktor bergerak sedikit.
+  local function objectKey(prefix, obj, loc)
+    local name = nil
+    pcall(function()
+      if obj and obj.SafeGetObjectName then name = obj:SafeGetObjectName() end
+    end)
+    if name ~= nil then
+      name = tostring(name)
+      if name ~= "" then return prefix .. name end
+    end
+    return actorKey(prefix, loc)
+  end
+
+  -- --------------------------------------------------------
+  -- 1) Loot & deathbox ESP
+  -- --------------------------------------------------------
+  ADV.LootCache = ADV.LootCache or {}
+  ADV.LootScan = ADV.LootScan or -999.0
+  ADV.GroundKey = ADV.GroundKey or "lt_"
+  ADV.BoxKey = ADV.BoxKey or "db_"
+
+  function ADV.ScanLoot(me, now)
+    local c = cfg()
+    local radius = tonumber(c.Esp9_LootDist) or 120
+    radius = math.max(20, math.min(300, radius))
+    local meLoc = ESP.ActorLocation(me)
+    if not meLoc then ADV.LootCache = {} return end
+
+    local wantGround = c.Esp9_Loot == true
+    local wantBox = c.Esp9_LootBox == true
+    local onlyValuable = c.Esp9_LootValuable ~= false
+    local out = {}
+
+    if wantGround then
+      local pool = queryOrScan("loot",
+        function(g) return g:QueryPickUpWrappers(meLoc, radius * 100.0, nil, false, 70) end,
+        function() return actorsOfClass(class("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor")) end)
+      for _, a in ipairs(pool) do
+        local loc = ESP.ActorLocation(a)
+        if loc then
+          local dist = ESP.DistMeters(meLoc, loc)
+          if dist <= radius then
+            local id, typ, count = readDefineID(a)
+            local entries = listItems(a)
+            if #entries == 0 and id then
+              entries = { { id = id, typ = typ, count = count } }
+            end
+            if #entries > 0 then
+              local e = entries[1]
+              local name, data = itemEntry(e.id, e.typ, e.count)
+              if (not onlyValuable) or isValuable(e.typ, e.id, data) then
+                out[#out + 1] = {
+                  key = objectKey(ADV.GroundKey, a, loc),
+                  x = loc.X, y = loc.Y, z = loc.Z,
+                  dist = dist,
+                  text = string.format("%s · %dm", name, math.floor(dist + 0.5)),
+                  color = qualityColor(data and data.ItemQuality),
+                  off = 0,
+                }
+              end
+            end
+          end
+        end
+      end
+    end
+
+    if wantBox then
+      local pool = queryOrScan("box",
+        function(g) return g:QueryDeathBoxs(meLoc, radius * 100.0) end,
+        function() return actorsOfClass(class("/Script/ShadowTrackerExtra.PlayerTombBox", "PlayerTombBox")) end)
+      for _, b in ipairs(pool) do
+        local loc = ESP.ActorLocation(b)
+        if loc then
+          local dist = ESP.DistMeters(meLoc, loc)
+          if dist <= radius then
+            local title = nil
+            pcall(function() title = b.TombName end)
+            if type(title) ~= "string" or title == "" or tonumber(title) then
+              title = "DEATHBOX"
+            end
+            if #title > 20 then title = title:sub(1, 20) .. ".." end
+            local key = objectKey(ADV.BoxKey, b, loc)
+            out[#out + 1] = {
+              key = key, x = loc.X, y = loc.Y, z = loc.Z, dist = dist,
+              text = string.format("%s · %dm", title, math.floor(dist + 0.5)),
+              color = COL.yellow, off = 0,
+            }
+            local names = {}
+            pcall(function()
+              local w = b:GetBoxPickupWrapperActor()
+              if ESPValid(w) then
+                for _, e in ipairs(listItems(w)) do
+                  if #names < 3 then
+                    names[#names + 1] = (itemEntry(e.id, e.typ, e.count))
+                  end
+                end
+              end
+            end)
+            if #names > 0 then
+              out[#out + 1] = {
+                key = key .. "_c", x = loc.X, y = loc.Y, z = loc.Z, dist = dist,
+                text = table.concat(names, ", "),
+                color = COL.gray, off = 13,
+              }
+            end
+          end
+        end
+      end
+    end
+
+    table.sort(out, function(a, b) return (a.dist or 99999) < (b.dist or 99999) end)
+    local trimmed = {}
+    for i = 1, math.min(#out, 70) do trimmed[i] = out[i] end
+    ADV.LootCache = trimmed
+  end
+
+  function ADV.DrawLoot(pc, now)
+    local list = ADV.LootCache or {}
+    for _, it in ipairs(list) do
+      local s = ESP.Project(pc, { X = it.x, Y = it.y, Z = it.z + 25.0 })
+      if s then
+        ESP.Extra.DrawLabel(it.key, s.X, s.Y + (it.off or 0), it.text, it.color)
+        ESP.Extra.LastSeen[it.key] = now
+      end
+    end
+  end
+
+  -- --------------------------------------------------------
+  -- 2) Damage direction + attacker lock
+  -- --------------------------------------------------------
+  ADV.Dmg = ADV.Dmg or {
+    t = -999.0, casterT = -999.0, caster = nil, casterKey = nil,
+    hits = 0, sum = 0, head = 0, cx = nil, cy = nil, cz = nil,
+  }
+  ADV._hookTried = false
+  ADV._hooked = false
+  ADV._hookAt = -999.0
+
+  function ADV.OnDamage(_, __, info, isHead, isLocalAttacker)
+    pcall(function()
+      if not (masterOn() and on("Esp9_DmgDir")) then return end
+      if isLocalAttacker then return end
+      local me = ESP.GetLocalCharacter()
+      if not ESPValid(me) then return end
+      local target = info and info.Target
+      if not ESPValid(target) then return end
+      local meKey = ESP.GetPlayerKey(me)
+      local targetKey = ESP.GetPlayerKey(target)
+      if meKey == nil or targetKey == nil then return end
+      if tostring(targetKey) ~= tostring(meKey) then return end
+
+      local now = ESP.Now()
+      local d = ADV.Dmg
+      if (now - (d.t or -999.0)) > 2.5 then
+        d.hits, d.sum, d.head = 0, 0, 0
+      end
+      d.t = now
+      d.hits = (d.hits or 0) + 1
+      d.sum = (d.sum or 0) + (tonumber(info.Damage) or 0)
+      if isHead then d.head = (d.head or 0) + 1 end
+
+      -- Self-damage (jatuh, grenade sendiri, zone) tidak punya arah musuh;
+      -- jangan pernah mengunci diri sendiri sebagai "shooter".
+      local caster = info.Caster
+      if ESPValid(caster) then
+        local ck = ESP.GetPlayerKey(caster)
+        if ck == nil or tostring(ck) ~= tostring(meKey) then
+          local cl = ESP.ActorLocation(caster)
+          if cl then
+            d.caster = caster
+            d.casterKey = ck
+            d.casterName = nil
+            d.casterBot = ESP.IsBot(caster)
+            d.casterT = now
+            d.cx, d.cy, d.cz = cl.X, cl.Y, cl.Z
+          end
+        end
+      end
+    end)
+  end
+
+  function ADV.InstallDamageHook()
+    if ADV._hooked then return end
+    local now = ESP.Now()
+    if ADV._hookTried and (now - (ADV._hookAt or -999.0)) < 5.0 then return end
+    ADV._hookTried = true
+    ADV._hookAt = now
+    local es = worldGlobal("EventSystem")
+    local et = worldGlobal("EVENTTYPE_INGAME")
+    local eid = worldGlobal("EVENTID_TAKE_DAMAGE_CLIENT")
+    if es and es.registEvent and et and eid then
+      -- Tanpa ctx: EventSystem memanggil fn(eventType, eventID, ...). Kalau ctx
+      -- diberikan, ctx masuk sebagai argumen pertama dan DamageInfo bergeser.
+      pcall(function()
+        if es.unregistEvent then es:unregistEvent(et, eid, ADV.OnDamage) end
+      end)
+      local ok = pcall(function() es:registEvent(et, eid, ADV.OnDamage) end)
+      ADV._hooked = ok
+    end
+  end
+
+  function ADV.HideDamage()
+    ESP.Extra.HideExtra("dm_arc")
+    ESP.Extra.HideLabel("dm_txt")
+    ESP.Extra.HideBox("dm_box")
+    ESP.Extra.HideLabel("dm_box_txt")
+  end
+
+  function ADV.DrawDamage(pc, me, vw, vh, now)
+    local d = ADV.Dmg
+    if not d then return end
+    local age = now - (d.t or -999.0)
+    local meLoc = ESP.ActorLocation(me)
+    local meKey = ESP.GetPlayerKey(me)
+    local cx, cy = vw * 0.5, vh * 0.5
+
+    if age <= 3.0 and (d.hits or 0) > 0 and meLoc and d.cx then
+      local ang = bearing(meLoc, { X = d.cx, Y = d.cy, Z = d.cz or meLoc.Z }, camYaw(pc))
+      if ang then
+        local seg = 7
+        local span = 24.0
+        local r = math.min(vw, vh) * 0.17
+        local t = nil
+        pcall(function() t = ESP.Extra.GetExtra("dm_arc", seg) end)
+        if t then
+          local base = ang - 90.0
+          for i = 1, seg do
+            local a1 = math.rad(base - span + (2.0 * span) * ((i - 1) / seg))
+            local a2 = math.rad(base - span + (2.0 * span) * (i / seg))
+            ESP.SetBrush(t[i], COL.red, "dm_arc")
+            ESP.DrawLine(t[i],
+              cx + math.cos(a1) * r, cy + math.sin(a1) * r,
+              cx + math.cos(a2) * r, cy + math.sin(a2) * r, 3.0)
+          end
+        end
+        local dist = ESP.DistMeters(meLoc, { X = d.cx, Y = d.cy, Z = d.cz or meLoc.Z })
+        local txt = string.format("%d hit  %d dmg  %dm%s",
+          d.hits, math.floor((d.sum or 0) + 0.5), math.floor(dist + 0.5),
+          (d.head or 0) > 0 and ("  HS x" .. tostring(d.head)) or "")
+        ESP.Extra.DrawLabel("dm_txt", cx, cy + r + 16.0, txt, COL.red)
+        ESP.Extra.LastSeen["dm_txt"] = now
+        ESP.Extra.LastSeen["dm_arc"] = now
+      end
+    else
+      ESP.Extra.HideExtra("dm_arc")
+      ESP.Extra.HideLabel("dm_txt")
+    end
+
+    local casterAge = now - (d.casterT or -999.0)
+    local selfCaster = d.casterKey ~= nil and meKey ~= nil
+      and tostring(d.casterKey) == tostring(meKey)
+    if casterAge <= 6.0 and not selfCaster and ESPValid(d.caster) and ESP.IsAlive(d.caster) then
+      local head, feet = ESP.GetHeadFeet(d.caster)
+      local hs, fs = ESP.Project(pc, head), ESP.Project(pc, feet)
+      if hs and fs then
+        local h = fs.Y - hs.Y
+        if h >= 12.0 and h <= vh * 1.5 then
+          local w = math.max(22.0, h * 0.62)
+          local bx = (hs.X + fs.X) * 0.5
+          local by = (hs.Y + fs.Y) * 0.5
+          ESP.Extra.DrawBox("dm_box", bx, by, w, h, COL.red, "dm_box", 2.0)
+          -- Nama shooter di-cache saat lock; ResolveName cukup sekali per
+          -- shooter, bukan tiap frame selama 6 detik.
+          if d.casterName == nil then
+            local nm = "ENEMY"
+            pcall(function() nm = ESP.ResolveName(d.caster, d.casterBot) end)
+            if type(nm) ~= "string" or nm == "" then nm = "ENEMY" end
+            d.casterName = nm
+          end
+          local name = d.casterName
+          local dist = meLoc and ESP.DistMeters(meLoc, ESP.ActorLocation(d.caster)) or 0
+          ESP.Extra.DrawLabel("dm_box_txt", bx, hs.Y - 12.0,
+            string.format("SHOOTER %s · %dm", name, math.floor(dist + 0.5)), COL.red)
+          ESP.Extra.LastSeen["dm_box"] = now
+          ESP.Extra.LastSeen["dm_box_txt"] = now
+        end
+      end
+    else
+      ESP.Extra.HideBox("dm_box")
+      ESP.Extra.HideLabel("dm_box_txt")
+    end
+  end
+
+  -- --------------------------------------------------------
+  -- 3) Ghost last-seen marker
+  -- --------------------------------------------------------
+  ADV.Ghosts = ADV.Ghosts or {}
+
+  function ADV.UpdateGhosts(me, now)
+    if not on("Esp9_Ghost") then
+      if next(ADV.Ghosts) then ADV.Ghosts = {} end
+      return
+    end
+    local seen = {}
+    for _, it in ipairs(ESP.EnemyCache or {}) do
+      local c = it.Character
+      if ESPValid(c) and it.Key ~= nil then
+        local loc = ESP.ActorLocation(c)
+        if loc then
+          local g = ADV.Ghosts[it.Key]
+          if not g then
+            g = { key = it.Key }
+            ADV.Ghosts[it.Key] = g
+            pcall(function() g.name = ESP.ResolveName(c, it.IsBot) end)
+            if type(g.name) ~= "string" or g.name == "" then
+              g.name = it.IsBot and "Bot" or "Enemy"
+            end
+          end
+          g.x, g.y, g.z = loc.X, loc.Y, loc.Z
+          g.t = now
+          g.live = false
+          seen[it.Key] = true
+        end
+      end
+    end
+    for key, g in pairs(ADV.Ghosts) do
+      if not seen[key] then
+        local age = now - (g.t or 0)
+        g.live = age <= 12.0
+        if age > 12.5 then ADV.Ghosts[key] = nil end
+      end
+    end
+  end
+
+  function ADV.DrawGhosts(pc, me, now)
+    local meLoc = ESP.ActorLocation(me)
+    for key, g in pairs(ADV.Ghosts or {}) do
+      if g.live then
+        local age = now - (g.t or 0)
+        local s = ESP.Project(pc, { X = g.x, Y = g.y, Z = g.z + 40.0 })
+        if s then
+          local k = "gh_" .. tostring(key)
+          local col = age < 4.0 and COL.cyan or (age < 8.0 and COL.blue or COL.gray)
+          local ck = "gh_" .. (age < 4.0 and "fresh" or (age < 8.0 and "warm" or "old"))
+          ESP.Extra.DrawBox(k, s.X, s.Y, 26.0, 40.0, col, ck, 1.4)
+          local dist = meLoc and ESP.DistMeters(meLoc, { X = g.x, Y = g.y, Z = g.z }) or 0
+          ESP.Extra.DrawLabel(k .. "_t", s.X, s.Y - 26.0,
+            string.format("%s · %dm · %ds", tostring(g.name or "Enemy"),
+              math.floor(dist + 0.5), math.floor(age)), col)
+          ESP.Extra.LastSeen[k] = now
+          ESP.Extra.LastSeen[k .. "_t"] = now
+        end
+      end
+    end
+  end
+
+  -- --------------------------------------------------------
+  -- 4) Squad strength tracker
+  -- --------------------------------------------------------
+  function ADV.HideSquad()
+    ESP.Extra.HideLabel("sq_h")
+    for i = 1, 8 do ESP.Extra.HideLabel("sq_" .. tostring(i)) end
+  end
+
+  function ADV.DrawSquad(pc, me, vw, vh, now)
+    local teams = {}
+    for _, it in ipairs(ESP.EnemyCache or {}) do
+      local c = it.Character
+      if ESPValid(c) then
+        local tid = ESP.GetTeamID(c)
+        local tk = tostring(tid or "-")
+        local t = teams[tk]
+        if not t then
+          t = { id = tk, up = 0, down = 0, dist = 99999 }
+          teams[tk] = t
+        end
+        if ESP.IsKnocked(c) then t.down = t.down + 1 else t.up = t.up + 1 end
+        if (it.Distance or 99999) < t.dist then t.dist = it.Distance end
+      end
+    end
+    local list = {}
+    for _, t in pairs(teams) do list[#list + 1] = t end
+    if #list == 0 then ADV.HideSquad() return end
+    table.sort(list, function(a, b) return (a.dist or 99999) < (b.dist or 99999) end)
+
+    ESP.Extra.DrawLabel("sq_h", 96.0, 118.0, "SQUAD INTEL", COL.gray)
+    ESP.Extra.LastSeen["sq_h"] = now
+    for i = 1, math.min(#list, 8) do
+      local t = list[i]
+      local txt = string.format("T%s  %d up", tostring(t.id), t.up)
+      if t.down > 0 then txt = txt .. "  " .. tostring(t.down) .. " down" end
+      local col = t.down > 0 and COL.yellow or COL.white
+      ESP.Extra.DrawLabel("sq_" .. tostring(i), 96.0, 118.0 + i * 13.0, txt, col)
+      ESP.Extra.LastSeen["sq_" .. tostring(i)] = now
+    end
+    for i = math.min(#list, 8) + 1, 8 do
+      ESP.Extra.HideLabel("sq_" .. tostring(i))
+    end
+  end
+
+  -- --------------------------------------------------------
+  -- 5) Vehicle intel
+  -- --------------------------------------------------------
+  ADV.VehCache = ADV.VehCache or {}
+  ADV.VehScan = ADV.VehScan or -999.0
+
+  local function vehicleOccupants(v, myTeam)
+    local total, enemy = 0, 0
+    if myTeam == nil then return total, enemy end
+    local arr = nil
+    pcall(function()
+      local g = worldGlobal("Game")
+      if g and g.GetPlayersOnVehicle then arr = g:GetPlayersOnVehicle(v) end
+    end)
+    if arr then
+      for _, p in pairs(arr) do
+        if ESPValid(p) then
+          total = total + 1
+          local tid = ESP.GetTeamID(p)
+          if tid == nil or tostring(tid) ~= tostring(myTeam) then
+            enemy = enemy + 1
+          end
+        end
+      end
+    end
+    return total, enemy
+  end
+
+  function ADV.ScanVehicles(me, now)
+    local meLoc = ESP.ActorLocation(me)
+    if not meLoc then ADV.VehCache = {} return end
+    local myTeam = ESP.GetTeamID(me)
+    local pool = queryOrScan("veh",
+      function(g) return g:QueryVehicles(meLoc, 150.0 * 100.0) end,
+      function() return actorsOfClass(class("/Script/ShadowTrackerExtra.STExtraVehicleBase", "STExtraVehicleBase")) end)
+    local out = {}
+    for _, v in ipairs(pool) do
+      local loc = ESP.ActorLocation(v)
+      if loc then
+        local dist = ESP.DistMeters(meLoc, loc)
+        if dist <= 150.0 then
+          local total, enemy = vehicleOccupants(v, myTeam)
+          if enemy > 0 then
+            local hp, hpmax, fuel, fuelmax = nil, nil, nil, nil
+            local vc = nil
+            pcall(function() vc = v.VehicleCommon end)
+            if ESPValid(vc) then
+              pcall(function()
+                hp = tonumber(vc:GetVehicleHP())
+                hpmax = tonumber(vc:GetVehicleHPMax())
+                fuel = tonumber(vc.Fuel)
+                fuelmax = tonumber(vc.FuelMax)
+              end)
+            end
+            local hpTxt = "?"
+            if hp and hpmax and hpmax > 0 then
+              hpTxt = tostring(math.floor(hp / hpmax * 100.0 + 0.5)) .. "%"
+            end
+            local fuelTxt = ""
+            if fuel and fuelmax and fuelmax > 0 then
+              fuelTxt = string.format("  %d%%F", math.floor(fuel / fuelmax * 100.0 + 0.5))
+            elseif fuel then
+              fuelTxt = string.format("  %dL", math.floor(fuel + 0.5))
+            end
+            out[#out + 1] = {
+              key = objectKey("vh_", v, loc),
+              x = loc.X, y = loc.Y, z = loc.Z,
+              dist = dist,
+              text = string.format("VEH %dE · %s%s · %dm", enemy, hpTxt, fuelTxt, math.floor(dist + 0.5)),
+              color = enemy >= 2 and COL.red or COL.orange,
+            }
+          end
+        end
+      end
+    end
+    table.sort(out, function(a, b) return (a.dist or 99999) < (b.dist or 99999) end)
+    local trimmed = {}
+    for i = 1, math.min(#out, 12) do trimmed[i] = out[i] end
+    ADV.VehCache = trimmed
+  end
+
+  function ADV.DrawVehicles(pc, now)
+    for _, it in ipairs(ADV.VehCache or {}) do
+      local s = ESP.Project(pc, { X = it.x, Y = it.y, Z = it.z + 90.0 })
+      if s then
+        ESP.Extra.DrawLabel(it.key, s.X, s.Y, it.text, it.color)
+        ESP.Extra.LastSeen[it.key] = now
+      end
+    end
+  end
+
+  -- --------------------------------------------------------
+  -- 6) Sound radar (shot / footstep / vehicle / glass)
+  -- --------------------------------------------------------
+  ADV.Sounds = ADV.Sounds or {}
+  ADV._soundHooked = false
+  ADV._soundOrig = nil
+  ADV._soundWrap = nil
+
+  local function enemyActor(ch, myTeam)
+    if not ESPValid(ch) then return true end
+    local tid = ESP.GetTeamID(ch)
+    if tid == nil or myTeam == nil then return true end
+    return tostring(tid) ~= tostring(myTeam)
+  end
+
+  local function soundRecord(kind, pos, ch)
+    if not pos or not tonumber(pos.X) then return end
+    -- Tim lokal dibaca saat event terjadi, bukan saat hook dipasang: spawn
+    -- island bisa dimuat sebelum tim pemain terbentuk.
+    local me = ESP.GetLocalCharacter()
+    local myTeam = ESPValid(me) and ESP.GetTeamID(me) or nil
+    if not enemyActor(ch, myTeam) then return end
+    local list = ADV.Sounds
+    list[#list + 1] = {
+      x = pos.X, y = pos.Y, z = pos.Z,
+      t = ESP.Now(), kind = kind,
+    }
+    while #list > 40 do table.remove(list, 1) end
+  end
+
+  function ADV.InstallSoundHook()
+    if ADV._soundHooked then return end
+    local now = ESP.Now()
+    if ADV._soundTried and (now - (ADV._soundTryAt or -999.0)) < 5.0 then return end
+    ADV._soundTried = true
+    ADV._soundTryAt = now
+    local sub = subsystem("SoundVisualizationSubsystem")
+    if not sub then return end
+    local installed = 0
+
+    local function wrap(name, kind, posIndex, charIndex)
+      local orig = nil
+      pcall(function() orig = sub[name] end)
+      if type(orig) ~= "function" then return end
+      local w = function(self, a, b, c, d, e, f)
+        pcall(function()
+          local pos = nil
+          if posIndex == 1 then pos = a elseif posIndex == 2 then pos = b
+          elseif posIndex == 3 then pos = c elseif posIndex == 4 then pos = d end
+          local ch = nil
+          if charIndex == 1 then ch = a
+          elseif charIndex == 2 then ch = b
+          elseif charIndex == 0 and a then
+            -- Kendaraan: game sendiri memakai vehicle:GetDriver().
+            if a.GetDriver then pcall(function() ch = a:GetDriver() end) end
+          end
+          soundRecord(kind, pos, ch)
+        end)
+        return orig(self, a, b, c, d, e, f)
+      end
+      local applied = pcall(function() sub[name] = w end)
+      if not applied then return end
+      ADV._soundWrap = ADV._soundWrap or {}
+      ADV._soundWrap[name] = w
+      ADV._soundOrig = ADV._soundOrig or {}
+      ADV._soundOrig[name] = orig
+      installed = installed + 1
+    end
+
+    wrap("AddWeaponShotVoiceToCache", 1, 3, 1)
+    wrap("AddMoveVoiceToCache", 2, 2, 1)
+    wrap("AddVehicleVoiceToCache", 3, 2, 0)
+    wrap("AddGlassVoiceToCache", 4, 1, nil)
+    ADV._soundHooked = installed > 0
+  end
+
+  function ADV.UninstallSoundHook()
+    local sub = subsystem("SoundVisualizationSubsystem")
+    if sub and ADV._soundWrap then
+      for name, w in pairs(ADV._soundWrap) do
+        pcall(function()
+          if sub[name] == w and ADV._soundOrig and ADV._soundOrig[name] then
+            sub[name] = ADV._soundOrig[name]
+          end
+        end)
+      end
+    end
+    ADV._soundWrap = nil
+    ADV._soundOrig = nil
+    ADV._soundHooked = false
+    ADV._soundTried = false
+    ADV._soundTryAt = -999.0
+  end
+
+  function ADV.DrawSounds(pc, me, vw, vh, now)
+    local meLoc = ESP.ActorLocation(me)
+    if not meLoc then return end
+    local yaw = camYaw(pc)
+    local cx, cy = vw * 0.5, vh * 0.5
+    local rad = math.min(vw, vh) * 0.22
+    local drawn = 0
+    local ttl = { [1] = 2.2, [2] = 1.1, [3] = 1.8, [4] = 1.4 }
+    local col = { [1] = COL.red, [2] = COL.yellow, [3] = COL.blue, [4] = COL.cyan }
+
+    for i = #(ADV.Sounds or {}), 1, -1 do
+      local s = (ADV.Sounds or {})[i]
+      local age = now - (s.t or 0)
+      local life = ttl[s.kind] or 1.5
+      if age <= life and drawn < 8 then
+        local ang = bearing(meLoc, { X = s.x, Y = s.y, Z = s.z }, yaw)
+        if ang then
+          local a = math.rad(ang - 90.0)
+          local x = cx + math.cos(a) * rad
+          local y = cy + math.sin(a) * rad
+          drawn = drawn + 1
+          local key = "sd_" .. tostring(drawn)
+          ESP.Extra.DrawRing(key, x, y, 4.0, 4.0, col[s.kind] or COL.white, "sd_" .. tostring(s.kind), 1.6, 8)
+          local dist = ESP.DistMeters(meLoc, { X = s.x, Y = s.y, Z = s.z })
+          ESP.Extra.DrawLabel(key .. "_t", x, y + 12.0,
+            string.format("%dm", math.floor(dist + 0.5)), col[s.kind] or COL.white)
+          ESP.Extra.LastSeen[key] = now
+          ESP.Extra.LastSeen[key .. "_t"] = now
+        end
+      end
+    end
+    for i = drawn + 1, 8 do
+      ESP.Extra.HideRing("sd_" .. tostring(i))
+      ESP.Extra.HideLabel("sd_" .. tostring(i) .. "_t")
+    end
+  end
+
+  -- --------------------------------------------------------
+  -- Orchestrator
+  -- --------------------------------------------------------
+  function ADV.Sweep(now)
+    local sounds = ADV.Sounds or {}
+    for i = #sounds, 1, -1 do
+      if (now - (sounds[i].t or 0)) > 3.0 then table.remove(sounds, i) end
+    end
+  end
+
+  function ADV.ClearAll()
+    hidePrefix("lt_")
+    hidePrefix("db_")
+    hidePrefix("dm_")
+    hidePrefix("gh_")
+    hidePrefix("sq_")
+    hidePrefix("vh_")
+    hidePrefix("sd_")
+    ADV.LootCache = {}
+    ADV.VehCache = {}
+    ADV.Ghosts = {}
+    ADV.Sounds = {}
+    if ADV.Dmg then ADV.Dmg.hits = 0 ADV.Dmg.t = -999.0 ADV.Dmg.casterT = -999.0
+      ADV.Dmg.casterName = nil ADV.Dmg.caster = nil end
+    if ADV._soundHooked then pcall(ADV.UninstallSoundHook) end
+  end
+
+  function ADV.Update(pc, vw, vh, camLoc, now, me)
+    if not masterOn() then
+      if not ADV._cleared then
+        ADV._cleared = true
+        pcall(ADV.ClearAll)
+      end
+      return
+    end
+    ADV._cleared = false
+    local world = ESP.World()
+    if world ~= ADV._World then
+      -- Match/world baru: hook EventSystem dan subsystem lama tidak berlaku.
+      ADV._World = world
+      ADV._hooked = false
+      ADV._hookTried = false
+      ADV._hookAt = -999.0
+      ADV._soundHooked = false
+      ADV._soundTried = false
+      ADV._soundTryAt = -999.0
+      ADV.QueryOK = {}
+      ADV.LootCache, ADV.VehCache, ADV.Ghosts, ADV.Sounds = {}, {}, {}, {}
+      ADV.LootScan, ADV.VehScan = -999.0, -999.0
+      if ADV.Dmg then
+        ADV.Dmg.t, ADV.Dmg.casterT = -999.0, -999.0
+        ADV.Dmg.hits, ADV.Dmg.sum, ADV.Dmg.head = 0, 0, 0
+        ADV.Dmg.caster, ADV.Dmg.casterKey, ADV.Dmg.cx = nil, nil, nil
+        ADV.Dmg.casterName, ADV.Dmg.casterBot = nil, nil
+      end
+    end
+    if not ESPValid(me) then return end
+
+    pcall(ADV.InstallDamageHook)
+
+    if on("Esp9_Loot") or on("Esp9_LootBox") then
+      if (now - (ADV.LootScan or -999.0)) >= 0.55 then
+        ADV.LootScan = now
+        pcall(ADV.ScanLoot, me, now)
+      end
+      pcall(ADV.DrawLoot, pc, now)
+    else
+      ADV.LootCache = {}
+      hidePrefix("lt_")
+      hidePrefix("db_")
+    end
+
+    if on("Esp9_DmgDir") then
+      pcall(ADV.DrawDamage, pc, me, vw, vh, now)
+    else
+      ADV.Dmg.t, ADV.Dmg.casterT = -999.0, -999.0
+      ADV.Dmg.cx = nil
+      ADV.Dmg.casterName = nil
+      pcall(ADV.HideDamage)
+    end
+
+    if on("Esp9_Ghost") then
+      pcall(ADV.UpdateGhosts, me, now)
+      pcall(ADV.DrawGhosts, pc, me, now)
+    else
+      if next(ADV.Ghosts or {}) then ADV.Ghosts = {} end
+      hidePrefix("gh_")
+    end
+
+    if on("Esp9_Squad") then
+      pcall(ADV.DrawSquad, pc, me, vw, vh, now)
+    else
+      pcall(ADV.HideSquad)
+    end
+
+    if on("Esp9_VehIntel") then
+      if (now - (ADV.VehScan or -999.0)) >= 0.45 then
+        ADV.VehScan = now
+        pcall(ADV.ScanVehicles, me, now)
+      end
+      pcall(ADV.DrawVehicles, pc, now)
+    else
+      ADV.VehCache = {}
+      hidePrefix("vh_")
+    end
+
+    if on("Esp9_SoundRadar") then
+      if not ADV._soundHooked then pcall(ADV.InstallSoundHook) end
+      pcall(ADV.DrawSounds, pc, me, vw, vh, now)
+    else
+      ADV.Sounds = {}
+      hidePrefix("sd_")
+      if ADV._soundHooked then pcall(ADV.UninstallSoundHook) end
+    end
+
+    pcall(ADV.Sweep, now)
+  end
+end
+
 --// SRC HUB
 function ESP.Update()
   ESP.SyncMenuConfig()
@@ -5862,8 +6906,13 @@ function ESP.Update()
     if not active[k] then ESP.Hide(ESP.Lines[k]) end
   end
   -- Extra world ESP: airdrop, zone, grenade.
+  local me = ESP.GetLocalCharacter()
   if ESP.Extra and ESP.Extra.Update then
     pcall(ESP.Extra.Update, pc, vw, vh, camLoc, now)
+  end
+  -- Advanced overlays: loot, damage, ghost, squad, vehicle, sound.
+  if ESP.Adv and ESP.Adv.Update then
+    pcall(ESP.Adv.Update, pc, vw, vh, camLoc, now, me)
   end
 end
 
