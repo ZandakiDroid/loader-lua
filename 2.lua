@@ -181,8 +181,9 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     Esp9_LootAttach = false,
     Esp9_LootThrow = false,
     Esp9_LootMisc = false,
-    -- "Other" per kategori tidak ditulis di default config: nil berarti ON
-    -- (cfg[key] ~= false), sehingga item baru dari update game tetap tampil.
+    -- Toggle item dan "Other" tidak ditulis di default config: nil berarti
+    -- OFF (cfg[key] == true). Item baru dari update game baru tampil setelah
+    -- switch "Other" kategorinya dinyalakan.
     Esp9_LootDist = 120,
     AutoParachute = false,
     AutoJump = true,
@@ -1396,18 +1397,21 @@ do
     }
     L.GroupOrder = {
         weapon = { "AR", "SMG", "SR", "SG", "MG", "Pistol", "Melee", "Other" },
+        gear   = { "Helmet", "Vest", "Backpack" },
         attach = { "Muzzle", "Grip", "Scope", "Magazine", "Stock" },
     }
     L.GroupLabel = {
         AR = "Assault Rifles", SMG = "SMGs", SR = "Snipers / DMR",
         SG = "Shotguns", MG = "Machine Guns", Pistol = "Pistols",
         Melee = "Melee", Other = "Other Weapons",
+        Helmet = "Helmets", Vest = "Vests", Backpack = "Backpacks",
         Muzzle = "Muzzles", Grip = "Grips", Scope = "Scopes",
         Magazine = "Magazines", Stock = "Stocks",
     }
     L.GroupSlug = {
         AR = "AR", SMG = "SMG", SR = "SR", SG = "SG", MG = "MG",
         Pistol = "PISTOL", Melee = "MELEE", Other = "OTHER",
+        Helmet = "HELMET", Vest = "VEST", Backpack = "BACKPACK",
         Muzzle = "MUZZLE", Grip = "GRIP", Scope = "SCOPE",
         Magazine = "MAG", Stock = "STOCK",
     }
@@ -1929,11 +1933,11 @@ function _G.InitModMenuTab()
     end
 
     local StackSupport = {
-        { Key = "ModMenu_InventoryInGame", UI = AliasMap.Switcher, Text = T("  Inventory / Wardrobe In-Game", "  Inventory / Wardrobe In-Game"), GetFunc = function() return _G.RapzhangConfig.InventoryInGame == true end, SetFunc = function(_, v) return SetSupportInventoryEnabled(v) end },
-        { Key = "ModMenu_AutoReportKiller", UI = AliasMap.Switcher, Text = T("  Killer Report Assist (Confirm)", "  Killer Report Assist (Confirm)"), GetFunc = function() return _G.RapzhangConfig.AutoReportKiller == true end, SetFunc = function(_, v) _G.RapzhangConfig.AutoReportKiller = v and true or false; if not v and _G.AutoReportAssistReset then pcall(_G.AutoReportAssistReset, false) end; return true end },
-        { Key = "ModMenu_X3FakeVisual", UI = AliasMap.Switcher, Text = T("  Fake Sultan Visual", "  Fake Sultan Visual"), GetFunc = function() return _G.RapzhangConfig.X3FakeVisual == true end, SetFunc = function(_, v) _G.RapzhangConfig.X3FakeVisual = v and true or false; return true end },
-        { Key = "ModMenu_ForceFriend", UI = AliasMap.Switcher, Text = T("  Force Friend", "  Force Friend"), GetFunc = function() return _G.RapzhangConfig.ForceFriend == true end, SetFunc = function(_, v) _G.RapzhangConfig.ForceFriend = v and true or false; if v then pcall(function() SaveFriendUIDList(LoadFriendUIDList()) end) end; if _G.RapzhangForceFriend then if v and _G.RapzhangForceFriend.Boot then pcall(_G.RapzhangForceFriend.Boot) elseif _G.RapzhangForceFriend.Refresh then pcall(_G.RapzhangForceFriend.Refresh) end end; if v and _G.RapzhangStartFriendSync then pcall(_G.RapzhangStartFriendSync) end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
-        { Key = "ModMenu_AutoParachute", UI = AliasMap.TitleSwitcher, Text = T("  ▶ Auto Parachute (Map Mark)", "  ▶ Auto Parachute (Map Mark)"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.AutoParachute == true end, SetFunc = function(_, v) local on = v and true or false; if _G.RapzhangAutoParachute and _G.RapzhangAutoParachute.Set then pcall(_G.RapzhangAutoParachute.Set, on) else _G.RapzhangConfig.AutoParachute = on end; if on then _G.RapzhangConfig.AutoJump = true end; return true end },
+        { Key = "ModMenu_InventoryInGame", UI = AliasMap.Switcher, Text = T("   Inventory / Wardrobe In-Game", "   Inventory / Wardrobe In-Game"), GetFunc = function() return _G.RapzhangConfig.InventoryInGame == true end, SetFunc = function(_, v) return SetSupportInventoryEnabled(v) end },
+        { Key = "ModMenu_AutoReportKiller", UI = AliasMap.Switcher, Text = T("   Killer Report Assist (Confirm)", "   Killer Report Assist (Confirm)"), GetFunc = function() return _G.RapzhangConfig.AutoReportKiller == true end, SetFunc = function(_, v) _G.RapzhangConfig.AutoReportKiller = v and true or false; if not v and _G.AutoReportAssistReset then pcall(_G.AutoReportAssistReset, false) end; return true end },
+        { Key = "ModMenu_X3FakeVisual", UI = AliasMap.Switcher, Text = T("   Fake Sultan Visual", "   Fake Sultan Visual"), GetFunc = function() return _G.RapzhangConfig.X3FakeVisual == true end, SetFunc = function(_, v) _G.RapzhangConfig.X3FakeVisual = v and true or false; return true end },
+        { Key = "ModMenu_ForceFriend", UI = AliasMap.Switcher, Text = T("   Force Friend", "   Force Friend"), GetFunc = function() return _G.RapzhangConfig.ForceFriend == true end, SetFunc = function(_, v) _G.RapzhangConfig.ForceFriend = v and true or false; if v then pcall(function() SaveFriendUIDList(LoadFriendUIDList()) end) end; if _G.RapzhangForceFriend then if v and _G.RapzhangForceFriend.Boot then pcall(_G.RapzhangForceFriend.Boot) elseif _G.RapzhangForceFriend.Refresh then pcall(_G.RapzhangForceFriend.Refresh) end end; if v and _G.RapzhangStartFriendSync then pcall(_G.RapzhangStartFriendSync) end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
+        { Key = "ModMenu_AutoParachute", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Auto Parachute (Map Mark)", "   ▶ Auto Parachute (Map Mark)"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.AutoParachute == true end, SetFunc = function(_, v) local on = v and true or false; if _G.RapzhangAutoParachute and _G.RapzhangAutoParachute.Set then pcall(_G.RapzhangAutoParachute.Set, on) else _G.RapzhangConfig.AutoParachute = on end; if on then _G.RapzhangConfig.AutoJump = true end; return true end },
         { Key = "ModMenu_AutoJump", UI = AliasMap.Switcher, Text = T("      Auto Jump From Plane", "      Auto Jump From Plane"), ExpandHandle = "ModMenu_AutoParachute", GetFunc = function() return _G.RapzhangConfig.AutoJump == true end, SetFunc = function(_, v) _G.RapzhangConfig.AutoJump = v and true or false; if v then _G.RapzhangConfig.AutoParachute = true; if _G.RapzhangAutoParachute and _G.RapzhangAutoParachute.Set then pcall(_G.RapzhangAutoParachute.Set, true) end end; return true end },
         { Key = "ModMenu_AutoJumpRadius", UI = AliasMap.Slider, Text = T("      Auto Jump Radius (m)", "      Auto Jump Radius (m)"), ExpandHandle = "ModMenu_AutoParachute", MinValue = 50, MaxValue = 1500, min = 50, max = 1500, Min = 50, Max = 1500, GetFunc = function() return math.max(50, math.min(1500, math.floor((tonumber(_G.RapzhangConfig.AutoJumpRadius) or 300) + 0.5))) end, SetFunc = function(_, v) _G.RapzhangConfig.AutoJumpRadius = math.max(50, math.min(1500, math.floor((tonumber(v) or 300) + 0.5))); return true end },
     }
@@ -1957,6 +1961,11 @@ function _G.InitModMenuTab()
         meds   = "ModMenu_Loot_Meds",
         throw  = "ModMenu_Loot_Throw",
         misc   = "ModMenu_Loot_Misc",
+    }
+    local LOOT_GROUP_PREFIX = {
+        weapon = "W_",
+        gear   = "G_",
+        attach = "A_",
     }
 
     local function LootSyncConfig()
@@ -1983,8 +1992,9 @@ function _G.InitModMenuTab()
         local catKey = LOOT_CAT_KEY[e.cat]
         local cfgKey = (Loot.KeyCfg and Loot.KeyCfg[e.key]) or ("Esp9_LootI_" .. e.key)
         local parent = LOOT_CAT_MENU[e.cat]
-        if (e.cat == "weapon" or e.cat == "attach") and e.group then
-            parent = "ModMenu_Loot_" .. (e.cat == "weapon" and "W_" or "A_")
+        local prefix = LOOT_GROUP_PREFIX[e.cat]
+        if prefix and e.group then
+            parent = "ModMenu_Loot_" .. prefix
                 .. (Loot.GroupSlug[e.group] or e.group)
         end
         return {
@@ -1992,7 +2002,7 @@ function _G.InitModMenuTab()
             UI = AliasMap.Switcher,
             Text = T(indent .. e.name, indent .. e.name),
             ExpandHandle = parent,
-            GetFunc = function() return _G.RapzhangConfig[cfgKey] ~= false end,
+            GetFunc = function() return _G.RapzhangConfig[cfgKey] == true end,
             SetFunc = function(_, v)
                 _G.RapzhangConfig[cfgKey] = v and true or false
                 if v then LootEnableCategory(e.cat) end
@@ -2007,7 +2017,7 @@ function _G.InitModMenuTab()
         local catKey = LOOT_CAT_KEY[cat]
         local label = (Loot.GroupLabel and Loot.GroupLabel[group]) or group
         return {
-            Key = "ModMenu_Loot_" .. (cat == "weapon" and "W_" or "A_")
+            Key = "ModMenu_Loot_" .. (LOOT_GROUP_PREFIX[cat] or "X_")
                 .. ((Loot.GroupSlug and Loot.GroupSlug[group]) or group),
             UI = AliasMap.TitleSwitcher,
             Text = T("   ▶ " .. label, "   ▶ " .. label),
@@ -2017,7 +2027,7 @@ function _G.InitModMenuTab()
                 if _G.RapzhangConfig[catKey] ~= true then return false end
                 for _, e in ipairs(entries) do
                     local cfgKey = (Loot.KeyCfg and Loot.KeyCfg[e.key]) or ("Esp9_LootI_" .. e.key)
-                    if _G.RapzhangConfig[cfgKey] == false then return false end
+                    if _G.RapzhangConfig[cfgKey] ~= true then return false end
                 end
                 return #entries > 0
             end,
@@ -2069,7 +2079,7 @@ function _G.InitModMenuTab()
             UI = AliasMap.Switcher,
             Text = T("   Other / Uncategorized", "   Other / Uncategorized"),
             ExpandHandle = LOOT_CAT_MENU[cat],
-            GetFunc = function() return _G.RapzhangConfig[otherKey] ~= false end,
+            GetFunc = function() return _G.RapzhangConfig[otherKey] == true end,
             SetFunc = function(_, v)
                 _G.RapzhangConfig[otherKey] = v and true or false
                 if v then LootEnableCategory(cat) end
@@ -2080,7 +2090,7 @@ function _G.InitModMenuTab()
     end
 
     local StackLoot = {
-        { Key = "ModMenu_Loot_Master", UI = AliasMap.Switcher, Text = T("Enable ESP LOOT", "Enable ESP LOOT"), GetFunc = function() return _G.RapzhangConfig.Esp9_Loot == true end, SetFunc = function(_, v) local onv = v and true or false; _G.RapzhangConfig.Esp9_Loot = onv; if onv then local any = false; for _, k in pairs(LOOT_CAT_KEY) do if _G.RapzhangConfig[k] == true then any = true break end end; if not any then for _, k in pairs(LOOT_CAT_KEY) do _G.RapzhangConfig[k] = true end end else for _, k in pairs(LOOT_CAT_KEY) do _G.RapzhangConfig[k] = false end; LootClearLabels() end; LootSyncConfig(); return true end },
+        { Key = "ModMenu_Loot_Master", UI = AliasMap.Switcher, Text = T("Enable ESP LOOT", "Enable ESP LOOT"), GetFunc = function() return _G.RapzhangConfig.Esp9_Loot == true end, SetFunc = function(_, v) local onv = v and true or false; _G.RapzhangConfig.Esp9_Loot = onv; if not onv then for _, k in pairs(LOOT_CAT_KEY) do _G.RapzhangConfig[k] = false end; LootClearLabels() end; LootSyncConfig(); return true end },
         { Key = "ModMenu_Loot_Dist", UI = AliasMap.Slider, Text = T("Scan Radius (20-300m)", "Scan Radius (20-300m)"), MinValue = 20, MaxValue = 300, min = 20, max = 300, Min = 20, Max = 300, GetFunc = function() return math.max(20, math.min(300, math.floor((_G.RapzhangConfig.Esp9_LootDist or 120) + 0.5))) end, SetFunc = function(_, v) _G.RapzhangConfig.Esp9_LootDist = math.max(20, math.min(300, math.floor(v + 0.5))); return true end },
     }
 
@@ -6663,11 +6673,11 @@ do
     if entry then
       local cfgKey = (_G.RapzhangLoot.KeyCfg and _G.RapzhangLoot.KeyCfg[entry.key])
         or ("Esp9_LootI_" .. entry.key)
-      return c[cfgKey] ~= false
+      return c[cfgKey] == true
     end
     local catKey = LOOT_CAT_KEY[cat]
-    if catKey then return c[catKey .. "Other"] ~= false end
-    return true
+    if catKey then return c[catKey .. "Other"] == true end
+    return false
   end
 
   function ADV.ScanLoot(me, now)
