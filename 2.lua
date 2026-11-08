@@ -1415,16 +1415,16 @@ function _G.InitModMenuTab()
             -- =============================================
             -- ADVANCED OVERLAY: parent ON/OFF + anak-anaknya
             -- =============================================
-            { Key = "ModMenu_ADV_Ex", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Advanced Overlay", "   ▶ Advanced Overlay"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Adv == true end, SetFunc = function(_,v) local onv = v and true or false; _G.RapzhangConfig.Esp9_Adv = onv; if not onv then for _,k in ipairs({"Esp9_Loot","Esp9_LootBox","Esp9_DmgDir","Esp9_Ghost","Esp9_Squad","Esp9_VehIntel","Esp9_SoundRadar"}) do _G.RapzhangConfig[k] = false end end; pcall(function() if _G.ESP and _G.ESP.Adv then _G.ESP.Adv.ClearAll() end end); return true end },
-            { Key = "ModMenu_ADV_Loot", UI = AliasMap.Switcher, Text = T("      Loot ESP (ground)", "      Loot ESP (ground)"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Loot == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Loot = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; return true end },
-            { Key = "ModMenu_ADV_LootBox", UI = AliasMap.Switcher, Text = T("      Deathbox ESP + Contents", "      Deathbox ESP + Contents"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootBox == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootBox = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; return true end },
+            { Key = "ModMenu_ADV_Ex", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Advanced Overlay", "   ▶ Advanced Overlay"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Adv == true end, SetFunc = function(_,v) local onv = v and true or false; _G.RapzhangConfig.Esp9_Adv = onv; if not onv then for _,k in ipairs(_G.ESP and _G.ESP.AdvChildren or {"Esp9_Loot","Esp9_LootBox","Esp9_DmgDir","Esp9_Ghost","Esp9_Squad","Esp9_VehIntel","Esp9_SoundRadar"}) do _G.RapzhangConfig[k] = false end end; pcall(function() if _G.ESP and _G.ESP.Adv then _G.ESP.Adv.ClearAll() end end); if not onv then pcall(function() if _G.ESP and _G.ESP.Adv and _G.ESP.Adv.UninstallDamageHook then _G.ESP.Adv.UninstallDamageHook() end end) end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ADV_Loot", UI = AliasMap.Switcher, Text = T("      Loot ESP (ground)", "      Loot ESP (ground)"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Loot == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Loot = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ADV_LootBox", UI = AliasMap.Switcher, Text = T("      Deathbox ESP + Contents", "      Deathbox ESP + Contents"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootBox == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootBox = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ADV_LootVal", UI = AliasMap.Switcher, Text = T("      Only Valuable Items", "      Only Valuable Items"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootValuable ~= false end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootValuable = v and true or false; return true end },
             { Key = "ModMenu_ADV_LootDist", UI = AliasMap.Slider, Text = T("      Scan Radius (20-300m)", "      Scan Radius (20-300m)"), ExpandHandle = "ModMenu_ADV_Ex", MinValue = 20, MaxValue = 300, min = 20, max = 300, Min = 20, Max = 300, GetFunc = function() return math.max(20, math.min(300, math.floor((_G.RapzhangConfig.Esp9_LootDist or 120) + 0.5))) end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootDist = math.max(20, math.min(300, math.floor(v + 0.5))); return true end },
-            { Key = "ModMenu_ADV_Dmg", UI = AliasMap.Switcher, Text = T("      Damage Direction + Attacker", "      Damage Direction + Attacker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_DmgDir == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_DmgDir = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true; pcall(function() if _G.ESP and _G.ESP.Adv then _G.ESP.Adv.InstallDamageHook() end end) end; return true end },
-            { Key = "ModMenu_ADV_Ghost", UI = AliasMap.Switcher, Text = T("      Ghost Last-Seen Marker", "      Ghost Last-Seen Marker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ghost == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ghost = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; return true end },
-            { Key = "ModMenu_ADV_Squad", UI = AliasMap.Switcher, Text = T("      Squad Strength Tracker", "      Squad Strength Tracker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Squad == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Squad = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; return true end },
-            { Key = "ModMenu_ADV_Veh", UI = AliasMap.Switcher, Text = T("      Vehicle Intel (Enemy)", "      Vehicle Intel (Enemy)"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_VehIntel == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_VehIntel = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; return true end },
-            { Key = "ModMenu_ADV_Sound", UI = AliasMap.Switcher, Text = T("      Sound Radar", "      Sound Radar"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_SoundRadar == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_SoundRadar = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; if not v and _G.ESP and _G.ESP.Adv and _G.ESP.Adv.UninstallSoundHook then pcall(_G.ESP.Adv.UninstallSoundHook) end; return true end },
+            { Key = "ModMenu_ADV_Dmg", UI = AliasMap.Switcher, Text = T("      Damage Direction + Attacker", "      Damage Direction + Attacker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_DmgDir == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_DmgDir = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true; pcall(function() if _G.ESP and _G.ESP.Adv then _G.ESP.Adv.InstallDamageHook() end end) else pcall(function() if _G.ESP and _G.ESP.Adv and _G.ESP.Adv.UninstallDamageHook then _G.ESP.Adv.UninstallDamageHook() end end) end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ADV_Ghost", UI = AliasMap.Switcher, Text = T("      Ghost Last-Seen Marker", "      Ghost Last-Seen Marker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ghost == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ghost = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ADV_Squad", UI = AliasMap.Switcher, Text = T("      Squad Strength Tracker", "      Squad Strength Tracker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Squad == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Squad = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ADV_Veh", UI = AliasMap.Switcher, Text = T("      Vehicle Intel (Enemy)", "      Vehicle Intel (Enemy)"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_VehIntel == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_VehIntel = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ADV_Sound", UI = AliasMap.Switcher, Text = T("      Sound Radar", "      Sound Radar"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_SoundRadar == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_SoundRadar = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; if not v and _G.ESP and _G.ESP.Adv and _G.ESP.Adv.UninstallSoundHook then pcall(_G.ESP.Adv.UninstallSoundHook) end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
         }
 
         local RequestMenuRefresh = function() end
@@ -3206,9 +3206,23 @@ function ESP.CanvasCenterX(viewW)
   return (viewW * 0.5) * (ESP.ScaleX or 1.0) + (ESP.OffsetX or 0.0)
 end
 
+-- Anak dari Advanced Overlay. Didefinisikan di sini supaya menu, config
+-- sync, dan modul ESP.Adv memakai daftar yang sama (tidak duplikat).
+ESP.AdvChildren = ESP.AdvChildren or {
+  "Esp9_Loot", "Esp9_LootBox", "Esp9_DmgDir", "Esp9_Ghost",
+  "Esp9_Squad", "Esp9_VehIntel", "Esp9_SoundRadar",
+}
+
 function ESP.SyncMenuConfig()
   local cfg = _G.RapzhangConfig or {}
   ESP.Menu = ESP.Menu or {}
+  -- Self-heal: config lama bisa menyimpan anak ADV = true sementara parent
+  -- false (menu lama tidak menulis parent). Tanpa ini semua overlay diam.
+  if cfg.Esp9_Adv ~= true then
+    for _, k in ipairs(ESP.AdvChildren) do
+      if cfg[k] == true then cfg.Esp9_Adv = true break end
+    end
+  end
   ESP.Menu.ShowCount = cfg.Esp9_Count == true
   ESP.Menu.ShowName = cfg.Esp9_Name == true
   ESP.Menu.ShowDistance = cfg.Esp9_Distance == true
@@ -4161,6 +4175,8 @@ do
     EX.GrenadeTypeCache = {}
     EX.LastSeen = {}
     EX._PSMap, EX._PSMapT = nil, nil
+    EX._PSCharMap, EX._PSIdentMiss = nil, nil
+    EX._PSMapN, EX._PSArrN, EX._PSMapC = 0, 0, 0
     EX._CorpsMap, EX._CorpsMapT = nil, nil
     EX.LastAirdropScan, EX.LastGrenadeScan = -999.0, -999.0
     EX.ZoneRingT = -999.0
@@ -4369,7 +4385,7 @@ do
     local engineCount = eachEnginePlayerState(function(ps) addPS(ps, nil) end)
     -- Client Ranked kadang tidak mengekspos CGame:GetAllPlayerStates, tetapi
     -- GameState.PlayerArray tetap berisi PlayerState (dipakai MapDataBase).
-    eachGameStatePlayerState(function(ps) addPS(ps, nil) end)
+    local arrayCount = eachGameStatePlayerState(function(ps) addPS(ps, nil) end)
     local gd = ESP.GetGameplayData()
     local list = nil
     if gd and gd.GetAllPlayerStates then
@@ -4378,13 +4394,88 @@ do
     if type(list) == "table" then
       for k, ps in pairs(list) do addPS(ps, k) end
     end
+    local mapCount = 0
+    local charMap = {}
+    local seenPS = {}
+    for _, ps in pairs(map) do
+      if ESPValid(ps) then
+        mapCount = mapCount + 1
+        -- Indeks identitas pawn dibangun sekali per rebuild peta, bukan per
+        -- target: GetPlayerState cukup lookup tostring(pawn).
+        local id = tostring(ps)
+        if not seenPS[id] then
+          seenPS[id] = true
+          pcall(function()
+            local ch = nil
+            if ps.GetPlayerCharacter then ch = ps:GetPlayerCharacter() end
+            if ESPValid(ch) then
+              local cid = tostring(ch)
+              if charMap[cid] == nil then charMap[cid] = ps end
+            end
+          end)
+        end
+      end
+    end
     EX._PSMap, EX._PSMapT = map, now
+    EX._PSCharMap = charMap
     EX._PSMapN = engineCount
+    EX._PSArrN = arrayCount
+    EX._PSMapC = mapCount
     return map
+  end
+
+  -- Skor kandidat PlayerState: pilih yang benar-benar membawa data rank.
+  -- Di Ranked, PS pertama yang valid bisa PS kosong (tanpa SegmentLevel),
+  -- sedangkan PS lain untuk pemain yang sama membawa CurSegLevel/UnlockSegLevel.
+  local function psRankScore(ps)
+    if not ESPValid(ps) then return -1 end
+    local score = 0
+    local function numField(obj, field)
+      if obj == nil then return nil end
+      local v = tonumber(propOf(obj, field))
+      if v and v == v and v > 0 and v ~= math.huge then return v end
+      return nil
+    end
+    local seg = numField(ps, "SegmentLevel") or numField(ps, "Segment_Level")
+    if seg then score = score + 1000 + math.min(seg, 999) end
+    local pf = nil
+    pcall(function() pf = ps.PromotionFeature end)
+    if pf == nil then pcall(function() pf = ps.PlayerStatePromotionFeature end) end
+    local pfSeg = numField(pf, "SegmentLevel")
+    if pfSeg then score = score + 800 + math.min(pfSeg, 799) end
+    local cur = numField(ps, "CurSegLevel")
+    if cur then score = score + 600 + math.min(cur, 599) end
+    local unlock = numField(ps, "UnlockSegLevel")
+    if unlock then score = score + 500 + math.min(unlock, 499) end
+    local peak = numField(ps, "PeakSegmentID")
+    if peak then score = score + 300 + math.min(peak, 299) end
+    local title = propOf(ps, "SegmentTitle") or propOf(pf, "SegmentTitle")
+    if type(title) == "string" and title ~= "" and title ~= "None" then
+      score = score + 200
+    end
+    if numField(ps, "PromotionLayer") then score = score + 10 end
+    pcall(function()
+      if type(ps.IsRankMode) == "function" and ps:IsRankMode() then score = score + 5 end
+    end)
+    return score
   end
 
   function EX.GetPlayerState(Character)
     if not ESPValid(Character) then return nil end
+    local seen = {}
+    local best, bestScore = nil, -1
+    local function add(ps)
+      if not ESPValid(ps) then return end
+      local id = nil
+      pcall(function() id = tostring(ps) end)
+      if id ~= nil then
+        if seen[id] then return end
+        seen[id] = true
+      end
+      local sc = psRankScore(ps)
+      if sc > bestScore then best, bestScore = ps, sc end
+    end
+
     local ps = nil
     pcall(function()
       if Character.GetPlayerStateSafety then ps = Character:GetPlayerStateSafety() end
@@ -4394,6 +4485,7 @@ do
     end
     if not ESPValid(ps) then ps = propOf(Character, "PlayerState") end
     if not ESPValid(ps) then ps = propOf(Character, "PlayerStateReplicated") end
+    add(ps)
     -- Sebagian pawn tidak menyimpan PlayerState langsung; ambil lewat
     -- controller/owner-nya (pawn -> controller -> PlayerState).
     if not ESPValid(ps) then
@@ -4409,9 +4501,9 @@ do
         if not ESPValid(ps) then
           pcall(function() if pc.GetPlayerState then ps = pc:GetPlayerState() end end)
         end
+        add(ps)
       end
     end
-    if ESPValid(ps) then return ps end
 
     local key = nil
     local uid = nil
@@ -4448,8 +4540,7 @@ do
       { obj = gameState, fn = "GetPlayerStateByPlayerKey", arg = key },
       { obj = gameState, fn = "GetPlayerState", arg = key },
     }) do
-      local cand = tryRegistry(spec.obj, spec.fn, spec.arg)
-      if ESPValid(cand) then return cand end
+      add(tryRegistry(spec.obj, spec.fn, spec.arg))
     end
 
     -- Fallback: registry GameplayData, dipakai game sendiri untuk UI player lain.
@@ -4465,7 +4556,7 @@ do
                 local nk = tonumber(id)
                 if nk ~= nil then pcall(function() cand = gd[fn](nk) end) end
               end
-              if ESPValid(cand) then return cand end
+              add(cand)
             end
           end
         end
@@ -4486,32 +4577,120 @@ do
             hit = map["k:" .. ks] or map["u:" .. ks] or map["c:" .. ks]
           end
         end
-        if ESPValid(hit) then return hit end
+        add(hit)
       end
     end
+    -- Identitas pawn dari indeks yang dibangun bersama peta: paling murah
+    -- dan tidak bergantung pada PlayerKey/nama yang kadang kosong di Ranked.
+    local charID = tostring(Character)
+    local charHit = EX._PSCharMap and EX._PSCharMap[charID] or nil
+    add(charHit)
     -- Nama adalah kunci terakhir: di Ranked spawn island sebagian pawn tidak
     -- membawa PlayerKey/UID yang cocok, tetapi nama pemain tetap terbaca.
     local name = ESP.ResolveName(Character, false)
+    local bareName = name
     if name and name ~= "Player" and name ~= "Bot" then
       local low = name:lower()
-      local hit = map["n:" .. name] or map["nl:" .. low] or map["ns:" .. low]
-      if not ESPValid(hit) then
-        for _, pair in ipairs({ { "[", "]" }, { "【", "】" }, { "〔", "〕" },
-          { "「", "」" }, { "『", "』" }, { "《", "》" }, { "<", ">" },
-          { "(", ")" }, { "（", "）" }, { "|", "|" } }) do
-          local open, close = pair[1], pair[2]
-          if name:sub(1, #open) == open then
-            local at = name:find(close, #open + 1, true)
-            if at and at > #open + 1 then
-              local rest = name:sub(at + #close):gsub("^%s+", "")
-              if rest ~= "" then hit = map["ns:" .. rest:lower()] end
+      add(map["n:" .. name] or map["nl:" .. low] or map["ns:" .. low])
+      for _, pair in ipairs({ { "[", "]" }, { "【", "】" }, { "〔", "〕" },
+        { "「", "」" }, { "『", "』" }, { "《", "》" }, { "<", ">" },
+        { "(", ")" }, { "（", "）" }, { "|", "|" } }) do
+        local open, close = pair[1], pair[2]
+        if name:sub(1, #open) == open then
+          local at = name:find(close, #open + 1, true)
+          if at and at > #open + 1 then
+            local rest = name:sub(at + #close):gsub("^%s+", "")
+            if rest ~= "" then
+              bareName = rest
+              add(map["ns:" .. rest:lower()])
+            end
+          end
+        end
+        -- Tag di belakang nama: "Nick[ABC]". Cari penutup terakhir lalu
+        -- pembuka terakhir sebelum penutup itu (tanpa pattern magic).
+        local closeAt = nil
+        local cs = 1
+        while true do
+          local p = name:find(close, cs, true)
+          if not p then break end
+          closeAt = p
+          cs = p + #close
+        end
+        if closeAt and closeAt > #open then
+          local openAt = nil
+          local search = 1
+          while true do
+            local p = name:find(open, search, true)
+            if not p or p >= closeAt then break end
+            openAt = p
+            search = p + #open
+          end
+          if openAt then
+            local tail = name:sub(1, openAt - 1):gsub("%s+$", "")
+            if tail ~= "" and tail ~= name then
+              bareName = tail
+              add(map["ns:" .. tail:lower()])
             end
           end
         end
       end
-      if ESPValid(hit) then return hit end
     end
-    return nil
+
+    -- Scan GameState.PlayerArray: sumber yang dipakai MapDataBase di client.
+    -- Dilakukan hanya kalau kandidat belum membawa rank, supaya tidak mahal.
+    if bestScore < 100 and not ESPValid(charHit) then
+      local missAt = EX._PSIdentMiss and EX._PSIdentMiss[charID]
+      if not (missAt and (ESP.Now() - missAt) < 1.0) then
+        local foundIdentity = false
+        local gs = nil
+        if gd and gd.GetGameState then pcall(function() gs = gd.GetGameState() end) end
+        if not ESPValid(gs) then gs = gameGlobal("CGameState") or gameGlobal("GameState") end
+        local arr = nil
+        if ESPValid(gs) then pcall(function() arr = gs.PlayerArray end) end
+        local n = 0
+        pcall(function()
+          n = tonumber(arr and arr.Num and arr:Num())
+            or tonumber(arr and arr.Length and arr:Length()) or 0
+        end)
+        if n <= 0 and arr ~= nil then
+          pcall(function() for _ in pairs(arr) do n = n + 1 end end)
+        end
+        for i = 0, n - 1 do
+          local cand = nil
+          pcall(function() cand = arr:Get(i) end)
+          if cand == nil then pcall(function() cand = arr[i] end) end
+          if ESPValid(cand) then
+            local ck = nil
+            pcall(function() ck = cand.PlayerKey end)
+            local pn = nil
+            pcall(function() pn = cand.PlayerName end)
+            local same = false
+            if key ~= nil and ck ~= nil and tostring(ck) == tostring(key) then same = true end
+            if not same and cand == ps then same = true end
+            if not same then
+              -- Identitas paling kuat: PlayerState menunjuk pawn yang sama.
+              pcall(function()
+                if cand.GetPlayerCharacter and cand:GetPlayerCharacter() == Character then
+                  same = true
+                  foundIdentity = true
+                end
+              end)
+            end
+            if not same and name and pn and tostring(pn) == tostring(name) then same = true end
+            if not same and bareName and pn and tostring(pn):lower() == bareName:lower() then same = true end
+            if same then add(cand) end
+          end
+        end
+        -- Catat kegagalan 1 detik supaya target tanpa PlayerState tidak
+        -- memicu scan PlayerArray setiap frame.
+        if not foundIdentity and EX._PSCharMap and EX._PSCharMap[charID] == nil then
+          EX._PSIdentMiss = EX._PSIdentMiss or {}
+          EX._PSIdentMiss[charID] = ESP.Now()
+        end
+      end
+    end
+
+    return best
   end
 
   local function playerCache(key)
@@ -4791,6 +4970,35 @@ do
     return pf
   end
 
+  -- Fallback terakhir: PromotionLayer hanyalah bracket promosi, bukan angka
+  -- bintang, tetapi client punya tabel layer -> segment_level. Dipakai hanya
+  -- kalau tidak ada satu pun field rank langsung (mis. enemy di Ranked yang
+  -- hanya mereplikasi PromotionLayer). Read-only, tidak mengubah state game.
+  local function promotionLevelFromLayer(layer)
+    layer = tonumber(layer)
+    if not layer or layer <= 0 then return nil end
+    local now = ESP.Now()
+    if EX._PromoTable == nil and (not EX._PromoTried or (now - (EX._PromoTriedAt or 0)) >= 10.0) then
+      EX._PromoTried = true
+      EX._PromoTriedAt = now
+      pcall(function()
+        local util = require("client.logic.season.promotion_match.promotion_match_util")
+        if util and util.ReqPromotionBaseConfig then
+          util.ReqPromotionBaseConfig(function(data)
+            if type(data) == "table" then EX._PromoTable = data end
+          end)
+        end
+      end)
+    end
+    local t = EX._PromoTable
+    if type(t) ~= "table" then return nil end
+    local e = t[layer]
+    if type(e) ~= "table" then return nil end
+    local lv = tonumber(e.semgent_level) or tonumber(e.segment_level) or tonumber(e.SegmentLevel)
+    if lv and lv >= 100 and lv <= 899 then return lv end
+    return nil
+  end
+
   local function rankLevelFromPS(ps)
     if ps == nil then return nil, nil end
     local pf = rankFeature(ps)
@@ -4805,6 +5013,11 @@ do
     for _, s in ipairs(sources) do
       local level = rankNumField(s.obj, s.field)
       if level then return level, s.tag end
+    end
+    local layer = rankNumField(ps, "PromotionLayer")
+    if layer then
+      local level = promotionLevelFromLayer(layer)
+      if level then return level, nil end
     end
     return nil, nil
   end
@@ -4841,8 +5054,10 @@ do
           return tostring(v)
         end
         local pf = rankFeature(ps)
-        print(string.format("[ESP RANK] key=%s states=%s ps=%s seg=%s segRaw=%s cur=%s unlock=%s peak=%s layer=%s featSeg=%s featTitle=%s name=%s",
-          tostring(key), tostring(EX._PSMapN or 0), tostring(ps ~= nil),
+        print(string.format("[ESP RANK] key=%s eng=%s arr=%s map=%s score=%s ps=%s name=%s seg=%s segRaw=%s cur=%s unlock=%s peak=%s layer=%s featSeg=%s featTitle=%s pname=%s",
+          tostring(key), tostring(EX._PSMapN or 0), tostring(EX._PSArrN or 0),
+          tostring(EX._PSMapC or 0), tostring(psRankScore(ps)), tostring(ps ~= nil),
+          tostring(ESP.ResolveName(Character, false)),
           dbgVal(ps, "SegmentLevel"), dbgVal(ps, "Segment_Level"),
           dbgVal(ps, "CurSegLevel"),
           dbgVal(ps, "UnlockSegLevel"), dbgVal(ps, "PeakSegmentID"),
@@ -4852,7 +5067,9 @@ do
     end
     if not ps then
       if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then
-        c.rank = "RANK [?noPS]"
+        c.rank = string.format("RANK [?noPS e%d a%d m%d]",
+          tonumber(EX._PSMapN or 0) or 0, tonumber(EX._PSArrN or 0) or 0,
+          tonumber(EX._PSMapC or 0) or 0)
         return c.rank
       end
       c.rank = "" return ""
@@ -5763,7 +5980,18 @@ do
 
   local function masterOn()
     local c = _G.RapzhangConfig
-    return c ~= nil and c.Esp9_Adv == true
+    if c == nil then return false end
+    -- Self-heal: kalau ada anak yang ON tetapi parent tersimpan OFF,
+    -- overlay tetap harus hidup dan config parent diperbaiki.
+    if c.Esp9_Adv ~= true then
+      local kids = ESP.AdvChildren
+      if kids then
+        for i = 1, #kids do
+          if c[kids[i]] == true then c.Esp9_Adv = true break end
+        end
+      end
+    end
+    return c.Esp9_Adv == true
   end
 
   local function worldGlobal(name)
@@ -5865,6 +6093,60 @@ do
     return list
   end
 
+  -- Iterasi aman untuk UE TArray (slua): pairs() dulu, lalu Num()/Get()
+  -- 0-based. Dipakai untuk semua hasil query game yang bisa berupa array.
+  local function iterArray(arr)
+    local list = {}
+    if arr == nil then return list end
+    local used = false
+    pcall(function()
+      for _, v in pairs(arr) do
+        if v ~= nil then
+          used = true
+          list[#list + 1] = v
+        end
+      end
+    end)
+    if used then return list end
+    local n = 0
+    pcall(function()
+      n = tonumber(arr.Num and arr:Num()) or tonumber(arr.Length and arr:Length())
+        or tonumber(#arr) or 0
+    end)
+    for i = 0, n - 1 do
+      local v = nil
+      pcall(function() v = arr:Get(i) end)
+      if v == nil then pcall(function() v = arr[i] end) end
+      if v ~= nil then list[#list + 1] = v end
+    end
+    return list
+  end
+
+  -- Pola client milik game sendiri (GameAPI:UpdatePickupActorLocation /
+  -- UpdateDeadBoxLocation): static object grid, bukan GetActorsByClass.
+  -- flag 0 = PickUpWrapperActor, flag 1 = PlayerTombBox. Argumen ke-5
+  -- disamakan dengan pemakaian game (`1`); filter radius dilakukan di Lua
+  -- karena arti parameter native itu tidak terdokumentasi di dump.
+  local function staticObjectsInRegion(path, alias, flag, loc)
+    local out = nil
+    pcall(function()
+      local cls = class(path, alias)
+      local lib = import("STExtraBlueprintFunctionLibrary")
+      local gs = gameGlobal("CGameState")
+      if gs == nil then
+        local gd = ESP.GetGameplayData()
+        if gd and gd.GetGameState then gs = gd.GetGameState() end
+      end
+      if not (cls and lib and lib.LuaGetStaticObjectsInRegion and gs and loc) then return end
+      local Vec = rawget(_G, "FVector") or import("Vector") or FVector
+      if not Vec then return end
+      local uLoc = Vec(loc.X, loc.Y, loc.Z)
+      local arr = lib.LuaGetStaticObjectsInRegion(gs, cls, uLoc, flag, 1)
+      if arr ~= nil then out = iterArray(arr) end
+    end)
+    return out
+  end
+
   -- Query spasial milik game (CGame). Jauh lebih murah daripada
   -- GetActorsByClass untuk loot/kendaraan. Mengembalikan nil jika API tidak
   -- tersedia di client supaya pemanggil memakai fallback class scan.
@@ -5887,28 +6169,41 @@ do
   -- kosong di client. Uji sekali: kalau class scan menemukan aktor sementara
   -- query kosong, matikan query untuk fitur itu agar ESP tidak hilang diam-diam.
   ADV.QueryOK = ADV.QueryOK or {}
+  ADV.StaticOK = ADV.StaticOK or {}
 
-  local function queryOrScan(key, queryFn, scanFn)
+  -- Urutan: query spasial game -> static object grid -> class scan.
+  -- QueryDeathBoxs/QueryPickUpWrappers bisa kosong di client walau aktornya
+  -- ada; static grid adalah pola yang dipakai GameAPI untuk kedua tipe.
+  local function queryOrScan(key, queryFn, scanFn, staticFn)
     local state = ADV.QueryOK[key]
+    local pool = nil
     if state ~= false then
-      local pool = queryList(queryFn)
-      if pool ~= nil then
-        if #pool > 0 then
-          ADV.QueryOK[key] = true
-          return pool
-        end
-        if state == true then return pool end
-        local alt = scanFn()
-        if #alt > 0 then
-          ADV.QueryOK[key] = false
-          return alt
-        end
+      pool = queryList(queryFn)
+      if pool ~= nil and #pool > 0 then
         ADV.QueryOK[key] = true
         return pool
       end
-      ADV.QueryOK[key] = false
+      if pool == nil then ADV.QueryOK[key] = false end
     end
-    return scanFn()
+    if staticFn and ADV.StaticOK[key] ~= false then
+      local alt = staticFn()
+      if alt ~= nil then
+        ADV.StaticOK[key] = true
+        if #alt > 0 then return alt end
+      else
+        ADV.StaticOK[key] = false
+      end
+    end
+    -- Query yang sudah terbukti bekerja boleh dipercaya saat kosong supaya
+    -- class scan seluruh world tidak jalan tiap 0,5 detik.
+    if pool ~= nil and state == true then return pool end
+    local alt = scanFn()
+    if #alt > 0 then
+      if pool ~= nil then ADV.QueryOK[key] = false end
+      return alt
+    end
+    if pool ~= nil then ADV.QueryOK[key] = true return pool end
+    return alt
   end
 
   local function qualityColor(q)
@@ -6051,7 +6346,8 @@ do
     if wantGround then
       local pool = queryOrScan("loot",
         function(g) return g:QueryPickUpWrappers(meLoc, radius * 100.0, nil, false, 70) end,
-        function() return actorsOfClass(class("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor")) end)
+        function() return actorsOfClass(class("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor")) end,
+        function() return staticObjectsInRegion("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor", 0, meLoc) end)
       for _, a in ipairs(pool) do
         local loc = ESP.ActorLocation(a)
         if loc then
@@ -6084,7 +6380,8 @@ do
     if wantBox then
       local pool = queryOrScan("box",
         function(g) return g:QueryDeathBoxs(meLoc, radius * 100.0) end,
-        function() return actorsOfClass(class("/Script/ShadowTrackerExtra.PlayerTombBox", "PlayerTombBox")) end)
+        function() return actorsOfClass(class("/Script/ShadowTrackerExtra.PlayerTombBox", "PlayerTombBox")) end,
+        function() return staticObjectsInRegion("/Script/ShadowTrackerExtra.PlayerTombBox", "PlayerTombBox", 1, meLoc) end)
       for _, b in ipairs(pool) do
         local loc = ESP.ActorLocation(b)
         if loc then
@@ -6153,46 +6450,148 @@ do
   ADV._hooked = false
   ADV._hookAt = -999.0
 
-  function ADV.OnDamage(_, __, info, isHead, isLocalAttacker)
-    pcall(function()
-      if not (masterOn() and on("Esp9_DmgDir")) then return end
-      if isLocalAttacker then return end
-      local me = ESP.GetLocalCharacter()
-      if not ESPValid(me) then return end
-      local target = info and info.Target
-      if not ESPValid(target) then return end
-      local meKey = ESP.GetPlayerKey(me)
-      local targetKey = ESP.GetPlayerKey(target)
-      if meKey == nil or targetKey == nil then return end
-      if tostring(targetKey) ~= tostring(meKey) then return end
-
-      local now = ESP.Now()
-      local d = ADV.Dmg
-      if (now - (d.t or -999.0)) > 2.5 then
-        d.hits, d.sum, d.head = 0, 0, 0
+  -- Cari objek DamageInfo di daftar argumen event. EventSystem memanggil
+  -- fn(eventType, eventID, ...) sehingga DamageInfo ada di posisi 3, tetapi
+  -- wrapper subsystem bisa memakai posisi lain. Jangan mengandalkan indeks.
+  local function findDamageInfo(...)
+    local n = select("#", ...)
+    for i = 1, n do
+      local v = select(i, ...)
+      if v ~= nil then
+        local t = type(v)
+        if t == "table" or t == "userdata" then
+          local hit = false
+          pcall(function()
+            hit = v.Target ~= nil or v.Damage ~= nil or v.Caster ~= nil
+          end)
+          if hit then return v end
+        end
       end
-      d.t = now
-      d.hits = (d.hits or 0) + 1
-      d.sum = (d.sum or 0) + (tonumber(info.Damage) or 0)
-      if isHead then d.head = (d.head or 0) + 1 end
+    end
+    return nil
+  end
 
-      -- Self-damage (jatuh, grenade sendiri, zone) tidak punya arah musuh;
-      -- jangan pernah mengunci diri sendiri sebagai "shooter".
-      local caster = info.Caster
-      if ESPValid(caster) then
-        local ck = ESP.GetPlayerKey(caster)
-        if ck == nil or tostring(ck) ~= tostring(meKey) then
-          local cl = ESP.ActorLocation(caster)
-          if cl then
-            d.caster = caster
-            d.casterKey = ck
-            d.casterName = nil
-            d.casterBot = ESP.IsBot(caster)
-            d.casterT = now
-            d.cx, d.cy, d.cz = cl.X, cl.Y, cl.Z
+  -- PlayerKey bisa diambil dari pawn, controller, PlayerState, atau wrapper.
+  -- Dipakai untuk mencocokkan Target/Caster damage tanpa harus lebih dulu
+  -- me-resolve pawn (yang bisa gagal di awal match).
+  local function playerKeyOf(a)
+    if not ESPValid(a) then return nil end
+    local key = nil
+    pcall(function() if a.GetPlayerKey then key = a:GetPlayerKey() end end)
+    if key == nil then pcall(function() key = a.PlayerKey end) end
+    if key == nil then
+      local ps = nil
+      pcall(function() if a.GetPlayerStateSafety then ps = a:GetPlayerStateSafety() end end)
+      if not ESPValid(ps) then pcall(function() ps = a.PlayerState end) end
+      if ESPValid(ps) then pcall(function() key = ps.PlayerKey end) end
+    end
+    if key == nil then pcall(function() key = a.UID end) end
+    if key == nil then return nil end
+    return key
+  end
+
+  -- DamageInfo.Caster bisa pawn, controller, atau PlayerState. Kembalikan
+  -- character yang punya lokasi supaya arah tembakan/lock shooter bisa digambar.
+  local function characterForActor(a)
+    if not ESPValid(a) then return nil end
+    if ESP.ActorLocation(a) then return a end
+    local ch = nil
+    pcall(function() if a.GetPlayerCharacter then ch = a:GetPlayerCharacter() end end)
+    if not ESPValid(ch) then pcall(function() ch = a.Pawn end) end
+    if not ESPValid(ch) then pcall(function() ch = a.Character end) end
+    if ESPValid(ch) and ESP.ActorLocation(ch) then return ch end
+    local key = playerKeyOf(a)
+    if key == nil then return nil end
+    local gd = ESP.GetGameplayData()
+    if gd then
+      pcall(function() if gd.GetPlayerCharacter then ch = gd.GetPlayerCharacter(key) end end)
+      if ESPValid(ch) and ESP.ActorLocation(ch) then return ch end
+    end
+    pcall(function()
+      local g = worldGlobal("Game")
+      if g and g.GetPlayerCharacterByKey then ch = g:GetPlayerCharacterByKey(key) end
+    end)
+    if ESPValid(ch) and ESP.ActorLocation(ch) then return ch end
+    -- Terakhir: scan pawn yang direplikasi dan cocokkan PlayerKey-nya.
+    pcall(function()
+      local g = worldGlobal("Game")
+      local pawns = g and g.GetAllPlayerPawns and g:GetAllPlayerPawns() or nil
+      for _, p in ipairs(iterArray(pawns)) do
+        if ESPValid(p) then
+          local pk = nil
+          pcall(function() if p.GetPlayerKey then pk = p:GetPlayerKey() end end)
+          if pk == nil then pcall(function() pk = p.PlayerKey end) end
+          if pk ~= nil and tostring(pk) == tostring(key) and ESP.ActorLocation(p) then
+            ch = p
+            break
           end
         end
       end
+    end)
+    if ESPValid(ch) and ESP.ActorLocation(ch) then return ch end
+    return nil
+  end
+
+  ADV._dmgSeen = nil
+  ADV._dmgSeenT = -999.0
+
+  function ADV.OnDamage(a, b, c, d, e)
+    pcall(function()
+      if not (masterOn() and on("Esp9_DmgDir")) then return end
+      local info = findDamageInfo(a, b, c, d, e)
+      if info == nil then return end
+
+      local me = ESP.GetLocalCharacter()
+      if not ESPValid(me) then return end
+      local meKey = ESP.GetPlayerKey(me)
+      local target = info.Target
+      if not ESPValid(target) then return end
+      local targetKey = playerKeyOf(target)
+      if targetKey == nil then
+        target = characterForActor(target)
+        if ESPValid(target) then targetKey = ESP.GetPlayerKey(target) end
+      end
+      if meKey == nil or targetKey == nil then return end
+      if tostring(targetKey) ~= tostring(meKey) then return end
+
+      -- Self-damage (jatuh, grenade sendiri, zone) tidak punya arah musuh.
+      -- Jangan pernah mengunci diri sendiri sebagai "shooter", dan jangan
+      -- memakai ulang arah lama saat damage tanpa caster (zone/fall).
+      local caster = characterForActor(info.Caster)
+      if not ESPValid(caster) then return end
+      local ck = playerKeyOf(info.Caster) or ESP.GetPlayerKey(caster)
+      if ck ~= nil and tostring(ck) == tostring(meKey) then return end
+      local cl = ESP.ActorLocation(caster)
+      if not cl then return end
+
+      local now = ESP.Now()
+      -- Wrapper subsystem dan registrasi EventSystem bisa menerima DamageInfo
+      -- yang sama. Abaikan salinan kedua dalam window singkat; sertakan
+      -- damage + caster supaya pellet/hit berbeda tidak ikut tertelan.
+      local sig = tostring(info) .. "|" .. tostring(info.Damage) .. "|" .. tostring(ck)
+      if ADV._dmgSeen == sig and (now - (ADV._dmgSeenT or -999.0)) < 0.15 then return end
+      ADV._dmgSeen, ADV._dmgSeenT = sig, now
+
+      local dm = ADV.Dmg
+      if (now - (dm.t or -999.0)) > 2.5 then
+        dm.hits, dm.sum, dm.head = 0, 0, 0
+      end
+      dm.t = now
+      dm.hits = (dm.hits or 0) + 1
+      dm.sum = (dm.sum or 0) + (tonumber(info.Damage) or 0)
+      local head = false
+      pcall(function()
+        head = info.IsHeadShot == true or info.bIsHeadShot == true
+          or info.IsHeadShotDamage == true
+      end)
+      if head then dm.head = (dm.head or 0) + 1 end
+
+      dm.caster = caster
+      dm.casterKey = ck
+      dm.casterName = nil
+      dm.casterBot = ESP.IsBot(caster)
+      dm.casterT = now
+      dm.cx, dm.cy, dm.cz = cl.X, cl.Y, cl.Z
     end)
   end
 
@@ -6202,18 +6601,69 @@ do
     if ADV._hookTried and (now - (ADV._hookAt or -999.0)) < 5.0 then return end
     ADV._hookTried = true
     ADV._hookAt = now
+    local installed = false
+
+    -- Jalur 1: registrasi EventSystem tanpa ctx. EventSystem memanggil
+    -- fn(eventType, eventID, ...) sehingga findDamageInfo menemukan DamageInfo
+    -- tanpa bergantung pada posisi argumen.
     local es = worldGlobal("EventSystem")
     local et = worldGlobal("EVENTTYPE_INGAME")
     local eid = worldGlobal("EVENTID_TAKE_DAMAGE_CLIENT")
     if es and es.registEvent and et and eid then
-      -- Tanpa ctx: EventSystem memanggil fn(eventType, eventID, ...). Kalau ctx
-      -- diberikan, ctx masuk sebagai argumen pertama dan DamageInfo bergeser.
       pcall(function()
         if es.unregistEvent then es:unregistEvent(et, eid, ADV.OnDamage) end
       end)
       local ok = pcall(function() es:registEvent(et, eid, ADV.OnDamage) end)
-      ADV._hooked = ok
+      installed = ok
     end
+
+    -- Jalur 2: bungkus method subsystem yang game sendiri daftarkan pada
+    -- event yang sama. Signature (self, _, __, DamageInfo) membuat DamageInfo
+    -- selalu di posisi 3. Dedupe di OnDamage mencegah hit dihitung dua kali
+    -- kalau kedua jalur menerima objek DamageInfo yang sama.
+    local sub = subsystem("SoundVisualizationSubsystem")
+    if sub then
+      local orig = nil
+      pcall(function() orig = sub.AddBeHitToCache end)
+      if type(orig) == "function" and orig ~= ADV._dmgWrap then
+        local w = function(self, a, b, c, d, e)
+          local info = findDamageInfo(a, b, c, d, e)
+          if info then pcall(ADV.OnDamage, nil, nil, info) end
+          return orig(self, a, b, c, d, e)
+        end
+        local applied = pcall(function() sub.AddBeHitToCache = w end)
+        if applied then
+          ADV._dmgWrap = w
+          ADV._dmgOrig = orig
+          installed = true
+        end
+      elseif orig == ADV._dmgWrap then
+        installed = true
+      end
+    end
+    ADV._hooked = installed
+  end
+
+  function ADV.UninstallDamageHook()
+    local sub = subsystem("SoundVisualizationSubsystem")
+    if sub and ADV._dmgWrap then
+      pcall(function()
+        if sub.AddBeHitToCache == ADV._dmgWrap and ADV._dmgOrig then
+          sub.AddBeHitToCache = ADV._dmgOrig
+        end
+      end)
+    end
+    local es = worldGlobal("EventSystem")
+    local et = worldGlobal("EVENTTYPE_INGAME")
+    local eid = worldGlobal("EVENTID_TAKE_DAMAGE_CLIENT")
+    if es and es.unregistEvent and et and eid then
+      pcall(function() es:unregistEvent(et, eid, ADV.OnDamage) end)
+    end
+    ADV._dmgWrap, ADV._dmgOrig = nil, nil
+    ADV._hooked = false
+    ADV._hookTried = false
+    ADV._hookAt = -999.0
+    ADV._dmgSeen, ADV._dmgSeenT = nil, -999.0
   end
 
   function ADV.HideDamage()
@@ -6364,29 +6814,77 @@ do
   -- --------------------------------------------------------
   -- 4) Squad strength tracker
   -- --------------------------------------------------------
+  ADV.SquadCache = ADV.SquadCache or {}
+  ADV.SquadScan = ADV.SquadScan or -999.0
+
+  -- Sumber utama: semua pawn yang direplikasi. ESP.EnemyCache hanya top-16
+  -- by distance, jadi tracker tidak boleh bergantung pada cache itu saja.
+  function ADV.ScanSquad(me, now)
+    local myTeam = ESP.GetTeamID(me)
+    local meLoc = ESP.ActorLocation(me)
+    if myTeam == nil or not meLoc then ADV.SquadCache = {} return end
+    local pawns = nil
+    pcall(function()
+      local g = worldGlobal("Game")
+      if g and g.GetAllPlayerPawns then pawns = g:GetAllPlayerPawns() end
+    end)
+    local teams = {}
+    local function add(c, dist)
+      if not ESPValid(c) or c == me then return end
+      local tid = ESP.GetTeamID(c)
+      if tid == nil or tostring(tid) == tostring(myTeam) then return end
+      if not ESP.IsAlive(c) and not ESP.IsKnocked(c) then return end
+      local tk = tostring(tid)
+      local t = teams[tk]
+      if not t then t = { id = tk, up = 0, down = 0, dist = 99999 } teams[tk] = t end
+      if ESP.IsKnocked(c) then t.down = t.down + 1 else t.up = t.up + 1 end
+      if dist and dist < t.dist then t.dist = dist end
+    end
+    local list = iterArray(pawns)
+    if #list > 0 then
+      for _, c in ipairs(list) do
+        add(c, ESP.DistMeters(meLoc, ESP.ActorLocation(c)))
+      end
+    else
+      for _, it in ipairs(ESP.EnemyCache or {}) do
+        add(it.Character, it.Distance)
+      end
+    end
+    local out = {}
+    for _, t in pairs(teams) do out[#out + 1] = t end
+    table.sort(out, function(a, b) return (a.dist or 99999) < (b.dist or 99999) end)
+    ADV.SquadCache = out
+  end
+
   function ADV.HideSquad()
     ESP.Extra.HideLabel("sq_h")
     for i = 1, 8 do ESP.Extra.HideLabel("sq_" .. tostring(i)) end
   end
 
   function ADV.DrawSquad(pc, me, vw, vh, now)
-    local teams = {}
-    for _, it in ipairs(ESP.EnemyCache or {}) do
-      local c = it.Character
-      if ESPValid(c) then
-        local tid = ESP.GetTeamID(c)
-        local tk = tostring(tid or "-")
-        local t = teams[tk]
-        if not t then
-          t = { id = tk, up = 0, down = 0, dist = 99999 }
-          teams[tk] = t
+    local list = ADV.SquadCache or {}
+    if #list == 0 then
+      -- Fallback: kelompokkan ESP.EnemyCache kalau scan pawn tidak tersedia.
+      local teams = {}
+      for _, it in ipairs(ESP.EnemyCache or {}) do
+        local c = it.Character
+        if ESPValid(c) then
+          local tid = ESP.GetTeamID(c)
+          local tk = tostring(tid or "-")
+          local t = teams[tk]
+          if not t then
+            t = { id = tk, up = 0, down = 0, dist = 99999 }
+            teams[tk] = t
+          end
+          if ESP.IsKnocked(c) then t.down = t.down + 1 else t.up = t.up + 1 end
+          if (it.Distance or 99999) < t.dist then t.dist = it.Distance end
         end
-        if ESP.IsKnocked(c) then t.down = t.down + 1 else t.up = t.up + 1 end
-        if (it.Distance or 99999) < t.dist then t.dist = it.Distance end
       end
+      local tmp = {}
+      for _, t in pairs(teams) do tmp[#tmp + 1] = t end
+      table.sort(tmp, function(a, b) return (a.dist or 99999) < (b.dist or 99999) end)
+      list = tmp
     end
-    local list = {}
-    for _, t in pairs(teams) do list[#list + 1] = t end
     if #list == 0 then ADV.HideSquad() return end
     table.sort(list, function(a, b) return (a.dist or 99999) < (b.dist or 99999) end)
 
@@ -6649,9 +7147,13 @@ do
     ADV.VehCache = {}
     ADV.Ghosts = {}
     ADV.Sounds = {}
+    ADV.SquadCache = {}
+    ADV.QueryOK = {}
+    ADV.StaticOK = {}
     if ADV.Dmg then ADV.Dmg.hits = 0 ADV.Dmg.t = -999.0 ADV.Dmg.casterT = -999.0
-      ADV.Dmg.casterName = nil ADV.Dmg.caster = nil end
+      ADV.Dmg.casterName = nil ADV.Dmg.caster = nil ADV.Dmg.cx = nil end
     if ADV._soundHooked then pcall(ADV.UninstallSoundHook) end
+    pcall(ADV.UninstallDamageHook)
   end
 
   function ADV.Update(pc, vw, vh, camLoc, now, me)
@@ -6666,6 +7168,9 @@ do
     local world = ESP.World()
     if world ~= ADV._World then
       -- Match/world baru: hook EventSystem dan subsystem lama tidak berlaku.
+      -- Lepas wrapper lama dulu supaya subsystem singleton tidak ter-wrap
+      -- berlapis tiap match.
+      pcall(ADV.UninstallDamageHook)
       ADV._World = world
       ADV._hooked = false
       ADV._hookTried = false
@@ -6673,9 +7178,13 @@ do
       ADV._soundHooked = false
       ADV._soundTried = false
       ADV._soundTryAt = -999.0
+      ADV._dmgWrap, ADV._dmgOrig = nil, nil
+      ADV._dmgSeen, ADV._dmgSeenT = nil, -999.0
       ADV.QueryOK = {}
+      ADV.StaticOK = {}
       ADV.LootCache, ADV.VehCache, ADV.Ghosts, ADV.Sounds = {}, {}, {}, {}
-      ADV.LootScan, ADV.VehScan = -999.0, -999.0
+      ADV.SquadCache = {}
+      ADV.LootScan, ADV.VehScan, ADV.SquadScan = -999.0, -999.0, -999.0
       if ADV.Dmg then
         ADV.Dmg.t, ADV.Dmg.casterT = -999.0, -999.0
         ADV.Dmg.hits, ADV.Dmg.sum, ADV.Dmg.head = 0, 0, 0
@@ -6685,7 +7194,7 @@ do
     end
     if not ESPValid(me) then return end
 
-    pcall(ADV.InstallDamageHook)
+    if on("Esp9_DmgDir") then pcall(ADV.InstallDamageHook) end
 
     if on("Esp9_Loot") or on("Esp9_LootBox") then
       if (now - (ADV.LootScan or -999.0)) >= 0.55 then
@@ -6705,6 +7214,7 @@ do
       ADV.Dmg.t, ADV.Dmg.casterT = -999.0, -999.0
       ADV.Dmg.cx = nil
       ADV.Dmg.casterName = nil
+      pcall(ADV.UninstallDamageHook)
       pcall(ADV.HideDamage)
     end
 
@@ -6717,8 +7227,13 @@ do
     end
 
     if on("Esp9_Squad") then
+      if (now - (ADV.SquadScan or -999.0)) >= 0.8 then
+        ADV.SquadScan = now
+        pcall(ADV.ScanSquad, me, now)
+      end
       pcall(ADV.DrawSquad, pc, me, vw, vh, now)
     else
+      ADV.SquadCache = {}
       pcall(ADV.HideSquad)
     end
 
