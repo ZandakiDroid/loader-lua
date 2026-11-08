@@ -4159,10 +4159,25 @@ do
     return v
   end
 
+  -- Ambil objek global game. Beberapa host memuat mod dengan environment
+  -- proxy (__index), jadi rawget(_G, ...) bisa nil walau `Game` terlihat.
+  local function gameGlobal(name)
+    local v = rawget(_G, name)
+    if v ~= nil then return v end
+    local ok, value = pcall(function()
+      if name == "Game" then return Game end
+      if name == "CGameState" then return CGameState end
+      if name == "GameState" then return GameState end
+      return nil
+    end)
+    if ok then return value end
+    return nil
+  end
+
   -- Iterasi seluruh PlayerState langsung dari engine. Ini jalur yang dipakai
   -- game sendiri di client (AliasDataUtil: Game:GetAllPlayerStates()).
   local function eachEnginePlayerState(fn)
-    local game = rawget(_G, "Game")
+    local game = gameGlobal("Game")
     if not (game and game.GetAllPlayerStates) then return 0 end
     local arr = nil
     pcall(function() arr = game:GetAllPlayerStates() end)
@@ -4202,6 +4217,66 @@ do
     return n
   end
 
+  -- GameState.PlayerArray adalah sumber yang dipakai MapDataBase di client:
+  -- array PlayerState hasil replikasi, tidak bergantung pada API CGame.
+  local function eachGameStatePlayerState(fn)
+    local gs = nil
+    local gd = ESP.GetGameplayData()
+    if gd and gd.GetGameState then
+      pcall(function() gs = gd.GetGameState() end)
+    end
+    if not ESPValid(gs) then gs = gameGlobal("CGameState") or gameGlobal("GameState") end
+    if gs == nil then return 0 end
+    local arr = nil
+    pcall(function() arr = gs.PlayerArray end)
+    if arr == nil then pcall(function() arr = gs.PlayerStates end) end
+    if arr == nil then return 0 end
+    local n, used = 0, false
+    pcall(function()
+      for _, ps in pairs(arr) do
+        if ESPValid(ps) then
+          used = true
+          n = n + 1
+          fn(ps)
+        end
+      end
+    end)
+    if used then return n end
+    local cnt = 0
+    pcall(function()
+      cnt = tonumber(arr.Num and arr:Num()) or tonumber(arr.Length and arr:Length())
+        or tonumber(#arr) or 0
+    end)
+    for i = 0, cnt - 1 do
+      local ps = nil
+      pcall(function() ps = arr:Get(i) end)
+      if ps == nil then pcall(function() ps = arr[i] end) end
+      if ESPValid(ps) then n = n + 1 fn(ps) end
+    end
+    if n == 0 then
+      for i = 1, cnt do
+        local ps = nil
+        pcall(function() ps = arr:Get(i) end)
+        if ps == nil then pcall(function() ps = arr[i] end) end
+        if ESPValid(ps) then n = n + 1 fn(ps) end
+      end
+    end
+    return n
+  end
+
+  -- Normalisasi nama khusus untuk key peta (tidak memakai upvalue di luar
+  -- blok ESP.Extra supaya harness ekstraksi tetap bisa menjalankannya).
+  local function playerNameKey(v)
+    if v == nil then return nil end
+    local ok, s = pcall(tostring, v)
+    if not ok or s == nil then return nil end
+    s = s:gsub("^%s+", ""):gsub("%s+$", "")
+    if s == "" or s == "nil" or s == "None" or s == "NULL" or s == "Unknown" then
+      return nil
+    end
+    return s
+  end
+
   -- Peta PlayerKey/UID/Character -> PlayerState. Sumber utama adalah engine
   -- (Game:GetAllPlayerStates), lalu registry GameplayData sebagai pelengkap.
   -- Rebuild max 1x/detik.
@@ -4213,11 +4288,15 @@ do
       if value == nil then return end
       local s = tostring(value)
       if s == "" or s == "nil" then return end
-      if map[prefix .. s] == nil then map[prefix .. s] = ps end
+      local k = prefix .. s
+      if map[k] == nil then map[k] = ps
+      elseif map[k] ~= ps then map[k] = false end
       local n = tonumber(value)
       if n ~= nil then
         local ns = string.format("%.0f", n)
-        if map[prefix .. ns] == nil then map[prefix .. ns] = ps end
+        local nk = prefix .. ns
+        if map[nk] == nil then map[nk] = ps
+        elseif map[nk] ~= ps then map[nk] = false end
       end
     end
     local function addPS(ps, arrayKey)
@@ -4226,6 +4305,28 @@ do
       addKey("k:", propOf(ps, "PlayerKey"), ps)
       addKey("u:", propOf(ps, "UID"), ps)
       addKey("u:", propOf(ps, "PlayerUID"), ps)
+      local pn = playerNameKey(propOf(ps, "PlayerName"))
+        or playerNameKey(propOf(ps, "NickName"))
+      if pn then
+        addKey("n:", pn, ps)
+        addKey("nl:", pn:lower(), ps)
+        -- Nama pawn kadang membawa tag clan di depan; PlayerState hanya
+        -- menyimpan nickname. Simpan versi tanpa tag sebagai kunci kedua.
+        local bare = pn
+        for _, pair in ipairs({ { "[", "]" }, { "【", "】" }, { "〔", "〕" },
+          { "「", "」" }, { "『", "』" }, { "《", "》" }, { "<", ">" },
+          { "(", ")" }, { "（", "）" }, { "|", "|" } }) do
+          local open, close = pair[1], pair[2]
+          if pn:sub(1, #open) == open then
+            local at = pn:find(close, #open + 1, true)
+            if at and at > #open + 1 then
+              local rest = pn:sub(at + #close):gsub("^%s+", "")
+              if rest ~= "" and rest ~= pn then bare = rest break end
+            end
+          end
+        end
+        addKey("ns:", bare:lower(), ps)
+      end
       local ch = nil
       pcall(function() if ps.GetPlayerCharacter then ch = ps:GetPlayerCharacter() end end)
       if ch == nil then ch = propOf(ps, "PlayerCharacter") end
@@ -4238,6 +4339,9 @@ do
       end
     end
     local engineCount = eachEnginePlayerState(function(ps) addPS(ps, nil) end)
+    -- Client Ranked kadang tidak mengekspos CGame:GetAllPlayerStates, tetapi
+    -- GameState.PlayerArray tetap berisi PlayerState (dipakai MapDataBase).
+    eachGameStatePlayerState(function(ps) addPS(ps, nil) end)
     local gd = ESP.GetGameplayData()
     local list = nil
     if gd and gd.GetAllPlayerStates then
@@ -4262,44 +4366,119 @@ do
     end
     if not ESPValid(ps) then ps = propOf(Character, "PlayerState") end
     if not ESPValid(ps) then ps = propOf(Character, "PlayerStateReplicated") end
+    -- Sebagian pawn tidak menyimpan PlayerState langsung; ambil lewat
+    -- controller/owner-nya (pawn -> controller -> PlayerState).
+    if not ESPValid(ps) then
+      local pc = nil
+      pcall(function() if Character.GetOwner then pc = Character:GetOwner() end end)
+      if pc == nil then pc = propOf(Character, "Owner") end
+      if pc == nil then pc = propOf(Character, "Controller") end
+      if pc == nil then
+        pcall(function() if Character.GetController then pc = Character:GetController() end end)
+      end
+      if pc ~= nil then
+        ps = propOf(pc, "PlayerState")
+        if not ESPValid(ps) then
+          pcall(function() if pc.GetPlayerState then ps = pc:GetPlayerState() end end)
+        end
+      end
+    end
     if ESPValid(ps) then return ps end
-    -- Fallback: registry GameplayData, dipakai game sendiri untuk UI player lain.
-    local gd = ESP.GetGameplayData()
+
     local key = nil
+    local uid = nil
     pcall(function() if Character.GetPlayerKey then key = Character:GetPlayerKey() end end)
     if key == nil then key = propOf(Character, "PlayerKey") end
-    if key == nil then key = propOf(Character, "UID") end
-    if gd and key ~= nil then
-      for _, fn in ipairs({ "GetPlayerState", "GetPlayerStateByKey", "GetPlayerStateByPlayerKey" }) do
-        if type(gd[fn]) == "function" then
-          local cand = nil
-          pcall(function() cand = gd[fn](key) end)
-          if not ESPValid(cand) then
-            local nk = tonumber(key)
-            if nk ~= nil then pcall(function() cand = gd[fn](nk) end) end
-          end
-          if ESPValid(cand) then
-            local psKey = nil
-            pcall(function() psKey = cand.PlayerKey end)
-            if psKey == nil or tostring(psKey) == tostring(key) then
-              ps = cand
-              break
+    pcall(function() if Character.GetPlayerUID then uid = Character:GetPlayerUID() end end)
+    if uid == nil then uid = propOf(Character, "UID") end
+    if uid == nil then uid = propOf(Character, "PlayerUID") end
+    if key == nil then key = uid end
+
+    -- Registry native: Game/CGameState menyediakan lookup by PlayerKey/UID.
+    -- Ini jalur yang dipakai game sendiri (Game:GetPlayerStateByPlayerKey).
+    local function tryRegistry(obj, fn, arg)
+      if obj == nil or arg == nil then return nil end
+      local f = nil
+      pcall(function() f = obj[fn] end)
+      if type(f) ~= "function" then return nil end
+      local cand = nil
+      pcall(function() cand = f(obj, arg) end)
+      if not ESPValid(cand) then
+        local n = tonumber(arg)
+        if n ~= nil then pcall(function() cand = f(obj, n) end) end
+      end
+      if ESPValid(cand) then return cand end
+      return nil
+    end
+    local game = gameGlobal("Game")
+    local gameState = gameGlobal("CGameState") or gameGlobal("GameState")
+    for _, spec in ipairs({
+      { obj = game, fn = "GetPlayerStateByPlayerKey", arg = key },
+      { obj = game, fn = "GetPlayerStateByKey", arg = key },
+      { obj = game, fn = "GetPlayerStateByUID", arg = uid },
+      { obj = gameState, fn = "GetPlayerStateByUID", arg = uid },
+      { obj = gameState, fn = "GetPlayerStateByPlayerKey", arg = key },
+      { obj = gameState, fn = "GetPlayerState", arg = key },
+    }) do
+      local cand = tryRegistry(spec.obj, spec.fn, spec.arg)
+      if ESPValid(cand) then return cand end
+    end
+
+    -- Fallback: registry GameplayData, dipakai game sendiri untuk UI player lain.
+    local gd = ESP.GetGameplayData()
+    if gd then
+      for _, id in ipairs({ key, uid }) do
+        if id ~= nil then
+          for _, fn in ipairs({ "GetPlayerState", "GetPlayerStateByKey", "GetPlayerStateByPlayerKey" }) do
+            if type(gd[fn]) == "function" then
+              local cand = nil
+              pcall(function() cand = gd[fn](id) end)
+              if not ESPValid(cand) then
+                local nk = tonumber(id)
+                if nk ~= nil then pcall(function() cand = gd[fn](nk) end) end
+              end
+              if ESPValid(cand) then return cand end
             end
           end
         end
       end
     end
-    if ESPValid(ps) then return ps end
-    -- Fallback: peta PlayerKey/UID/Character -> PlayerState.
-    if key ~= nil then
-      local map = EX.PlayerStateMap()
-      local ks = tostring(key)
-      local hit = map["k:" .. ks] or map["u:" .. ks] or map["c:" .. ks]
-      if hit == nil then
-        local nk = tonumber(key)
-        if nk ~= nil then
-          ks = tostring(nk)
-          hit = map["k:" .. ks] or map["u:" .. ks] or map["c:" .. ks]
+
+    -- Fallback: peta PlayerKey/UID/Character/nama -> PlayerState.
+    local map = EX.PlayerStateMap()
+    local ids = { key, uid }
+    for _, id in ipairs(ids) do
+      if id ~= nil then
+        local ks = tostring(id)
+        local hit = map["k:" .. ks] or map["u:" .. ks] or map["c:" .. ks]
+        if hit == nil then
+          local nk = tonumber(id)
+          if nk ~= nil then
+            ks = tostring(nk)
+            hit = map["k:" .. ks] or map["u:" .. ks] or map["c:" .. ks]
+          end
+        end
+        if ESPValid(hit) then return hit end
+      end
+    end
+    -- Nama adalah kunci terakhir: di Ranked spawn island sebagian pawn tidak
+    -- membawa PlayerKey/UID yang cocok, tetapi nama pemain tetap terbaca.
+    local name = ESP.ResolveName(Character, false)
+    if name and name ~= "Player" and name ~= "Bot" then
+      local low = name:lower()
+      local hit = map["n:" .. name] or map["nl:" .. low] or map["ns:" .. low]
+      if not ESPValid(hit) then
+        for _, pair in ipairs({ { "[", "]" }, { "【", "】" }, { "〔", "〕" },
+          { "「", "」" }, { "『", "』" }, { "《", "》" }, { "<", ">" },
+          { "(", ")" }, { "（", "）" }, { "|", "|" } }) do
+          local open, close = pair[1], pair[2]
+          if name:sub(1, #open) == open then
+            local at = name:find(close, #open + 1, true)
+            if at and at > #open + 1 then
+              local rest = name:sub(at + #close):gsub("^%s+", "")
+              if rest ~= "" then hit = map["ns:" .. rest:lower()] end
+            end
+          end
         end
       end
       if ESPValid(hit) then return hit end
@@ -4551,6 +4730,18 @@ do
       name = name .. " " .. suffix
     end
     return name
+  end
+
+  -- Formatter publik: dipakai ESP dan telemetri (AutoFeedback) supaya
+  -- label rank selalu identik. Hanya menerima segment klasik 1xx..8xx.
+  function EX.FormatRank(level)
+    local n = tonumber(level)
+    if n == nil or n <= 0 then return nil end
+    local tier = math.floor(n / 100)
+    if tier < 1 or tier > 8 then return nil end
+    local ok, text = pcall(rankDisplay, n, nil, nil)
+    if ok and type(text) == "string" and text ~= "" then return text end
+    return nil
   end
 
   -- Sumber rank musuh, berurutan dari yang paling "current":
@@ -7697,6 +7888,16 @@ _G.RapzhangAutoTextFeedback = (function()
   local function rankLabel(segment, season)
     local n = tonumber(segment)
     if n == nil or n <= 0 then return nil end
+    -- Samakan dengan ESP: nama config + bintang/divisi (Ace 4, Ace Master 15,
+    -- Ace Dominator 20). Jangan pakai salinan logika sendiri.
+    local ex = nil
+    pcall(function()
+      ex = (ESP and ESP.Extra) or (_G.ESP and _G.ESP.Extra)
+    end)
+    if ex and type(ex.FormatRank) == "function" then
+      local ok, text = pcall(ex.FormatRank, n)
+      if ok and text ~= nil and text ~= "" then return text end
+    end
     local name = rankNameFromCfg(rankCfg(n, season)) or rankNameFromCfg(rankCfgFromTables(n))
     if name then return name end
     return rankFallbackName(n) or ("Rank " .. tostring(n))
