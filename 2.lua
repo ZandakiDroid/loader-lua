@@ -164,8 +164,6 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     Esp9_Grenade = false,
     Esp9_GrenadeMark = true,
     Esp9_GrenadeRadius = true,
-    Esp9_Rank = false,
-    Esp9_Clan = false,
     Esp9_Ammo = false,
     -- Advanced overlay: satu parent switch, semua anak default OFF.
     Esp9_Adv = false,
@@ -183,6 +181,8 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     Esp9_LootAttach = false,
     Esp9_LootThrow = false,
     Esp9_LootMisc = false,
+    -- "Other" per kategori tidak ditulis di default config: nil berarti ON
+    -- (cfg[key] ~= false), sehingga item baru dari update game tetap tampil.
     Esp9_LootDist = 120,
     AutoParachute = false,
     AutoJump = true,
@@ -1190,6 +1190,230 @@ _G.ReadLiveConfig = function()
 end
 
 -- ============================================================
+-- ESP LOOT ITEM CATALOG
+-- Satu sumber data untuk menu toggle per item dan filter scan.
+-- ID mengikuti tabel item PUBG Mobile. Entri yang tidak tercatat
+-- di sini tetap tampil lewat toggle "Other" per kategori, jadi
+-- item baru dari update game tidak hilang diam-diam.
+-- ============================================================
+_G.RapzhangLoot = _G.RapzhangLoot or {}
+do
+    local L = _G.RapzhangLoot
+    L.Catalog = {
+        -- WEAPON / ASSAULT RIFLES
+        { id = 101001, key = "AKM",            name = "AKM",             cat = "weapon", group = "AR" },
+        { id = 101002, key = "M16A4",          name = "M16A4",           cat = "weapon", group = "AR" },
+        { id = 101003, key = "SCARL",          name = "SCAR-L",          cat = "weapon", group = "AR" },
+        { id = 101004, key = "M416",           name = "M416",            cat = "weapon", group = "AR" },
+        { id = 101005, key = "Groza",          name = "Groza",           cat = "weapon", group = "AR" },
+        { id = 101006, key = "AUG",            name = "AUG",             cat = "weapon", group = "AR" },
+        { id = 101007, key = "QBZ",            name = "QBZ",             cat = "weapon", group = "AR" },
+        { id = 101008, key = "M762",           name = "M762",            cat = "weapon", group = "AR" },
+        { id = 101009, key = "Mk47Mutant",     name = "Mk47 Mutant",     cat = "weapon", group = "AR" },
+        { id = 101010, key = "G36C",           name = "G36C",            cat = "weapon", group = "AR" },
+        { id = 101012, key = "HoneyBadger",    name = "Honey Badger",    cat = "weapon", group = "AR" },
+        { id = 101100, key = "FAMAS",          name = "FAMAS",           cat = "weapon", group = "AR" },
+        { id = 101101, key = "ASMAbakan",      name = "ASM Abakan",      cat = "weapon", group = "AR" },
+        { id = 101102, key = "ACE32",          name = "ACE32",           cat = "weapon", group = "AR" },
+        -- WEAPON / SMGs
+        { id = 102001, key = "UZI",            name = "UZI",             cat = "weapon", group = "SMG" },
+        { id = 102002, key = "UMP45",          name = "UMP45",           cat = "weapon", group = "SMG" },
+        { id = 102003, key = "Vector",         name = "Vector",          cat = "weapon", group = "SMG" },
+        { id = 102004, key = "Thompson",       name = "Thompson",        cat = "weapon", group = "SMG" },
+        { id = 102005, key = "Bizon",          name = "PP-19 Bizon",     cat = "weapon", group = "SMG" },
+        { id = 102007, key = "MP5K",           name = "MP5K",            cat = "weapon", group = "SMG" },
+        { id = 102105, key = "P90",            name = "P90",             cat = "weapon", group = "SMG" },
+        -- WEAPON / SNIPERS + DMR
+        { id = 103001, key = "Kar98K",         name = "Kar98K",          cat = "weapon", group = "SR" },
+        { id = 103002, key = "M24",            name = "M24",             cat = "weapon", group = "SR" },
+        { id = 103003, key = "AWM",            name = "AWM",             cat = "weapon", group = "SR" },
+        { id = 103004, key = "SKS",            name = "SKS",             cat = "weapon", group = "SR" },
+        { id = 103005, key = "VSS",            name = "VSS",             cat = "weapon", group = "SR" },
+        { id = 103006, key = "Mini14",         name = "Mini14",          cat = "weapon", group = "SR" },
+        { id = 103007, key = "Mk14",           name = "Mk14",            cat = "weapon", group = "SR" },
+        { id = 103008, key = "Win94",          name = "Win94",           cat = "weapon", group = "SR" },
+        { id = 103009, key = "SLR",            name = "SLR",             cat = "weapon", group = "SR" },
+        { id = 103010, key = "QBU",            name = "QBU",             cat = "weapon", group = "SR" },
+        { id = 103011, key = "Mosin",          name = "Mosin Nagant",    cat = "weapon", group = "SR" },
+        { id = 103012, key = "AMR",            name = "AMR",             cat = "weapon", group = "SR" },
+        { id = 103100, key = "Mk12",           name = "Mk12",            cat = "weapon", group = "SR" },
+        -- WEAPON / SHOTGUNS
+        { id = 104001, key = "S686",           name = "S686",            cat = "weapon", group = "SG" },
+        { id = 104002, key = "S1897",          name = "S1897",           cat = "weapon", group = "SG" },
+        { id = 104003, key = "S12K",           name = "S12K",            cat = "weapon", group = "SG" },
+        { id = 104004, key = "DBS",            name = "DBS",             cat = "weapon", group = "SG" },
+        { id = 104100, key = "SPAS12",         name = "SPAS-12",         cat = "weapon", group = "SG" },
+        { id = 104101, key = "M1014",          name = "M1014",           cat = "weapon", group = "SG" },
+        { id = 104102, key = "NS2000",         name = "NS2000",          cat = "weapon", group = "SG" },
+        -- WEAPON / MACHINE GUNS
+        { id = 105001, key = "M249",           name = "M249",            cat = "weapon", group = "MG" },
+        { id = 105002, key = "DP28",           name = "DP-28",           cat = "weapon", group = "MG" },
+        { id = 105003, key = "M134",           name = "M134",            cat = "weapon", group = "MG" },
+        { id = 105010, key = "MG3",            name = "MG3",             cat = "weapon", group = "MG" },
+        -- WEAPON / PISTOLS
+        { id = 106001, key = "P92",            name = "P92",             cat = "weapon", group = "Pistol" },
+        { id = 106002, key = "P1911",          name = "P1911",           cat = "weapon", group = "Pistol" },
+        { id = 106003, key = "R1895",          name = "R1895",           cat = "weapon", group = "Pistol" },
+        { id = 106004, key = "P18C",           name = "P18C",            cat = "weapon", group = "Pistol" },
+        { id = 106005, key = "R45",            name = "R45",             cat = "weapon", group = "Pistol" },
+        { id = 106006, key = "SawedOff",       name = "Sawed-off",       cat = "weapon", group = "Pistol" },
+        { id = 106007, key = "FlareGun",       name = "Flare Gun",       cat = "weapon", group = "Pistol" },
+        { id = 106008, key = "Vz61",           name = "Vz61",            cat = "weapon", group = "Pistol" },
+        { id = 106010, key = "DesertEagle",    name = "Desert Eagle",    cat = "weapon", group = "Pistol" },
+        -- WEAPON / MELEE + OTHER
+        { id = 108001, key = "Machete",        name = "Machete",         cat = "weapon", group = "Melee" },
+        { id = 108003, key = "Sickle",         name = "Sickle",          cat = "weapon", group = "Melee" },
+        { id = 108004, key = "Pan",            name = "Pan",             cat = "weapon", group = "Melee" },
+        { id = 107001, key = "Crossbow",       name = "Crossbow",        cat = "weapon", group = "Other" },
+        -- GEAR / HELMET, VEST, BACKPACK (level 1-3)
+        { id = 502001, key = "HelmetLv1",      name = "Helmet Lv.1",     cat = "gear",   group = "Helmet" },
+        { id = 502002, key = "HelmetLv2",      name = "Helmet Lv.2",     cat = "gear",   group = "Helmet" },
+        { id = 502003, key = "HelmetLv3",      name = "Helmet Lv.3",     cat = "gear",   group = "Helmet" },
+        { id = 503001, key = "VestLv1",        name = "Vest Lv.1",       cat = "gear",   group = "Vest" },
+        { id = 503002, key = "VestLv2",        name = "Vest Lv.2",       cat = "gear",   group = "Vest" },
+        { id = 503003, key = "VestLv3",        name = "Vest Lv.3",       cat = "gear",   group = "Vest" },
+        { id = 501001, key = "BackpackLv1",    name = "Backpack Lv.1",   cat = "gear",   group = "Backpack" },
+        { id = 501002, key = "BackpackLv2",    name = "Backpack Lv.2",   cat = "gear",   group = "Backpack" },
+        { id = 501003, key = "BackpackLv3",    name = "Backpack Lv.3",   cat = "gear",   group = "Backpack" },
+        -- ATTACHMENT / MUZZLE
+        { id = 201001, key = "Choke",          name = "Choke (SG)",              cat = "attach", group = "Muzzle" },
+        { id = 201002, key = "CompensatorSMG", name = "Compensator (SMG)",       cat = "attach", group = "Muzzle" },
+        { id = 201003, key = "CompensatorSR",  name = "Compensator (SR)",        cat = "attach", group = "Muzzle" },
+        { id = 201004, key = "FlashHiderSMG",  name = "Flash Hider (SMG)",       cat = "attach", group = "Muzzle" },
+        { id = 201005, key = "FlashHiderSR",   name = "Flash Hider (SR)",        cat = "attach", group = "Muzzle" },
+        { id = 201006, key = "SuppressorSMG",  name = "Suppressor (SMG)",        cat = "attach", group = "Muzzle" },
+        { id = 201007, key = "SuppressorSR",   name = "Suppressor (SR)",         cat = "attach", group = "Muzzle" },
+        { id = 201009, key = "CompensatorAR",  name = "Compensator (AR)",        cat = "attach", group = "Muzzle" },
+        { id = 201010, key = "FlashHiderAR",   name = "Flash Hider (AR)",        cat = "attach", group = "Muzzle" },
+        { id = 201011, key = "SuppressorAR",   name = "Suppressor (AR)",         cat = "attach", group = "Muzzle" },
+        { id = 201012, key = "Duckbill",       name = "Duckbill (SG)",           cat = "attach", group = "Muzzle" },
+        -- ATTACHMENT / GRIP
+        { id = 202001, key = "AngledGrip",     name = "Angled Foregrip",         cat = "attach", group = "Grip" },
+        { id = 202002, key = "VerticalGrip",   name = "Vertical Foregrip",       cat = "attach", group = "Grip" },
+        { id = 202003, key = "HalfGrip",       name = "Half Grip",               cat = "attach", group = "Grip" },
+        { id = 202004, key = "LightGrip",      name = "Lightweight Grip",        cat = "attach", group = "Grip" },
+        { id = 202006, key = "ThumbGrip",      name = "Thumb Grip",              cat = "attach", group = "Grip" },
+        { id = 202007, key = "LaserSight",     name = "Laser Sight",             cat = "attach", group = "Grip" },
+        -- ATTACHMENT / SCOPE
+        { id = 203001, key = "RedDot",         name = "Red Dot Sight",           cat = "attach", group = "Scope" },
+        { id = 203002, key = "Holo",           name = "Holographic Sight",       cat = "attach", group = "Scope" },
+        { id = 203003, key = "Scope2x",        name = "2x Scope",                cat = "attach", group = "Scope" },
+        { id = 203004, key = "Scope4x",        name = "4x Scope",                cat = "attach", group = "Scope" },
+        { id = 203005, key = "Scope8x",        name = "8x Scope",                cat = "attach", group = "Scope" },
+        { id = 203014, key = "Scope3x",        name = "3x Scope",                cat = "attach", group = "Scope" },
+        { id = 203015, key = "Scope6x",        name = "6x Scope",                cat = "attach", group = "Scope" },
+        { id = 203018, key = "CantedSight",    name = "Canted Sight",            cat = "attach", group = "Scope" },
+        -- ATTACHMENT / MAGAZINE
+        { id = 204001, key = "ExtMagPistol",    name = "Extended Mag (Pistol)",          cat = "attach", group = "Magazine" },
+        { id = 204002, key = "QuickMagPistol",  name = "Quickdraw Mag (Pistol)",         cat = "attach", group = "Magazine" },
+        { id = 204003, key = "ExtQuickMagPistol", name = "Extended Quickdraw (Pistol)",  cat = "attach", group = "Magazine" },
+        { id = 204004, key = "ExtMagSMG",       name = "Extended Mag (SMG)",             cat = "attach", group = "Magazine" },
+        { id = 204005, key = "QuickMagSMG",     name = "Quickdraw Mag (SMG)",            cat = "attach", group = "Magazine" },
+        { id = 204006, key = "ExtQuickMagSMG",  name = "Extended Quickdraw (SMG)",       cat = "attach", group = "Magazine" },
+        { id = 204007, key = "ExtMagSR",        name = "Extended Mag (SR)",              cat = "attach", group = "Magazine" },
+        { id = 204008, key = "QuickMagSR",      name = "Quickdraw Mag (SR)",             cat = "attach", group = "Magazine" },
+        { id = 204009, key = "ExtQuickMagSR",   name = "Extended Quickdraw (SR)",        cat = "attach", group = "Magazine" },
+        { id = 204011, key = "ExtMagAR",        name = "Extended Mag (AR)",              cat = "attach", group = "Magazine" },
+        { id = 204012, key = "QuickMagAR",      name = "Quickdraw Mag (AR)",             cat = "attach", group = "Magazine" },
+        { id = 204013, key = "ExtQuickMagAR",   name = "Extended Quickdraw (AR)",        cat = "attach", group = "Magazine" },
+        { id = 204015, key = "ExtMagMG",        name = "Extended Mag (MG)",              cat = "attach", group = "Magazine" },
+        { id = 204016, key = "JungleMagAR",     name = "Jungle Style Mag (AR)",          cat = "attach", group = "Magazine" },
+        { id = 204017, key = "ShotgunLoader",   name = "Shotgun Quick Loader",           cat = "attach", group = "Magazine" },
+        { id = 204051, key = "MiniDrumAR",      name = "Mini Drum Mag (AR)",             cat = "attach", group = "Magazine" },
+        -- ATTACHMENT / STOCK
+        { id = 205001, key = "StockUZI",        name = "Stock (Micro UZI)",       cat = "attach", group = "Stock" },
+        { id = 205002, key = "TacticalStock",   name = "Tactical Stock",          cat = "attach", group = "Stock" },
+        { id = 205003, key = "CheekPad",        name = "Cheek Pad (SR)",          cat = "attach", group = "Stock" },
+        { id = 205004, key = "CrossbowStock",   name = "Crossbow Stock",          cat = "attach", group = "Stock" },
+        { id = 204014, key = "BulletLoops",     name = "Bullet Loops (SR)",       cat = "attach", group = "Stock" },
+        -- AMMO
+        { id = 301001, key = "Ammo9mm",         name = "9mm",             cat = "ammo" },
+        { id = 302001, key = "Ammo762",         name = "7.62mm",          cat = "ammo" },
+        { id = 303001, key = "Ammo556",         name = "5.56mm",          cat = "ammo" },
+        { id = 304001, key = "Ammo12G",         name = "12 Gauge",        cat = "ammo" },
+        { id = 305001, key = "Ammo45",          name = ".45 ACP",         cat = "ammo" },
+        { id = 306001, key = "Ammo300",         name = ".300 Magnum",     cat = "ammo" },
+        { id = 307001, key = "AmmoBolt",        name = "Crossbow Bolt",   cat = "ammo" },
+        { id = 308001, key = "AmmoFlare",       name = "Flare",           cat = "ammo" },
+        -- MEDS / CONSUMABLES
+        { id = 601001, key = "EnergyDrink",     name = "Energy Drink",        cat = "meds" },
+        { id = 601002, key = "Adrenaline",      name = "Adrenaline Syringe",  cat = "meds" },
+        { id = 601003, key = "Painkiller",      name = "Painkiller",          cat = "meds" },
+        { id = 601004, key = "Bandage",         name = "Bandage",             cat = "meds" },
+        { id = 601005, key = "FirstAid",        name = "First Aid Kit",       cat = "meds" },
+        { id = 601006, key = "MedKit",          name = "Med Kit",             cat = "meds" },
+        -- THROWABLES
+        { id = 602001, key = "Flashbang",       name = "Flashbang",       cat = "throw" },
+        { id = 602002, key = "Smoke",           name = "Smoke Grenade",   cat = "throw" },
+        { id = 602003, key = "Molotov",         name = "Molotov Cocktail",cat = "throw" },
+        { id = 602004, key = "Frag",            name = "Frag Grenade",    cat = "throw" },
+        { id = 602005, key = "Apple",           name = "Apple",           cat = "throw" },
+        -- MISC
+        { id = 603001, key = "GasCan",          name = "Gas Can",         cat = "misc" },
+    }
+
+    L.ById = {}
+    L.KeyCat = {}
+    L.KeyName = {}
+    L.KeyGroup = {}
+    L.KeyCfg = {}
+    L.ByCat = {}
+    L.ByGroup = {}
+    for _, e in ipairs(L.Catalog) do
+        L.ById[e.id] = e
+        L.KeyCat[e.key] = e.cat
+        L.KeyName[e.key] = e.name
+        L.KeyGroup[e.key] = e.group
+        L.KeyCfg[e.key] = "Esp9_LootI_" .. e.key
+        L.ByCat[e.cat] = L.ByCat[e.cat] or {}
+        table.insert(L.ByCat[e.cat], e)
+        local gk = tostring(e.cat) .. ":" .. tostring(e.group or "")
+        L.ByGroup[gk] = L.ByGroup[gk] or {}
+        table.insert(L.ByGroup[gk], e)
+    end
+
+    -- Varian model/warna gear memakai level yang sama, jadi cukup satu
+    -- toggle per level.
+    L.Alias = {
+        [501004] = "BackpackLv1", [501005] = "BackpackLv2", [501006] = "BackpackLv3",
+        [502004] = "HelmetLv1",   [502005] = "HelmetLv2",   [502006] = "HelmetLv3",
+    }
+    for id, key in pairs(L.Alias) do
+        for _, e in ipairs(L.Catalog) do
+            if e.key == key then L.ById[id] = e break end
+        end
+    end
+
+    L.CatOrder = { "weapon", "gear", "attach", "ammo", "meds", "throw", "misc" }
+    L.CatLabel = {
+        weapon = "▶ Weapons",
+        gear   = "▶ Gear / Armor",
+        attach = "▶ Attachments",
+        ammo   = "▶ Ammo",
+        meds   = "▶ Meds / Consumables",
+        throw  = "▶ Throwables",
+        misc   = "▶ Misc / Chips",
+    }
+    L.GroupOrder = {
+        weapon = { "AR", "SMG", "SR", "SG", "MG", "Pistol", "Melee", "Other" },
+        attach = { "Muzzle", "Grip", "Scope", "Magazine", "Stock" },
+    }
+    L.GroupLabel = {
+        AR = "Assault Rifles", SMG = "SMGs", SR = "Snipers / DMR",
+        SG = "Shotguns", MG = "Machine Guns", Pistol = "Pistols",
+        Melee = "Melee", Other = "Other Weapons",
+        Muzzle = "Muzzles", Grip = "Grips", Scope = "Scopes",
+        Magazine = "Magazines", Stock = "Stocks",
+    }
+    L.GroupSlug = {
+        AR = "AR", SMG = "SMG", SR = "SR", SG = "SG", MG = "MG",
+        Pistol = "PISTOL", Melee = "MELEE", Other = "OTHER",
+        Muzzle = "MUZZLE", Grip = "GRIP", Scope = "SCOPE",
+        Magazine = "MAG", Stock = "STOCK",
+    }
+end
+
+-- ============================================================
 -- HỆ THỐNG MENU VIP NATIVE (CHẠY TRỰC TIẾP TỪ SETTING GAME)
 -- ========================================== 
 
@@ -1411,8 +1635,6 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_ESP9_Grenade", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Grenade ESP", "   ▶ Grenade ESP"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Grenade == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Grenade = on; if on then _G.RapzhangConfig.Esp9_GrenadeMark = true; _G.RapzhangConfig.Esp9_GrenadeRadius = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_GrenadeMark", UI = AliasMap.Switcher, Text = T("      Grenade Marker + Type", "      Grenade Marker + Type"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeMark == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeMark = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_GrenadeRadius", UI = AliasMap.Switcher, Text = T("      Blast Radius", "      Blast Radius"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeRadius == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeRadius = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ESP9_Rank", UI = AliasMap.Switcher, Text = T("   Enemy Rank", "   Enemy Rank"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Rank == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Rank = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ESP9_Clan", UI = AliasMap.Switcher, Text = T("   Enemy Clan", "   Enemy Clan"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Clan == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Clan = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Ammo", UI = AliasMap.Switcher, Text = T("   Enemy Ammo / Reload", "   Enemy Ammo / Reload"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ammo == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ammo = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             -- =============================================
             -- ADVANCED OVERLAY: parent ON/OFF + anak-anaknya
@@ -1422,19 +1644,6 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_ADV_Ghost", UI = AliasMap.Switcher, Text = T("      Ghost Last-Seen Marker", "      Ghost Last-Seen Marker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ghost == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ghost = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ADV_Squad", UI = AliasMap.Switcher, Text = T("      Squad Strength Tracker", "      Squad Strength Tracker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Squad == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Squad = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ADV_Veh", UI = AliasMap.Switcher, Text = T("      Vehicle Intel (Enemy)", "      Vehicle Intel (Enemy)"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_VehIntel == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_VehIntel = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            -- =============================================
-            -- ESP LOOT: menu mandiri, parent hanya gerbang.
-            -- Anak = kategori item, ON/OFF terpisah.
-            -- =============================================
-            { Key = "ModMenu_Loot_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ ESP LOOT", "▶ ESP LOOT"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Loot == true end, SetFunc = function(_,v) local onv = v and true or false; _G.RapzhangConfig.Esp9_Loot = onv; if not onv then for _,k in ipairs(_G.ESP and _G.ESP.LootChildren or {"Esp9_LootWeapon","Esp9_LootGear","Esp9_LootAmmo","Esp9_LootMeds","Esp9_LootAttach","Esp9_LootThrow","Esp9_LootMisc"}) do _G.RapzhangConfig[k] = false end; pcall(function() if _G.ESP and _G.ESP.Adv and _G.ESP.Adv.ClearLoot then _G.ESP.Adv.ClearLoot() end end) end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_Loot_Weapon", UI = AliasMap.Switcher, Text = T("   Weapon", "   Weapon"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootWeapon == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootWeapon = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_Loot_Gear", UI = AliasMap.Switcher, Text = T("   Backpack / Armor", "   Backpack / Armor"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootGear == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootGear = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_Loot_Ammo", UI = AliasMap.Switcher, Text = T("   Ammo", "   Ammo"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootAmmo == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootAmmo = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_Loot_Meds", UI = AliasMap.Switcher, Text = T("   Meds / Consumables", "   Meds / Consumables"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootMeds == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootMeds = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_Loot_Attach", UI = AliasMap.Switcher, Text = T("   Attachments", "   Attachments"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootAttach == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootAttach = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_Loot_Throw", UI = AliasMap.Switcher, Text = T("   Throwables", "   Throwables"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootThrow == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootThrow = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_Loot_Misc", UI = AliasMap.Switcher, Text = T("   Misc / Chips", "   Misc / Chips"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootMisc == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootMisc = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_Loot_Dist", UI = AliasMap.Slider, Text = T("   Scan Radius (20-300m)", "   Scan Radius (20-300m)"), ExpandHandle = "ModMenu_Loot_Ex", MinValue = 20, MaxValue = 300, min = 20, max = 300, Min = 20, Max = 300, GetFunc = function() return math.max(20, math.min(300, math.floor((_G.RapzhangConfig.Esp9_LootDist or 120) + 0.5))) end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootDist = math.max(20, math.min(300, math.floor(v + 0.5))); return true end },
         }
 
         local RequestMenuRefresh = function() end
@@ -1729,6 +1938,170 @@ function _G.InitModMenuTab()
         { Key = "ModMenu_AutoJumpRadius", UI = AliasMap.Slider, Text = T("      Auto Jump Radius (m)", "      Auto Jump Radius (m)"), ExpandHandle = "ModMenu_AutoParachute", MinValue = 50, MaxValue = 1500, min = 50, max = 1500, Min = 50, Max = 1500, GetFunc = function() return math.max(50, math.min(1500, math.floor((tonumber(_G.RapzhangConfig.AutoJumpRadius) or 300) + 0.5))) end, SetFunc = function(_, v) _G.RapzhangConfig.AutoJumpRadius = math.max(50, math.min(1500, math.floor((tonumber(v) or 300) + 0.5))); return true end },
     }
 
+    -- STEP 10: Stack ESP LOOT (tab sendiri di samping ESP)
+    local Loot = _G.RapzhangLoot or { Catalog = {}, ByCat = {}, ByGroup = {} }
+    local LOOT_CAT_KEY = {
+        weapon = "Esp9_LootWeapon",
+        gear   = "Esp9_LootGear",
+        attach = "Esp9_LootAttach",
+        ammo   = "Esp9_LootAmmo",
+        meds   = "Esp9_LootMeds",
+        throw  = "Esp9_LootThrow",
+        misc   = "Esp9_LootMisc",
+    }
+    local LOOT_CAT_MENU = {
+        weapon = "ModMenu_Loot_Weapon",
+        gear   = "ModMenu_Loot_Gear",
+        attach = "ModMenu_Loot_Attach",
+        ammo   = "ModMenu_Loot_Ammo",
+        meds   = "ModMenu_Loot_Meds",
+        throw  = "ModMenu_Loot_Throw",
+        misc   = "ModMenu_Loot_Misc",
+    }
+
+    local function LootSyncConfig()
+        pcall(function()
+            if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end
+        end)
+    end
+
+    local function LootClearLabels()
+        pcall(function()
+            if _G.ESP and _G.ESP.Adv and _G.ESP.Adv.ClearLoot then
+                _G.ESP.Adv.ClearLoot()
+            end
+        end)
+    end
+
+    local function LootEnableCategory(cat)
+        local key = LOOT_CAT_KEY[cat]
+        if key then _G.RapzhangConfig[key] = true end
+        _G.RapzhangConfig.Esp9_Loot = true
+    end
+
+    local function LootItemRow(e, indent)
+        local catKey = LOOT_CAT_KEY[e.cat]
+        local cfgKey = (Loot.KeyCfg and Loot.KeyCfg[e.key]) or ("Esp9_LootI_" .. e.key)
+        local parent = LOOT_CAT_MENU[e.cat]
+        if (e.cat == "weapon" or e.cat == "attach") and e.group then
+            parent = "ModMenu_Loot_" .. (e.cat == "weapon" and "W_" or "A_")
+                .. (Loot.GroupSlug[e.group] or e.group)
+        end
+        return {
+            Key = "ModMenu_Loot_I_" .. e.key,
+            UI = AliasMap.Switcher,
+            Text = T(indent .. e.name, indent .. e.name),
+            ExpandHandle = parent,
+            GetFunc = function() return _G.RapzhangConfig[cfgKey] ~= false end,
+            SetFunc = function(_, v)
+                _G.RapzhangConfig[cfgKey] = v and true or false
+                if v then LootEnableCategory(e.cat) end
+                LootSyncConfig()
+                return true
+            end,
+        }
+    end
+
+    local function LootGroupRow(cat, group)
+        local entries = (Loot.ByGroup or {})[cat .. ":" .. group] or {}
+        local catKey = LOOT_CAT_KEY[cat]
+        local label = (Loot.GroupLabel and Loot.GroupLabel[group]) or group
+        return {
+            Key = "ModMenu_Loot_" .. (cat == "weapon" and "W_" or "A_")
+                .. ((Loot.GroupSlug and Loot.GroupSlug[group]) or group),
+            UI = AliasMap.TitleSwitcher,
+            Text = T("   ▶ " .. label, "   ▶ " .. label),
+            ExpandHandle = LOOT_CAT_MENU[cat],
+            ExpandIndex = 0,
+            GetFunc = function()
+                if _G.RapzhangConfig[catKey] ~= true then return false end
+                for _, e in ipairs(entries) do
+                    local cfgKey = (Loot.KeyCfg and Loot.KeyCfg[e.key]) or ("Esp9_LootI_" .. e.key)
+                    if _G.RapzhangConfig[cfgKey] == false then return false end
+                end
+                return #entries > 0
+            end,
+            SetFunc = function(_, v)
+                local onv = v and true or false
+                for _, e in ipairs(entries) do
+                    local cfgKey = (Loot.KeyCfg and Loot.KeyCfg[e.key]) or ("Esp9_LootI_" .. e.key)
+                    _G.RapzhangConfig[cfgKey] = onv
+                end
+                if onv then
+                    LootEnableCategory(cat)
+                else
+                    LootClearLabels()
+                end
+                LootSyncConfig()
+                return true
+            end,
+        }
+    end
+
+    local function LootCatRow(cat)
+        local catKey = LOOT_CAT_KEY[cat]
+        local label = (Loot.CatLabel and Loot.CatLabel[cat]) or cat
+        return {
+            Key = LOOT_CAT_MENU[cat],
+            UI = AliasMap.TitleSwitcher,
+            Text = T(label, label),
+            ExpandIndex = 0,
+            GetFunc = function() return _G.RapzhangConfig[catKey] == true end,
+            SetFunc = function(_, v)
+                local onv = v and true or false
+                _G.RapzhangConfig[catKey] = onv
+                if onv then
+                    _G.RapzhangConfig.Esp9_Loot = true
+                else
+                    LootClearLabels()
+                end
+                LootSyncConfig()
+                return true
+            end,
+        }
+    end
+
+    local function LootOtherRow(cat)
+        local catKey = LOOT_CAT_KEY[cat]
+        local otherKey = catKey .. "Other"
+        return {
+            Key = LOOT_CAT_MENU[cat] .. "_Other",
+            UI = AliasMap.Switcher,
+            Text = T("   Other / Uncategorized", "   Other / Uncategorized"),
+            ExpandHandle = LOOT_CAT_MENU[cat],
+            GetFunc = function() return _G.RapzhangConfig[otherKey] ~= false end,
+            SetFunc = function(_, v)
+                _G.RapzhangConfig[otherKey] = v and true or false
+                if v then LootEnableCategory(cat) end
+                LootSyncConfig()
+                return true
+            end,
+        }
+    end
+
+    local StackLoot = {
+        { Key = "ModMenu_Loot_Master", UI = AliasMap.Switcher, Text = T("Enable ESP LOOT", "Enable ESP LOOT"), GetFunc = function() return _G.RapzhangConfig.Esp9_Loot == true end, SetFunc = function(_, v) local onv = v and true or false; _G.RapzhangConfig.Esp9_Loot = onv; if onv then local any = false; for _, k in pairs(LOOT_CAT_KEY) do if _G.RapzhangConfig[k] == true then any = true break end end; if not any then for _, k in pairs(LOOT_CAT_KEY) do _G.RapzhangConfig[k] = true end end else for _, k in pairs(LOOT_CAT_KEY) do _G.RapzhangConfig[k] = false end; LootClearLabels() end; LootSyncConfig(); return true end },
+        { Key = "ModMenu_Loot_Dist", UI = AliasMap.Slider, Text = T("Scan Radius (20-300m)", "Scan Radius (20-300m)"), MinValue = 20, MaxValue = 300, min = 20, max = 300, Min = 20, Max = 300, GetFunc = function() return math.max(20, math.min(300, math.floor((_G.RapzhangConfig.Esp9_LootDist or 120) + 0.5))) end, SetFunc = function(_, v) _G.RapzhangConfig.Esp9_LootDist = math.max(20, math.min(300, math.floor(v + 0.5))); return true end },
+    }
+
+    for _, cat in ipairs(Loot.CatOrder or {}) do
+        StackLoot[#StackLoot + 1] = LootCatRow(cat)
+        local groups = (Loot.GroupOrder or {})[cat]
+        if groups then
+            for _, group in ipairs(groups) do
+                StackLoot[#StackLoot + 1] = LootGroupRow(cat, group)
+                for _, e in ipairs((Loot.ByGroup or {})[cat .. ":" .. group] or {}) do
+                    StackLoot[#StackLoot + 1] = LootItemRow(e, "      ")
+                end
+            end
+        else
+            for _, e in ipairs((Loot.ByCat or {})[cat] or {}) do
+                StackLoot[#StackLoot + 1] = LootItemRow(e, "   ")
+            end
+        end
+        StackLoot[#StackLoot + 1] = LootOtherRow(cat)
+    end
+
         -- STEP 10: Stack Graphic
     local StackGraphic = {
         { Key = "ModMenu_LowGraphics", UI = AliasMap.Switcher, Text = T("Super Duper Low Graphics (Resource)", "Super Duper Low Graphics (Resource)"), GetFunc = function() return _G.RapzhangConfig.LowGraphics == true end, SetFunc = function(_, v)
@@ -1754,6 +2127,7 @@ function _G.InitModMenuTab()
                 { Key = "Cat_AimTouch", Text = T("AIMTOUCH", "AIMTOUCH"), Stack = StackAimbotV2 },
                 { Key = "Cat_Bullet", Text = T("BULLET", "BULLET"), Stack = StackBullet },
                 { Key = "Cat_ESP", Text = T("ESP", "ESP"), Stack = StackESP },
+                { Key = "Cat_Loot", Text = T("ESP LOOT", "ESP LOOT"), Stack = StackLoot },
                 { Key = "Cat_Support", Text = T("SUPPORT", "SUPPORT"), Stack = StackSupport },
                 { Key = "Cat_Graphic", Text = T("GRAPHIC", "GRAPHIC"), Stack = StackGraphic }
             }
@@ -3138,13 +3512,13 @@ function ESP.Destroy(data)
   end
 end
 
--- Panel info membuat 8 TextBlock anak. Hancurkan anaknya secara eksplisit:
--- kalau hanya container yang di-destroy, widget anak bisa tertahan di Slate
--- tree dan menumpuk sepanjang match (penyebab force close).
+-- Panel info membuat beberapa widget anak. Hancurkan anaknya secara
+-- eksplisit: kalau hanya container yang di-destroy, widget anak bisa
+-- tertahan di Slate tree dan menumpuk sepanjang match (force close).
 function ESP.DestroyInfo(data)
   if not data then return end
   for _, w in pairs({ data.Name, data.Dist, data.State, data.Weapon,
-                       data.WeaponIcon, data.Rank, data.Clan, data.Ammo }) do
+                       data.WeaponIcon, data.Ammo }) do
     if w then ESP.Destroy({ Widget = w }) end
   end
   ESP.Destroy({ Widget = data.Container })
@@ -3255,8 +3629,6 @@ function ESP.SyncMenuConfig()
   ESP.Menu.ShowVisibility = cfg.Esp9_Visibility == true
   -- esp new.lua has no weapon-icon or skeleton renderer.
   ESP.Menu.ShowWeapon = cfg.Esp9_Weapon == true
-  ESP.Menu.ShowRank = cfg.Esp9_Rank == true
-  ESP.Menu.ShowClan = cfg.Esp9_Clan == true
   ESP.Menu.ShowAmmo = cfg.Esp9_Ammo == true
   ESP.Menu.Adv = cfg.Esp9_Adv == true
   ESP.Menu.Loot = cfg.Esp9_Loot == true
@@ -3477,7 +3849,7 @@ function ESP.CreateInfo()
   local canvas = ESP.GetCanvas()
   if not ESPValid(canvas) then return nil end
   local container, tName, tDist, tState, tWeapon, tWeaponIcon = nil, nil, nil, nil, nil, nil
-  local tRank, tClan, tAmmo = nil, nil, nil
+  local tAmmo = nil
   pcall(function() container = CGame:NewObjectFromPath("/Script/UMG.CanvasPanel", canvas) end)
   if not ESPValid(container) then return nil end
   pcall(function() tName = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
@@ -3485,14 +3857,11 @@ function ESP.CreateInfo()
   pcall(function() tState = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
   pcall(function() tWeapon = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
   pcall(function() tWeaponIcon = CGame:NewObjectFromPath("/Script/UMG.Image", container) end)
-  pcall(function() tRank = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
-  pcall(function() tClan = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
   pcall(function() tAmmo = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
   if not ESPValid(tName) or not ESPValid(tDist) or not ESPValid(tState) or not ESPValid(tWeapon) or not ESPValid(tWeaponIcon)
-     or not ESPValid(tRank) or not ESPValid(tClan) or not ESPValid(tAmmo) then
+     or not ESPValid(tAmmo) then
     ESP.DestroyInfo({ Container = container, Name = tName, Dist = tDist, State = tState,
-                      Weapon = tWeapon, WeaponIcon = tWeaponIcon, Rank = tRank,
-                      Clan = tClan, Ammo = tAmmo })
+                      Weapon = tWeapon, WeaponIcon = tWeaponIcon, Ammo = tAmmo })
     return nil
   end
   pcall(function()
@@ -3500,8 +3869,6 @@ function ESP.CreateInfo()
     tDist:SetText("0m")
     tState:SetText("Open")
     tWeapon:SetText("")
-    tRank:SetText("")
-    tClan:SetText("")
     tAmmo:SetText("")
     tWeapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
     tName:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
@@ -3509,46 +3876,35 @@ function ESP.CreateInfo()
     tState:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
     tWeapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
     tWeaponIcon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
-    tRank:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
-    tClan:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
     tAmmo:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
     if tName.SetJustification then tName:SetJustification(1) end
     if tDist.SetJustification then tDist:SetJustification(1) end
     if tState.SetJustification then tState:SetJustification(1) end
     if tWeapon.SetJustification then tWeapon:SetJustification(1) end
-    if tRank.SetJustification then tRank:SetJustification(1) end
-    if tClan.SetJustification then tClan:SetJustification(1) end
     if tAmmo.SetJustification then tAmmo:SetJustification(1) end
   end)
   ESP.SetTextColor(tName, C_BLUE)
   ESP.SetTextColor(tDist, C_WHITE)
   ESP.SetTextColor(tState, C_GREEN)
   ESP.SetTextColor(tWeapon, C_YELLOW)
-  ESP.SetTextColor(tRank, C_YELLOW)
-  ESP.SetTextColor(tClan, ESPMKC(0.35, 0.90, 1.0, 1.0))
   ESP.SetTextColor(tAmmo, C_WHITE)
   ESP.SetFont(tName, CFG.NameFontSize)
   ESP.SetFont(tDist, CFG.DistFontSize)
   ESP.SetFont(tState, CFG.StateFontSize)
   ESP.SetFont(tWeapon, CFG.DistFontSize)
-  ESP.SetFont(tRank, CFG.DistFontSize)
-  ESP.SetFont(tClan, CFG.DistFontSize)
   ESP.SetFont(tAmmo, CFG.DistFontSize)
   local s1, s2, s3, s4, ms = nil, nil, nil, nil, nil
   pcall(function() s1 = container:AddChildToCanvas(tName) end)
   pcall(function() s2 = container:AddChildToCanvas(tDist) end)
   pcall(function() s3 = container:AddChildToCanvas(tState) end)
   pcall(function() s4 = container:AddChildToCanvas(tWeapon) end)
-  local s5, s6, s7, s8 = nil, nil, nil, nil
+  local s5, s6 = nil, nil
   pcall(function() s5 = container:AddChildToCanvas(tWeaponIcon) end)
-  pcall(function() s6 = container:AddChildToCanvas(tRank) end)
-  pcall(function() s7 = container:AddChildToCanvas(tClan) end)
-  pcall(function() s8 = container:AddChildToCanvas(tAmmo) end)
+  pcall(function() s6 = container:AddChildToCanvas(tAmmo) end)
   pcall(function() ms = canvas:AddChildToCanvas(container) end)
-  if not s1 or not s2 or not s3 or not s4 or not s5 or not s6 or not s7 or not s8 or not ms then
+  if not s1 or not s2 or not s3 or not s4 or not s5 or not s6 or not ms then
     ESP.DestroyInfo({ Container = container, Name = tName, Dist = tDist, State = tState,
-                      Weapon = tWeapon, WeaponIcon = tWeaponIcon, Rank = tRank,
-                      Clan = tClan, Ammo = tAmmo })
+                      Weapon = tWeapon, WeaponIcon = tWeaponIcon, Ammo = tAmmo })
     return nil
   end
   pcall(function()
@@ -3558,18 +3914,16 @@ function ESP.CreateInfo()
     s4:SetAutoSize(true) s4:SetAlignment(ESPV2(0.5, 0.5)) s4:SetZOrder(36)
     s5:SetAutoSize(false) s5:SetAlignment(ESPV2(0.5, 0.5)) s5:SetPosition(ESPV2(60.0, 74.0)) s5:SetSize(ESPV2(72.0, 36.0)) s5:SetZOrder(36)
     s6:SetAutoSize(true) s6:SetAlignment(ESPV2(0.5, 0.5)) s6:SetZOrder(36)
-    s7:SetAutoSize(true) s7:SetAlignment(ESPV2(0.5, 0.5)) s7:SetZOrder(36)
-    s8:SetAutoSize(true) s8:SetAlignment(ESPV2(0.5, 0.5)) s8:SetZOrder(36)
     ms:SetAutoSize(false) ms:SetZOrder(35)
   end)
   return { Container = container, Name = tName, Dist = tDist, State = tState, Weapon = tWeapon, WeaponIcon = tWeaponIcon,
-           Rank = tRank, Clan = tClan, Ammo = tAmmo,
-           S1 = s1, S2 = s2, S3 = s3, S4 = s4, S5 = s5, S6 = s6, S7 = s7, S8 = s8, Slot = ms }
+           Ammo = tAmmo,
+           S1 = s1, S2 = s2, S3 = s3, S4 = s4, S5 = s5, S6 = s6, Slot = ms }
 end
 
 function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, topY)
   local d = ESP.Infos[key]
-  if not d or not ESPValid(d.Container) or not d.Rank or not d.Clan or not d.Ammo then
+  if not d or not ESPValid(d.Container) or not d.Ammo then
     ESP.DestroyInfo(d)
     d = ESP.CreateInfo()
     ESP.Infos[key] = d
@@ -3602,11 +3956,9 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
   end
   local weapon = weaponCache.text or ""
   local weaponInfo = weaponCache.info
-  local rankText, clanText, ammoText = "", "", ""
-  if ESP.Extra then
-    if menu.ShowRank then rankText = ESP.Extra.GetRankText(Character, isBot) or "" end
-    if menu.ShowClan then clanText = ESP.Extra.GetClanText(Character, isBot) or "" end
-    if menu.ShowAmmo then ammoText = ESP.Extra.GetAmmoText(Character, isBot) or "" end
+  local ammoText = ""
+  if ESP.Extra and menu.ShowAmmo then
+    ammoText = ESP.Extra.GetAmmoText(Character, isBot) or ""
   end
   -- Visibility: Open (green) / Close (red)
   local st = bVisible and "Open" or "Close"
@@ -3626,8 +3978,6 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       else ESP.SetTextColor(d.State, C_RED) end
     end
     if d.LastW ~= weapon then d.LastW = weapon end
-    if d.LastRank ~= rankText then d.Rank:SetText(rankText) d.LastRank = rankText end
-    if d.LastClan ~= clanText then d.Clan:SetText(clanText) d.LastClan = clanText end
     if d.LastAmmo ~= ammoText then d.Ammo:SetText(ammoText) d.LastAmmo = ammoText end
     pcall(function() d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
     if menu.ShowWeapon and weaponInfo and weaponInfo.WeaponID then
@@ -3640,10 +3990,10 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
     end
     if d.LastK ~= stKey then d.LastK = stKey end
   end)
-  -- 6 lines, centered under feet (pos cache, flicker fix)
+  -- 4 baris teks (nama, jarak, status, ammo), centered under feet.
   local w = 120.0
-  local h1, h2, h3, h4, h5, h6 = 20.0, 17.0, 17.0, 15.0, 15.0, 15.0
-  local panelH = h1 + h2 + h3 + h4 + h5 + h6 + 30.0
+  local h1, h2, h3, h4 = 20.0, 17.0, 17.0, 15.0
+  local panelH = h1 + h2 + h3 + h4 + 30.0
   local x = RND(footX - w * 0.5)
   local y = RND(footY + 4.0)
   if d.ix == nil or math.abs(d.ix - x) >= 1.0 or math.abs((d.iy or 0) - y) >= 1.0 then
@@ -3655,8 +4005,6 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       d.S2:SetPosition(ESPV2(w * 0.5, h1 + h2 * 0.5 + CFG.TextGap))
       d.S3:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 * 0.5 + CFG.TextGap * 2.0))
       d.S6:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + h4 * 0.5 + CFG.TextGap * 3.0))
-      d.S7:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + h4 + h5 * 0.5 + CFG.TextGap * 4.0))
-      d.S8:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + h4 + h5 + h6 * 0.5 + CFG.TextGap * 5.0))
       -- Weapon icon: above the target box/head, not in the bottom text panel.
       local iconY = ((tonumber(topY) or (footY - 50.0)) - footY) - 18.0
       d.S5:SetPosition(ESPV2(w * 0.5, iconY))
@@ -3666,8 +4014,6 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
       d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
       d.State:SetWidgetVisibility(menu.ShowVisibility and visible or hidden)
-      d.Rank:SetWidgetVisibility((menu.ShowRank and rankText ~= "") and visible or hidden)
-      d.Clan:SetWidgetVisibility((menu.ShowClan and clanText ~= "") and visible or hidden)
       d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
       d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
       d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
@@ -3680,8 +4026,6 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
       d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
       d.State:SetWidgetVisibility(menu.ShowVisibility and visible or hidden)
-      d.Rank:SetWidgetVisibility((menu.ShowRank and rankText ~= "") and visible or hidden)
-      d.Clan:SetWidgetVisibility((menu.ShowClan and clanText ~= "") and visible or hidden)
       d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
       d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
       d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
@@ -6312,6 +6656,20 @@ do
     misc   = "Esp9_LootMisc",
   }
 
+  -- Filter per item. Entri katalog memakai toggle item sendiri; ID yang
+  -- belum tercatat tetap tampil selama toggle "Other" kategori ON.
+  local function lootItemVisible(c, id, cat)
+    local entry = _G.RapzhangLoot and _G.RapzhangLoot.ById and _G.RapzhangLoot.ById[id]
+    if entry then
+      local cfgKey = (_G.RapzhangLoot.KeyCfg and _G.RapzhangLoot.KeyCfg[entry.key])
+        or ("Esp9_LootI_" .. entry.key)
+      return c[cfgKey] ~= false
+    end
+    local catKey = LOOT_CAT_KEY[cat]
+    if catKey then return c[catKey .. "Other"] ~= false end
+    return true
+  end
+
   function ADV.ScanLoot(me, now)
     local c = cfg()
     local radius = tonumber(c.Esp9_LootDist) or 120
@@ -6342,9 +6700,19 @@ do
             entries = { { id = id, typ = typ, count = count } }
           end
           if #entries > 0 then
-            local e = entries[1]
-            local name, data = itemEntry(e.id, e.typ, e.count)
-            if want[lootCategory(e.typ, e.id, data)] then
+            -- Satu wrapper bisa berisi beberapa item. Pilih item pertama
+            -- yang kategorinya ON dan toggle item-nya tidak dimatikan.
+            local picked = nil
+            for _, e in ipairs(entries) do
+              local entry = _G.RapzhangLoot and _G.RapzhangLoot.ById and _G.RapzhangLoot.ById[e.id]
+              local cat = entry and entry.cat or lootCategory(e.typ, e.id, nil)
+              if want[cat] and lootItemVisible(c, e.id, cat) then
+                picked = e
+                break
+              end
+            end
+            if picked then
+              local name, data = itemEntry(picked.id, picked.typ, picked.count)
               out[#out + 1] = {
                 key = objectKey(ADV.GroundKey, a, loc),
                 x = loc.X, y = loc.Y, z = loc.Z,
@@ -7224,7 +7592,7 @@ function ESP.Update()
   end
   -- stale: yang off-screen di-hide, yang sudah keluar dari EnemyCache di-release.
   -- Dulu release hanya lewat Corners/HealthBg; saat Team box & Health bar OFF
-  -- tabel itu kosong, sehingga ESP.Infos (8 widget/target) dan ESP.Lines tidak
+  -- tabel itu kosong, sehingga ESP.Infos (6 widget/target) dan ESP.Lines tidak
   -- pernah dihancurkan -> UMG menumpuk -> force close di pertengahan match.
   local seenCache = ESP.SeenKeys
   if seenCache == nil then
