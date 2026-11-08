@@ -1379,6 +1379,8 @@ do
         { id = 602005, key = "Apple",           name = "Apple",           cat = "throw" },
         -- MISC
         { id = 603001, key = "GasCan",          name = "Gas Can",         cat = "misc" },
+        { id = 601095, key = "SelfAid",         name = "Self Aid",        cat = "misc" },
+        { id = 3000324, key = "ShopToken",      name = "Shop Token",      cat = "misc" },
     }
 
     L.ById = {}
@@ -6638,6 +6640,12 @@ do
     local data = id and itemData("Item", id) or nil
     local name = data and (data.ItemName or data.Name) or nil
     if type(name) ~= "string" or name == "" then
+      -- Sebagian item (mis. token/currency) tidak punya baris ItemData di
+      -- client; pakai nama katalog supaya label tidak jatuh ke "Item <id>".
+      local e = _G.RapzhangLoot and _G.RapzhangLoot.ById and _G.RapzhangLoot.ById[id]
+      name = e and e.name or nil
+    end
+    if type(name) ~= "string" or name == "" then
       name = "Item " .. tostring(id or "?")
     end
     if #name > 26 then name = name:sub(1, 26) .. ".." end
@@ -6726,6 +6734,7 @@ do
       name = tostring(name)
       if name ~= "" then return prefix .. name end
     end
+    if not loc then return nil end
     return actorKey(prefix, loc)
   end
 
@@ -6769,15 +6778,21 @@ do
   -- ter-update, jadi key+item di-blacklist sebentar supaya scan berikutnya
   -- tidak menggambar ulang label yang sudah dihapus.
   ADV.Picked = ADV.Picked or {}
-  ADV.PickTTL = 3.0
+  ADV.PickTTL = 5.0
 
   function ADV.NoteLootPicked(wrapper, itemID)
-    local loc = wrapper and ESP.ActorLocation(wrapper) or nil
-    if not loc then return end
+    if not wrapper then return end
+    local loc = ESP.ActorLocation(wrapper)
     local key = objectKey(ADV.GroundKey or "lt_", wrapper, loc)
+    if not key then return end
     local now = ESP.Now()
+    local ttl = ADV.PickTTL or 5.0
     if itemID then
-      ADV.Picked[key .. "|" .. tostring(itemID)] = now + (ADV.PickTTL or 3.0)
+      ADV.Picked[key .. "|" .. tostring(itemID)] = now + ttl
+    else
+      -- Event pickup tidak selalu membawa ID item: blacklist seluruh pile
+      -- sebentar supaya label tidak langsung digambar ulang dari data basi.
+      ADV.Picked[key .. "|*"] = now + ttl
     end
     local keep, changed = {}, false
     for _, it in ipairs(ADV.LootCache or {}) do
@@ -6794,28 +6809,54 @@ do
     end
   end
 
+  -- Item yang di-blacklist bisa muncul sebagai item lain di pile yang sama,
+  -- jadi cek ID spesifik dan wildcard (event tanpa ID) sekaligus.
+  local function lootPickedAt(key, id, now)
+    local t = ADV.Picked
+    if not t then return false end
+    local a = t[key .. "|" .. tostring(id)]
+    if a and a > now then return true end
+    local b = t[key .. "|*"]
+    return b ~= nil and b > now
+  end
+
   function ADV.OnPawnPickup(_, _, uCharacter, uWrapperActor)
     if not uWrapperActor then return end
-    local me = ESP.GetLocalCharacter()
-    if me and uCharacter and uCharacter ~= me then return end
+    -- Pickup oleh pemain mana pun tetap membuat label pile itu basi; tidak
+    -- perlu memfilter karakter lokal (objek karakter bisa beda wrapper).
     pcall(ADV.NoteLootPicked, uWrapperActor, nil)
   end
 
-  -- Panel pickup adalah jalur Lua yang dipakai pickup manual maupun auto-pick.
-  -- Bungkus method instance-nya supaya label bisa hilang tepat saat pickup,
-  -- tanpa menunggu RPC/sinkronisasi wrapper.
-  function ADV.InstallPickupHook()
-    local installed = false
+  -- Instance PickUpListPanel adalah singleton UI yang dipakai game lewat
+  -- UIManager.GetUI(UIManager.UI_Config_InGame.PickUpListPanel). Library
+  -- ClientIngameUIFunctionLibrary tidak ada di semua build, jadi jalur itu
+  -- hanya fallback.
+  local function findPickupPanel()
     local panel = nil
-    -- Jalur resmi game (BackPackItemUI): library UI client, bukan global.
     pcall(function()
-      local lib = require("GameLua.Mod.Library.Client.ClientIngameUIFunctionLibrary")
-      local icp = lib and lib.GetInputControlPanel and lib.GetInputControlPanel() or nil
-      local main = icp and icp.MainControlBaseUI
-      local bp = main and main.BackPackPickUpPanel_BP
-      panel = bp and bp.PickUpListPanel_BP
+      local um = rawget(_G, "UIManager")
+      local cfg = um and um.UI_Config_InGame and um.UI_Config_InGame.PickUpListPanel
+      if um and cfg and type(um.GetUI) == "function" then
+        panel = um.GetUI(cfg)
+      end
     end)
-    if not panel then
+    if panel == nil then
+      pcall(function()
+        local um = rawget(_G, "UIManager")
+        local cfg = um and um.UI_Config_InGame and um.UI_Config_InGame.PickUpListPanel
+        if um and cfg and type(um.GetUI) == "function" then panel = um:GetUI(cfg) end
+      end)
+    end
+    if panel == nil then
+      pcall(function()
+        local ok, lib = pcall(require, "GameLua.Mod.Library.Client.ClientIngameUIFunctionLibrary")
+        local icp = ok and lib and lib.GetInputControlPanel and lib.GetInputControlPanel() or nil
+        local main = icp and icp.MainControlBaseUI
+        local bp = main and main.BackPackPickUpPanel_BP
+        panel = bp and bp.PickUpListPanel_BP
+      end)
+    end
+    if panel == nil then
       pcall(function()
         local icp = worldGlobal("InputControlPanel")
         local main = icp and icp.MainControlBaseUI
@@ -6823,26 +6864,97 @@ do
         panel = bp and bp.PickUpListPanel_BP
       end)
     end
-    if panel and type(panel.PickUpWrapperActor) == "function" then
-      if panel.PickUpWrapperActor == ADV._pickWrap then
-        installed = true
-      else
-        local orig = panel.PickUpWrapperActor
-        local wrap = function(self, uPlayerCharacter, pickupItem, pickCount)
-          pcall(function()
-            local wrapper = pickupItem and pickupItem.Wrapper
-            local mainItem = pickupItem and pickupItem.MainItemData
-            local id = mainItem and mainItem.ID and tonumber(mainItem.ID.TypeSpecificID) or nil
-            if wrapper then ADV.NoteLootPicked(wrapper, id) end
-          end)
-          return orig(self, uPlayerCharacter, pickupItem, pickCount)
+    return panel
+  end
+
+  -- Bungkus satu method instance. Idempoten: kalau method sudah wrapper kita,
+  -- jangan dibungkus lagi saat panel yang sama ditemukan pada retry berikut.
+  local function hookPanelMethod(panel, name, makeWrap)
+    if not panel then return false end
+    local cur = nil
+    pcall(function() cur = panel[name] end)
+    if type(cur) ~= "function" then return false end
+    ADV._pickWraps = ADV._pickWraps or {}
+    if cur == ADV._pickWraps[name] then return true end
+    local wrap = makeWrap(cur)
+    local ok = false
+    if pcall(function() panel[name] = wrap end) then ok = true end
+    if not ok then
+      -- Sebagian objek UI memakai proxy userdata: assignment instance bisa
+      -- ditolak. Fallback ke tabel class lewat metatable.__index.
+      pcall(function()
+        local mt = getmetatable(panel)
+        local idx = mt and mt.__index
+        if type(idx) == "table" and type(idx[name]) == "function" then
+          idx[name] = wrap
+          ok = true
         end
-        if pcall(function() panel.PickUpWrapperActor = wrap end) then
-          ADV._pickWrap, ADV._pickOrig = wrap, orig
-          installed = true
-        end
-      end
+      end)
     end
+    if ok then ADV._pickWraps[name] = wrap end
+    return ok
+  end
+
+  local function wrapPickupItem(orig)
+    return function(self, uPlayerCharacter, pickupItem, pickCount)
+      pcall(function()
+        local wrapper = pickupItem and pickupItem.Wrapper
+        local mainItem = pickupItem and pickupItem.MainItemData
+        local id = mainItem and mainItem.ID and tonumber(mainItem.ID.TypeSpecificID) or nil
+        if wrapper then ADV.NoteLootPicked(wrapper, id) end
+      end)
+      return orig(self, uPlayerCharacter, pickupItem, pickCount)
+    end
+  end
+
+  -- Hitungan index di PickUpGroundItemByIndex memakai offset scroll yang sama
+  -- dengan source game. Diperlukan karena quick-pick memanggil method ini,
+  -- lalu method ini memanggil karakter langsung (bypass PickUpWrapperActor).
+  local function groundItemAt(self, nIndex)
+    local wrapper, id = nil, nil
+    pcall(function()
+      local list = self and self.GroundItemList
+      local reuse = self and self.CustomizePickUpPanel_BP
+        and self.CustomizePickUpPanel_BP.BTReuseList
+      if not list or not reuse then return end
+      local sizeY = tonumber(reuse.itemSizeY) or 0
+      if sizeY <= 0 then return end
+      local offset = tonumber(reuse.CurrentOffset) or 0
+      local hide, frac = math.modf(offset / sizeY)
+      if 0.1 < frac then hide = hide + 1 end
+      local idx = math.floor(hide + (tonumber(nIndex) or 1) - 1)
+      local n = 0
+      pcall(function() n = tonumber(list:Num()) or 0 end)
+      if n <= 0 then pcall(function() n = #list end) end
+      if idx < 0 or idx >= n then return end
+      local itemData = nil
+      pcall(function() itemData = list:Get(idx) end)
+      if itemData == nil then itemData = list[idx + 1] end
+      local sr = itemData and itemData.SearchItemResult
+      wrapper = sr and sr.Wrapper or nil
+      local md = sr and sr.MainItemData
+      id = md and md.ID and tonumber(md.ID.TypeSpecificID) or nil
+    end)
+    return wrapper, id
+  end
+
+  local function wrapGroundIndex(orig)
+    return function(self, nIndex)
+      local wrapper, id = groundItemAt(self, nIndex)
+      if wrapper then pcall(ADV.NoteLootPicked, wrapper, id) end
+      return orig(self, nIndex)
+    end
+  end
+
+  -- Panel pickup adalah jalur Lua yang dipakai pickup manual maupun auto-pick.
+  -- Bungkus method instance-nya supaya label bisa hilang tepat saat pickup,
+  -- tanpa menunggu RPC/sinkronisasi wrapper.
+  function ADV.InstallPickupHook()
+    local installed = false
+    local panel = findPickupPanel()
+
+    if hookPanelMethod(panel, "PickUpWrapperActor", wrapPickupItem) then installed = true end
+    if hookPanelMethod(panel, "PickUpGroundItemByIndex", wrapGroundIndex) then installed = true end
 
     -- Fallback untuk jalur yang memanggil method karakter/pickup manager
     -- langsung (mis. quick pickup). Best-effort: kalau userdata menolak
@@ -6906,6 +7018,8 @@ do
     -- langsung dibuang, bukan menunggu TTL Sweep.
     local prevVisible = {}
     for _, it in ipairs(ADV.LootCache or {}) do prevVisible[it.key] = true end
+    ADV.ListOK = ADV.ListOK or {}
+    local seenNow = {}
     local pool = queryOrScan("loot",
       function(g) return g:QueryPickUpWrappers(meLoc, radius * 100.0, nil, false, 70) end,
       function() return actorsOfClass(class("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor")) end,
@@ -6916,6 +7030,7 @@ do
         local dist = ESP.DistMeters(meLoc, loc)
         if dist <= radius then
           local key = objectKey(ADV.GroundKey, a, loc)
+          if key then seenNow[key] = true end
           local removed = false
           pcall(function()
             removed = a.bItemRemoved == true or a.bPickedUp == true
@@ -6923,9 +7038,18 @@ do
           end)
           local id, typ, count = readDefineID(a)
           local entries, listed = listItems(a)
-          local emptied = listed and #entries == 0 and prevVisible[key] == true
+          if listed then ADV.ListOK[key] = true end
+          local listedBefore = ADV.ListOK[key] == true
+          -- Wrapper yang tadinya punya label lalu daftar itemnya kosong/tak
+          -- terbaca berarti isinya sudah diambil. Jangan hidupkan lagi dari
+          -- DefineID statis yang tidak ikut ter-update.
+          local emptied = prevVisible[key] == true and #entries == 0
+            and (listed or listedBefore)
           if not removed and not emptied then
-            if #entries == 0 and id and (tonumber(count) == nil or tonumber(count) > 0) then
+            -- DefineID hanya dipakai kalau list item memang tidak tersedia
+            -- di build ini (bukan saat list terbaca tapi sudah kosong).
+            if #entries == 0 and not listed and id
+              and (tonumber(count) == nil or tonumber(count) > 0) then
               entries = { { id = id, typ = typ, count = count } }
             end
             if #entries > 0 then
@@ -6935,8 +7059,8 @@ do
               for _, e in ipairs(entries) do
                 local entry = _G.RapzhangLoot and _G.RapzhangLoot.ById and _G.RapzhangLoot.ById[e.id]
                 local cat = entry and entry.cat or lootCategory(e.typ, e.id, nil)
-                local blk = ADV.Picked[key .. "|" .. tostring(e.id)]
-                if not (blk and blk > now) and want[cat] and lootItemVisible(c, e.id, cat) then
+                if not lootPickedAt(key, e.id, now)
+                  and want[cat] and lootItemVisible(c, e.id, cat) then
                   picked = e
                   break
                 end
@@ -6960,6 +7084,12 @@ do
     end
 
     table.sort(out, function(a, b) return (a.dist or 99999) < (b.dist or 99999) end)
+    -- ListOK hanya perlu untuk wrapper yang masih terlihat/ada di pool. Key
+    -- dari wrapper yang sudah hancur/keluar radius dibuang supaya tabel tidak
+    -- tumbuh sepanjang match.
+    for k in pairs(ADV.ListOK) do
+      if not seenNow[k] and not prevVisible[k] then ADV.ListOK[k] = nil end
+    end
     local trimmed = {}
     local cap = tonumber(ESP.LootCap) or 70
     for i = 1, math.min(#out, 70) do
@@ -7571,6 +7701,8 @@ do
   -- --------------------------------------------------------
   function ADV.ClearLoot()
     ADV.LootCache = {}
+    ADV.ListOK = {}
+    ADV.Picked = {}
     hidePrefix("lt_")
   end
 
