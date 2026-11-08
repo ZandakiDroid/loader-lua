@@ -6696,8 +6696,11 @@ do
           local d = e.ID or e.DefineID or e.ItemDefineID
           local id = d and tonumber(d.TypeSpecificID) or tonumber(e.ItemID)
           local typ = d and tonumber(d.Type) or nil
-          local cnt = tonumber(e.Count) or 1
-          if id and id > 0 and cnt > 0 then
+          -- Count bisa 0/nil untuk item tunggal pada beberapa build; jangan
+          -- buang entri karena itu membuat seluruh loot tidak tampil.
+          local cnt = tonumber(e.Count)
+          if not cnt or cnt < 1 then cnt = 1 end
+          if id and id > 0 then
             out[#out + 1] = { id = id, typ = typ, count = cnt }
           end
         end
@@ -6847,26 +6850,34 @@ do
   -- atau aktornya hilang dihancurkan pada frame yang sama supaya tidak ada
   -- tanda hantu dan widget tidak menumpuk.
   function ADV.SyncLootLabels()
+    -- Modul ADV berada di luar blok `local EX = ESP.Extra`; akses lewat
+    -- ESP.Extra supaya tidak menyentuh global EX yang nil (dulu membuat
+    -- seluruh DrawLoot gagal dan semua label loot hilang).
+    local extra = ESP.Extra
+    if not extra or not extra.Labels then return end
     local keep = {}
     for _, it in ipairs(ADV.LootCache or {}) do keep[it.key] = true end
     local prefix = ADV.GroundKey or "lt_"
     local n = #prefix
     local gone = nil
-    for key in pairs(EX.Labels or {}) do
-      if key:sub(1, n) == prefix and not keep[key] then
+    for key in pairs(extra.Labels) do
+      if type(key) == "string" and key:sub(1, n) == prefix and not keep[key] then
         gone = gone or {}
         gone[#gone + 1] = key
       end
     end
     if not gone then return end
+    local lastSeen = extra.LastSeen or {}
     for _, key in ipairs(gone) do
-      EX.LastSeen[key] = nil
-      EX.DestroyMark(key)
+      lastSeen[key] = nil
+      if extra.DestroyMark then pcall(extra.DestroyMark, key) end
     end
   end
 
   function ADV.DrawLoot(pc, now)
-    ADV.SyncLootLabels()
+    -- Sinkronisasi label tidak boleh memblokir render loot kalau ada API
+    -- widget yang tidak tersedia di build tertentu.
+    pcall(ADV.SyncLootLabels)
     local list = ADV.LootCache or {}
     for _, it in ipairs(list) do
       local s = ESP.Project(pc, { X = it.x, Y = it.y, Z = it.z + 25.0 })
