@@ -1186,6 +1186,30 @@ if _G.ModConfigLoadedVersion ~= SETTINGS_LOADER_VERSION then
     _G.ModConfigLoadedVersion = SETTINGS_LOADER_VERSION
 end
 
+-- Migrasi sekali: versi lama menyimpan semua toggle item ON saat subgrup
+-- dinyalakan. Reset pilihan loot agar update ini mulai dari item OFF dan
+-- pemain memilih sendiri item yang ingin ditampilkan.
+do
+    local cfg = _G.RapzhangConfig
+    if cfg and cfg.Esp9_LootSelVer ~= 2 then
+        local drop = {}
+        for k in pairs(cfg) do
+            local sk = tostring(k)
+            if sk:find("^Esp9_LootI_") or sk:find("^Esp9_LootG_")
+                or sk:match("^Esp9_Loot%a+Other$") then
+                drop[#drop + 1] = k
+            end
+        end
+        for _, k in ipairs(drop) do cfg[k] = nil end
+        cfg.Esp9_Loot = false
+        for _, k in ipairs({
+            "Esp9_LootWeapon", "Esp9_LootGear", "Esp9_LootAmmo", "Esp9_LootMeds",
+            "Esp9_LootAttach", "Esp9_LootThrow", "Esp9_LootMisc",
+        }) do cfg[k] = false end
+        cfg.Esp9_LootSelVer = 2
+    end
+end
+
 _G.ReadLiveConfig = function()
     if _G.SaveModSettings then _G.SaveModSettings() end
 end
@@ -1415,6 +1439,14 @@ do
         Muzzle = "MUZZLE", Grip = "GRIP", Scope = "SCOPE",
         Magazine = "MAG", Stock = "STOCK",
     }
+    -- Gerbang subgrup: ON hanya membuka subgrup, tidak menyalakan item.
+    L.GroupCfg = {}
+    for cat, groups in pairs(L.GroupOrder) do
+        for _, group in ipairs(groups) do
+            L.GroupCfg[cat .. ":" .. group] =
+                "Esp9_LootG_" .. (L.GroupSlug[group] or group)
+        end
+    end
 end
 
 -- ============================================================
@@ -1989,8 +2021,9 @@ function _G.InitModMenuTab()
     end
 
     local function LootItemRow(e, indent)
-        local catKey = LOOT_CAT_KEY[e.cat]
         local cfgKey = (Loot.KeyCfg and Loot.KeyCfg[e.key]) or ("Esp9_LootI_" .. e.key)
+        local groupKey = e.group and Loot.GroupCfg
+            and Loot.GroupCfg[e.cat .. ":" .. e.group] or nil
         local parent = LOOT_CAT_MENU[e.cat]
         local prefix = LOOT_GROUP_PREFIX[e.cat]
         if prefix and e.group then
@@ -2005,7 +2038,10 @@ function _G.InitModMenuTab()
             GetFunc = function() return _G.RapzhangConfig[cfgKey] == true end,
             SetFunc = function(_, v)
                 _G.RapzhangConfig[cfgKey] = v and true or false
-                if v then LootEnableCategory(e.cat) end
+                if v then
+                    if groupKey then _G.RapzhangConfig[groupKey] = true end
+                    LootEnableCategory(e.cat)
+                end
                 LootSyncConfig()
                 return true
             end,
@@ -2013,9 +2049,9 @@ function _G.InitModMenuTab()
     end
 
     local function LootGroupRow(cat, group)
-        local entries = (Loot.ByGroup or {})[cat .. ":" .. group] or {}
-        local catKey = LOOT_CAT_KEY[cat]
         local label = (Loot.GroupLabel and Loot.GroupLabel[group]) or group
+        local groupKey = (Loot.GroupCfg and Loot.GroupCfg[cat .. ":" .. group])
+            or ("Esp9_LootG_" .. ((Loot.GroupSlug and Loot.GroupSlug[group]) or group))
         return {
             Key = "ModMenu_Loot_" .. (LOOT_GROUP_PREFIX[cat] or "X_")
                 .. ((Loot.GroupSlug and Loot.GroupSlug[group]) or group),
@@ -2023,20 +2059,12 @@ function _G.InitModMenuTab()
             Text = T("   ▶ " .. label, "   ▶ " .. label),
             ExpandHandle = LOOT_CAT_MENU[cat],
             ExpandIndex = 0,
-            GetFunc = function()
-                if _G.RapzhangConfig[catKey] ~= true then return false end
-                for _, e in ipairs(entries) do
-                    local cfgKey = (Loot.KeyCfg and Loot.KeyCfg[e.key]) or ("Esp9_LootI_" .. e.key)
-                    if _G.RapzhangConfig[cfgKey] ~= true then return false end
-                end
-                return #entries > 0
-            end,
+            -- Gerbang subgrup: ON tidak menyentuh toggle item. Item yang
+            -- dipilih sendiri akan menyalakan gerbang ini otomatis.
+            GetFunc = function() return _G.RapzhangConfig[groupKey] == true end,
             SetFunc = function(_, v)
                 local onv = v and true or false
-                for _, e in ipairs(entries) do
-                    local cfgKey = (Loot.KeyCfg and Loot.KeyCfg[e.key]) or ("Esp9_LootI_" .. e.key)
-                    _G.RapzhangConfig[cfgKey] = onv
-                end
+                _G.RapzhangConfig[groupKey] = onv
                 if onv then
                     LootEnableCategory(cat)
                 else
@@ -2090,7 +2118,7 @@ function _G.InitModMenuTab()
     end
 
     local StackLoot = {
-        { Key = "ModMenu_Loot_Master", UI = AliasMap.Switcher, Text = T("Enable ESP LOOT", "Enable ESP LOOT"), GetFunc = function() return _G.RapzhangConfig.Esp9_Loot == true end, SetFunc = function(_, v) local onv = v and true or false; _G.RapzhangConfig.Esp9_Loot = onv; if not onv then for _, k in pairs(LOOT_CAT_KEY) do _G.RapzhangConfig[k] = false end; LootClearLabels() end; LootSyncConfig(); return true end },
+        { Key = "ModMenu_Loot_Master", UI = AliasMap.Switcher, Text = T("Enable ESP LOOT", "Enable ESP LOOT"), GetFunc = function() return _G.RapzhangConfig.Esp9_Loot == true end, SetFunc = function(_, v) local onv = v and true or false; _G.RapzhangConfig.Esp9_Loot = onv; if not onv then for _, k in pairs(LOOT_CAT_KEY) do _G.RapzhangConfig[k] = false end; for _, k in pairs(Loot.GroupCfg or {}) do _G.RapzhangConfig[k] = false end; LootClearLabels() end; LootSyncConfig(); return true end },
         { Key = "ModMenu_Loot_Dist", UI = AliasMap.Slider, Text = T("Scan Radius (20-300m)", "Scan Radius (20-300m)"), MinValue = 20, MaxValue = 300, min = 20, max = 300, Min = 20, Max = 300, GetFunc = function() return math.max(20, math.min(300, math.floor((_G.RapzhangConfig.Esp9_LootDist or 120) + 0.5))) end, SetFunc = function(_, v) _G.RapzhangConfig.Esp9_LootDist = math.max(20, math.min(300, math.floor(v + 0.5))); return true end },
     }
 
@@ -6671,6 +6699,11 @@ do
   local function lootItemVisible(c, id, cat)
     local entry = _G.RapzhangLoot and _G.RapzhangLoot.ById and _G.RapzhangLoot.ById[id]
     if entry then
+      if entry.group then
+        local groupKey = _G.RapzhangLoot.GroupCfg
+          and _G.RapzhangLoot.GroupCfg[entry.cat .. ":" .. entry.group]
+        if groupKey and c[groupKey] ~= true then return false end
+      end
       local cfgKey = (_G.RapzhangLoot.KeyCfg and _G.RapzhangLoot.KeyCfg[entry.key])
         or ("Esp9_LootI_" .. entry.key)
       return c[cfgKey] == true
