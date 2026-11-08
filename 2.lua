@@ -164,6 +164,7 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     Esp9_Grenade = false,
     Esp9_GrenadeMark = true,
     Esp9_GrenadeRadius = true,
+    Esp9_GrenadeBounce = true,
     Esp9_Ammo = false,
     -- Advanced overlay: satu parent switch, semua anak default OFF.
     Esp9_Adv = false,
@@ -1657,27 +1658,28 @@ function _G.InitModMenuTab()
 
     -- STEP 6: Stack ESP
         local StackESP = {
-            { Key = "ModMenu_ESP9_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ ESP V2", "▶ ESP V2"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.EspLoai9 == true end, SetFunc = function(c,v) _G.RapzhangConfig.EspLoai9 = (v == true); if not v and _G.ESP and _G.ESP.ResetWidgets then pcall(_G.ESP.ResetWidgets) end; return true end },
-            { Key = "ModMenu_ESP9_Count", UI = AliasMap.Switcher, Text = T("   Show Player Count", "   Show Player Count"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Count == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_Count = (v == true) return true end },
-            { Key = "ModMenu_ESP9_Name", UI = AliasMap.Switcher, Text = T("   Show Player Name", "   Show Player Name"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Name == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_Name = (v == true) return true end },
-            { Key = "ModMenu_ESP9_Dist", UI = AliasMap.Switcher, Text = T("   Show Distance", "   Show Distance"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Distance == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_Distance = (v == true) return true end },
-            { Key = "ModMenu_ESP9_HP", UI = AliasMap.Switcher, Text = T("   Show Health Bar", "   Show Health Bar"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_HP == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_HP = (v == true) return true end },
-            { Key = "ModMenu_ESP9_Team", UI = AliasMap.Switcher, Text = T("   Show Team Color Box", "   Show Team Color Box"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Team == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_Team = (v == true) return true end },
-            { Key = "ModMenu_ESP9_TeamNumber", UI = AliasMap.Switcher, Text = T("   Show Number Team", "   Show Number Team"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_TeamNumber == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_TeamNumber = v and true or false; return true end },
-            { Key = "ModMenu_ESP9_Weapon", UI = AliasMap.Switcher, Text = T("   Show Weapon Icon", "   Show Weapon Icon"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Weapon == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_Weapon = (v == true) return true end },
-            { Key = "ModMenu_ESP9_Line", UI = AliasMap.Switcher, Text = T("   Show Snapline", "   Show Snapline"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Line == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Line = (v == true); return true end },
-            { Key = "ModMenu_ESP9_Visibility", UI = AliasMap.Switcher, Text = T("   Show Visibility (Open/Close)", "   Show Visibility (Open/Close)"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Visibility == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Visibility = (v == true); return true end },
-            { Key = "ModMenu_ESP9_Radar360", UI = AliasMap.Switcher, Text = T("   ESP Distance + 360 Radar", "   ESP Distance + 360 Radar"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Radar360 == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Radar360 = v and true or false; return true end },
+            { Key = "ModMenu_ESP9_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ ESP 2", "▶ ESP 2"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.EspLoai9 == true end, SetFunc = function(c,v) _G.RapzhangConfig.EspLoai9 = (v == true); if not v and _G.ESP and _G.ESP.ResetWidgets then pcall(_G.ESP.ResetWidgets) end; return true end },
+            { Key = "ModMenu_ESP9_Count", UI = AliasMap.Switcher, Text = T("   Player Count", "   Player Count"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Count == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_Count = (v == true) return true end },
+            { Key = "ModMenu_ESP9_Name", UI = AliasMap.Switcher, Text = T("   Player Name", "   Player Name"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Name == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_Name = (v == true) return true end },
+            { Key = "ModMenu_ESP9_Dist", UI = AliasMap.Switcher, Text = T("   Player Distance", "   Player Distance"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Distance == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_Distance = (v == true) return true end },
+            { Key = "ModMenu_ESP9_HP", UI = AliasMap.Switcher, Text = T("   Health Bar", "   Health Bar"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_HP == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_HP = (v == true) return true end },
+            { Key = "ModMenu_ESP9_Team", UI = AliasMap.Switcher, Text = T("   Team Color Box", "   Team Color Box"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Team == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_Team = (v == true) return true end },
+            { Key = "ModMenu_ESP9_TeamNumber", UI = AliasMap.Switcher, Text = T("   Team Number", "   Team Number"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_TeamNumber == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_TeamNumber = v and true or false; return true end },
+            { Key = "ModMenu_ESP9_Visibility", UI = AliasMap.Switcher, Text = T("   Visibility (Open/Close)", "   Visibility (Open/Close)"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Visibility == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Visibility = (v == true); return true end },
+            { Key = "ModMenu_ESP9_Line", UI = AliasMap.Switcher, Text = T("   Snapline", "   Snapline"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Line == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Line = (v == true); return true end },
+            { Key = "ModMenu_ESP9_Weapon", UI = AliasMap.Switcher, Text = T("   Weapon Icon", "   Weapon Icon"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Weapon == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_Weapon = (v == true) return true end },
+            { Key = "ModMenu_ESP9_Ammo", UI = AliasMap.Switcher, Text = T("   Enemy Ammo + Reload", "   Enemy Ammo + Reload"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ammo == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ammo = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_Radar360", UI = AliasMap.Switcher, Text = T("   360 Radar + Distance", "   360 Radar + Distance"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Radar360 == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Radar360 = v and true or false; return true end },
             { Key = "ModMenu_ESP9_Airdrop", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Airdrop ESP", "   ▶ Airdrop ESP"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Airdrop == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Airdrop = on; if on then _G.RapzhangConfig.Esp9_AirdropBox = true; _G.RapzhangConfig.Esp9_AirdropPredict = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ESP9_AirdropBox", UI = AliasMap.Switcher, Text = T("      ESP Box", "      ESP Box"), ExpandHandle = "ModMenu_ESP9_Airdrop", GetFunc = function() return _G.RapzhangConfig.Esp9_AirdropBox == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_AirdropBox = v and true or false; if v then _G.RapzhangConfig.Esp9_Airdrop = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_AirdropBox", UI = AliasMap.Switcher, Text = T("      Airdrop Box", "      Airdrop Box"), ExpandHandle = "ModMenu_ESP9_Airdrop", GetFunc = function() return _G.RapzhangConfig.Esp9_AirdropBox == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_AirdropBox = v and true or false; if v then _G.RapzhangConfig.Esp9_Airdrop = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_AirdropPredict", UI = AliasMap.Switcher, Text = T("      Landing Prediction", "      Landing Prediction"), ExpandHandle = "ModMenu_ESP9_Airdrop", GetFunc = function() return _G.RapzhangConfig.Esp9_AirdropPredict == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_AirdropPredict = v and true or false; if v then _G.RapzhangConfig.Esp9_Airdrop = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ESP9_Zone", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Zone Timer + Next Circle", "   ▶ Zone Timer + Next Circle"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Zone == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Zone = on; if on then _G.RapzhangConfig.Esp9_ZoneTimer = true; _G.RapzhangConfig.Esp9_ZoneNext = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_Zone", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Zone + Circle Info", "   ▶ Zone + Circle Info"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Zone == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Zone = on; if on then _G.RapzhangConfig.Esp9_ZoneTimer = true; _G.RapzhangConfig.Esp9_ZoneNext = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_ZoneTimer", UI = AliasMap.Switcher, Text = T("      Zone Timer", "      Zone Timer"), ExpandHandle = "ModMenu_ESP9_Zone", GetFunc = function() return _G.RapzhangConfig.Esp9_ZoneTimer == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_ZoneTimer = v and true or false; if v then _G.RapzhangConfig.Esp9_Zone = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_ZoneNext", UI = AliasMap.Switcher, Text = T("      Next Circle", "      Next Circle"), ExpandHandle = "ModMenu_ESP9_Zone", GetFunc = function() return _G.RapzhangConfig.Esp9_ZoneNext == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_ZoneNext = v and true or false; if v then _G.RapzhangConfig.Esp9_Zone = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ESP9_Grenade", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Grenade ESP", "   ▶ Grenade ESP"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Grenade == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Grenade = on; if on then _G.RapzhangConfig.Esp9_GrenadeMark = true; _G.RapzhangConfig.Esp9_GrenadeRadius = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_Grenade", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Grenade ESP", "   ▶ Grenade ESP"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Grenade == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Grenade = on; if on then _G.RapzhangConfig.Esp9_GrenadeMark = true; _G.RapzhangConfig.Esp9_GrenadeRadius = true; _G.RapzhangConfig.Esp9_GrenadeBounce = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_GrenadeMark", UI = AliasMap.Switcher, Text = T("      Grenade Marker + Type", "      Grenade Marker + Type"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeMark == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeMark = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_GrenadeRadius", UI = AliasMap.Switcher, Text = T("      Blast Radius", "      Blast Radius"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeRadius == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeRadius = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ESP9_Ammo", UI = AliasMap.Switcher, Text = T("   Enemy Ammo / Reload", "   Enemy Ammo / Reload"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ammo == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ammo = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_GrenadeBounce", UI = AliasMap.Switcher, Text = T("      Bounce Prediction", "      Bounce Prediction"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeBounce == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeBounce = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             -- =============================================
             -- ADVANCED OVERLAY: parent ON/OFF + anak-anaknya
             -- =============================================
@@ -4309,6 +4311,7 @@ do
   EX.PredictCache = EX.PredictCache or {}
   EX.ClassCache = EX.ClassCache or {}
   EX.GrenadeTypeCache = EX.GrenadeTypeCache or {}
+  EX.BounceCache = EX.BounceCache or {}
   EX.LastSeen = EX.LastSeen or {}
   EX.LastAirdropScan = -999.0
   EX.LastGrenadeScan = -999.0
@@ -4588,6 +4591,7 @@ do
       EX.Extras[key] = nil
     end
     EX.PredictCache[key] = nil
+    EX.BounceCache[key] = nil
   end
 
   -- Buang widget aktor yang sudah tidak terlihat (grenade/airdrop lama).
@@ -4614,6 +4618,11 @@ do
         EX.GrenadeTypeCache[key] = nil
       end
     end
+    for key, c in pairs(EX.BounceCache) do
+      if (now - (tonumber(c and c.t) or 0)) > cacheTTL then
+        EX.BounceCache[key] = nil
+      end
+    end
   end
 
   function EX.Reset()
@@ -4625,6 +4634,7 @@ do
     EX.Airdrops, EX.Grenades = {}, {}
     EX.PlayerCache, EX.PredictCache = {}, {}
     EX.GrenadeTypeCache = {}
+    EX.BounceCache = {}
     EX.LastSeen = {}
     EX._PSMap, EX._PSMapT = nil, nil
     EX._PSCharMap, EX._PSIdentMiss = nil, nil
@@ -6056,10 +6066,336 @@ do
     return math.max(0.0, t)
   end
 
+  -- ============================================================
+  -- GRENADE BOUNCE PREDICTION
+  -- Simulasi ringan untuk menggambar arah pantul grenade. Bukan
+  -- fisika game: gravitasi 980 cm/s^2 + line trace dunia, lalu
+  -- kecepatan dipantulkan memakai Bounciness/Friction milik
+  -- ProjectileMovement grenade (default 0,4 / 0,7).
+  -- ============================================================
+  local GRENADE_GRAVITY = 980.0
+  local BOUNCE_STEP = 0.05
+  local BOUNCE_SAMPLE = 5          -- satu titik path tiap 5 langkah (0,25 dtk)
+  local BOUNCE_MAX_TIME = 3.0
+  local BOUNCE_MAX_BOUNCES = 3
+  local BOUNCE_MAX_POINTS = 24
+  local BOUNCE_PATH_SEGS = 24
+  local BOUNCE_MARK_SEGS = 12      -- 3 garis per pantulan (X + arah)
+  local BOUNCE_REFRESH = 0.20
+  local BOUNCE_MIN_SPEED = 40.0
+  local BOUNCE_MAX_DIST = 200.0    -- meter; di luar ini path tidak terlihat
+
+  function EX.GetGrenadeBounceParams(a)
+    local bounciness, friction = 0.4, 0.7
+    if not ESPValid(a) then return bounciness, friction end
+    pcall(function()
+      local pm = a.ProjectileMovement or a.DelayFlyProjMovement
+      if pm then
+        if type(pm.Bounciness) == "number" then bounciness = pm.Bounciness end
+        if type(pm.Friction) == "number" then friction = pm.Friction end
+      end
+      if type(a.Bounciness) == "number" then bounciness = a.Bounciness end
+      if type(a.Friction) == "number" then friction = a.Friction end
+    end)
+    return math.max(0.0, math.min(1.0, bounciness)),
+           math.max(0.0, math.min(1.0, friction))
+  end
+
+  -- Kecepatan grenade: GetVelocity kadang nol/tidak ada di client,
+  -- jadi coba juga properti movement dan velocity hasil lemparan.
+  function EX.GetGrenadeVelocity(a)
+    local best = nil
+    local function take(v)
+      if best or not v then return end
+      local vx = tonumber(v.X)
+      local vy = tonumber(v.Y)
+      local vz = tonumber(v.Z)
+      if vx == nil or vy == nil or vz == nil then return end
+      local sp = vx * vx + vy * vy + vz * vz
+      if sp > 1.0 then best = { vx, vy, vz } end
+    end
+    if ESPValid(a) then
+      if a.GetVelocity then
+        local ok, v = pcall(function() return a:GetVelocity() end)
+        if ok then take(v) end
+      end
+      local ok, v = pcall(function() return a.Velocity end)
+      if ok then take(v) end
+      ok, v = pcall(function() return a.ThrowVelocity end)
+      if ok then take(v) end
+      ok, v = pcall(function() return a.LaunchVelocity end)
+      if ok then take(v) end
+      if not best then
+        local pm = nil
+        ok = pcall(function() pm = a.DelayFlyProjMovement or a.ProjectileMovement end)
+        if ok and pm then
+          local ok2, mv = pcall(function() return pm.Velocity end)
+          if ok2 then take(mv) end
+        end
+      end
+    end
+    if best then return best[1], best[2], best[3] end
+    return 0.0, 0.0, 0.0
+  end
+
+  -- Pantulan: komponen tangensial dikurangi Friction, komponen normal
+  -- dibalik lalu dikali Bounciness (pola ProjectileMovement UE).
+  function EX.ReflectVelocity(vx, vy, vz, nx, ny, nz, bounciness, friction)
+    vx, vy, vz = tonumber(vx) or 0.0, tonumber(vy) or 0.0, tonumber(vz) or 0.0
+    nx, ny, nz = tonumber(nx) or 0.0, tonumber(ny) or 0.0, tonumber(nz) or 0.0
+    local nl = math.sqrt(nx * nx + ny * ny + nz * nz)
+    if nl < 1.0e-6 then
+      nx, ny, nz = 0.0, 0.0, 1.0
+    else
+      nx, ny, nz = nx / nl, ny / nl, nz / nl
+    end
+    bounciness = math.max(0.0, math.min(1.0, tonumber(bounciness) or 0.4))
+    friction = math.max(0.0, math.min(1.0, tonumber(friction) or 0.7))
+    local vn = vx * nx + vy * ny + vz * nz
+    if vn > 0.0 then vn = 0.0 end
+    local k = 1.0 - friction
+    return (vx - vn * nx) * k - vn * nx * bounciness,
+           (vy - vn * ny) * k - vn * ny * bounciness,
+           (vz - vn * nz) * k - vn * nz * bounciness
+  end
+
+  -- Line trace dunia; mengembalikan hit, lokasi, dan normal permukaan.
+  function EX.TraceBounce(pc, x1, y1, z1, x2, y2, z2, selfActor, ignoreActor)
+    if not pc or not KismetSystemLibraryESP or not KismetSystemLibraryESP.LineTraceSingle then
+      return false
+    end
+    if not EX.HitResult then return false end
+    local hit = nil
+    pcall(function()
+      hit = KismetSystemLibraryESP.LineTraceSingle(
+        pc, { X = x1, Y = y1, Z = z1 }, { X = x2, Y = y2, Z = z2 },
+        0, false, nil, 0, EX.HitResult, true)
+    end)
+    if not hit then return false end
+    local hitActor = nil
+    pcall(function()
+      if EX.HitResult.GetActor then hitActor = EX.HitResult:GetActor()
+      elseif EX.HitResult.Actor then hitActor = EX.HitResult.Actor end
+    end)
+    if selfActor and hitActor and tostring(hitActor) == tostring(selfActor) then
+      return false
+    end
+    if ignoreActor and hitActor and tostring(hitActor) == tostring(ignoreActor) then
+      return false
+    end
+    local l = EX.HitResult.Location or EX.HitResult.ImpactPoint
+    if not l or type(l.X) ~= "number" or type(l.Y) ~= "number" or type(l.Z) ~= "number" then
+      return false
+    end
+    local n = EX.HitResult.Normal or EX.HitResult.ImpactNormal
+    local nx, ny, nz = 0.0, 0.0, 1.0
+    if n then
+      nx = tonumber(n.X) or 0.0
+      ny = tonumber(n.Y) or 0.0
+      nz = tonumber(n.Z) or 0.0
+    end
+    local nl = math.sqrt(nx * nx + ny * ny + nz * nz)
+    if nl < 1.0e-4 then
+      nx, ny, nz = 0.0, 0.0, 1.0
+    else
+      nx, ny, nz = nx / nl, ny / nl, nz / nl
+    end
+    return true, { X = l.X, Y = l.Y, Z = l.Z }, nx, ny, nz
+  end
+
+  -- Prediksi jalur sampai fuse habis (atau 4 detik). Hasil di-cache
+  -- 0,15 detik karena posisi/kecepatan grenade berubah tiap frame.
+  function EX.PredictGrenadeBounces(a, loc, now, pc)
+    if not ESPValid(a) or not loc then return nil end
+    now = tonumber(now) or ESP.Now()
+    local key = tostring(a)
+    local x = tonumber(loc.X) or 0.0
+    local y = tonumber(loc.Y) or 0.0
+    local z = tonumber(loc.Z) or 0.0
+    local cached = EX.BounceCache[key]
+    if cached then
+      local age = now - (tonumber(cached.t) or 0.0)
+      if age >= 0.0 and age < BOUNCE_REFRESH then
+        -- Grenade bergerak tiap frame; geser jalur cache agar tetap
+        -- menempel pada posisi aktor saat ini, bukan posisi lama.
+        local dx = x - (tonumber(cached.StartX) or x)
+        local dy = y - (tonumber(cached.StartY) or y)
+        local dz = z - (tonumber(cached.StartZ) or z)
+        if dx * dx + dy * dy + dz * dz > 0.25 then
+          for i = 1, #(cached.Points or {}) do
+            local p = cached.Points[i]
+            p.X, p.Y, p.Z = p.X + dx, p.Y + dy, p.Z + dz
+          end
+          for i = 1, #(cached.Bounces or {}) do
+            local b = cached.Bounces[i]
+            b.X, b.Y, b.Z = b.X + dx, b.Y + dy, b.Z + dz
+          end
+          cached.StartX, cached.StartY, cached.StartZ = x, y, z
+        end
+        return cached
+      end
+    end
+    if BOUNCE_MAX_DIST > 0.0 and ESP.GetLocalCharacter and ESP.ActorLocation then
+      local me = ESP.GetLocalCharacter()
+      local myLoc = me and ESP.ActorLocation(me) or nil
+      if myLoc then
+        local dx, dy, dz = x - myLoc.X, y - myLoc.Y, z - myLoc.Z
+        if dx * dx + dy * dy + dz * dz > (BOUNCE_MAX_DIST * 100.0) ^ 2 then
+          EX.BounceCache[key] = nil
+          return nil
+        end
+      end
+    end
+    local vx, vy, vz = EX.GetGrenadeVelocity(a)
+    local speed = math.sqrt(vx * vx + vy * vy + vz * vz)
+    if speed < BOUNCE_MIN_SPEED then
+      EX.BounceCache[key] = nil
+      return nil
+    end
+    if pc and KismetSystemLibraryESP and KismetSystemLibraryESP.LineTraceSingle and not EX.HitResult then
+      pcall(function()
+        if HitResultClassESP then EX.HitResult = HitResultClassESP() end
+      end)
+    end
+    -- Tanpa line trace kita tidak bisa tahu dinding/lantai; jangan
+    -- menggambar jalur bebas yang menyesatkan.
+    local canTrace = (pc ~= nil) and KismetSystemLibraryESP
+      and KismetSystemLibraryESP.LineTraceSingle and EX.HitResult ~= nil
+    if not canTrace then
+      EX.BounceCache[key] = nil
+      return nil
+    end
+    local bounciness, friction = EX.GetGrenadeBounceParams(a)
+    local ignoreActor = EX.GetOwnerActor(a)
+    local fuse = EX.GetGrenadeFuse(a)
+    local maxTime = BOUNCE_MAX_TIME
+    if type(fuse) == "number" and fuse > 0.0 then maxTime = math.min(maxTime, fuse) end
+    if maxTime < BOUNCE_STEP then
+      EX.BounceCache[key] = nil
+      return nil
+    end
+    local points, bounces = {}, {}
+    points[1] = { X = x, Y = y, Z = z }
+    -- Mulai trace sedikit di depan pusat aktor supaya tidak menabrak
+    -- collider grenade itu sendiri pada langkah pertama.
+    local invSpeed = 1.0 / speed
+    x = x + vx * invSpeed * 8.0
+    y = y + vy * invSpeed * 8.0
+    z = z + vz * invSpeed * 8.0
+    local t, step = 0.0, 0
+    while t < maxTime and #points < BOUNCE_MAX_POINTS do
+      local dt = math.min(BOUNCE_STEP, maxTime - t)
+      if dt <= 1.0e-4 then break end
+      local px, py, pz = x, y, z
+      vz = vz - GRENADE_GRAVITY * dt
+      x = x + vx * dt
+      y = y + vy * dt
+      z = z + vz * dt
+      t = t + dt
+      step = step + 1
+      local bounced = false
+      if canTrace then
+        local hit, hitLoc, nx, ny, nz = EX.TraceBounce(pc, px, py, pz, x, y, z, a, ignoreActor)
+        if hit and hitLoc then
+          points[#points + 1] = hitLoc
+          local rvx, rvy, rvz = EX.ReflectVelocity(vx, vy, vz, nx, ny, nz, bounciness, friction)
+          bounces[#bounces + 1] = { X = hitLoc.X, Y = hitLoc.Y, Z = hitLoc.Z,
+                                    VX = rvx, VY = rvy, VZ = rvz }
+          vx, vy, vz = rvx, rvy, rvz
+          -- geser sedikit dari permukaan supaya trace berikutnya tidak
+          -- langsung menabrak bidang yang sama.
+          x, y, z = hitLoc.X + nx * 3.0, hitLoc.Y + ny * 3.0, hitLoc.Z + nz * 3.0
+          bounced = true
+          if #bounces >= BOUNCE_MAX_BOUNCES then break end
+          if (rvx * rvx + rvy * rvy + rvz * rvz) < (BOUNCE_MIN_SPEED * BOUNCE_MIN_SPEED) then break end
+        end
+      end
+      if not bounced and (step % BOUNCE_SAMPLE) == 0 then
+        points[#points + 1] = { X = x, Y = y, Z = z }
+      end
+    end
+    local last = points[#points]
+    if last and (math.abs(last.X - x) > 1.0 or math.abs(last.Y - y) > 1.0
+                 or math.abs(last.Z - z) > 1.0) and #points < BOUNCE_MAX_POINTS then
+      points[#points + 1] = { X = x, Y = y, Z = z }
+    end
+    local res = { t = now, Fuse = fuse, Points = points, Bounces = bounces,
+                  StartX = points[1].X, StartY = points[1].Y, StartZ = points[1].Z }
+    EX.BounceCache[key] = res
+    return res
+  end
+
+  -- Gambar jalur (satu pool line tetap) + tanda X dan panah arah pada
+  -- setiap titik pantulan. Pool sengaja berukuran tetap agar
+  -- EX.GetExtra tidak membangun ulang widget setiap frame.
+  function EX.DrawGrenadeBouncePath(pc, key, pred, color, ckey)
+    local pathKey, markKey = key .. "_path", key .. "_bp"
+    local p = EX.GetExtra(pathKey, BOUNCE_PATH_SEGS)
+    local m = EX.GetExtra(markKey, BOUNCE_MARK_SEGS)
+    if not pred or not p or not m then
+      EX.HideExtra(pathKey)
+      EX.HideExtra(markKey)
+      return
+    end
+    local pts = pred.Points or {}
+    local segs, prev = 0, nil
+    for i = 1, #pts do
+      if segs >= BOUNCE_PATH_SEGS then break end
+      local s = ESP.Project(pc, pts[i])
+      if s then
+        if prev then
+          segs = segs + 1
+          ESP.SetBrush(p[segs], color, ckey)
+          ESP.DrawLine(p[segs], prev.X, prev.Y, s.X, s.Y, 1.2)
+        end
+        prev = s
+      else
+        prev = nil
+      end
+    end
+    for i = segs + 1, BOUNCE_PATH_SEGS do ESP.Hide(p[i]) end
+
+    local used = 0
+    local bounces = pred.Bounces or {}
+    for i = 1, math.min(#bounces, BOUNCE_MAX_BOUNCES) do
+      local b = bounces[i]
+      local s = ESP.Project(pc, b)
+      if s then
+        local i1, i2, i3 = used + 1, used + 2, used + 3
+        if i3 <= BOUNCE_MARK_SEGS then
+          local size = 5.0
+          ESP.SetBrush(m[i1], color, ckey)
+          ESP.SetBrush(m[i2], color, ckey)
+          ESP.SetBrush(m[i3], color, ckey)
+          ESP.DrawLine(m[i1], s.X - size, s.Y - size, s.X + size, s.Y + size, 2.0)
+          ESP.DrawLine(m[i2], s.X - size, s.Y + size, s.X + size, s.Y - size, 2.0)
+          local bvx, bvy, bvz = b.VX or 0.0, b.VY or 0.0, b.VZ or 0.0
+          local sp = math.sqrt(bvx * bvx + bvy * bvy + bvz * bvz)
+          if sp > 1.0e-3 then
+            local reach = math.max(80.0, math.min(220.0, sp * 0.18))
+            local e = ESP.Project(pc, { X = b.X + (bvx / sp) * reach,
+                                        Y = b.Y + (bvy / sp) * reach,
+                                        Z = b.Z + (bvz / sp) * reach })
+            if e then
+              ESP.DrawLine(m[i3], s.X, s.Y, e.X, e.Y, 2.0)
+            else
+              ESP.Hide(m[i3])
+            end
+          else
+            ESP.Hide(m[i3])
+          end
+          used = i3
+        end
+      end
+    end
+    for i = used + 1, BOUNCE_MARK_SEGS do ESP.Hide(m[i]) end
+  end
+
   function EX.DrawGrenades(pc, vw, vh, now)
     local cfg = _G.RapzhangConfig or {}
     local showMark = cfg.Esp9_GrenadeMark == true
     local showRadius = cfg.Esp9_GrenadeRadius == true
+    local showBounce = cfg.Esp9_GrenadeBounce == true
     local seen = {}
     local me = ESP.GetLocalCharacter()
     local shown = 0
@@ -6072,7 +6408,7 @@ do
           local s = ESP.Project(pc, loc)
           if s and s.X > -120 and s.X < vw + 120 and s.Y > -120 and s.Y < vh + 120 then
             shown = shown + 1
-            if shown <= 6 and (showMark or showRadius) then
+            if shown <= 6 and (showMark or showRadius or showBounce) then
               seen[key] = true
               EX.LastSeen[key] = now
               local own = false
@@ -6109,6 +6445,18 @@ do
               else
                 EX.HideBox(key)
                 EX.HideLabel(key)
+              end
+              if showBounce then
+                local pathKey, markKey = key .. "_path", key .. "_bp"
+                seen[pathKey] = true
+                seen[markKey] = true
+                EX.LastSeen[pathKey] = now
+                EX.LastSeen[markKey] = now
+                local pred = EX.PredictGrenadeBounces(a, loc, now, pc)
+                EX.DrawGrenadeBouncePath(pc, key, pred, color, ckey)
+              else
+                EX.HideExtra(key .. "_path")
+                EX.HideExtra(key .. "_bp")
               end
             end
           end
