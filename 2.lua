@@ -4170,9 +4170,11 @@ do
     local n, used = 0, false
     pcall(function()
       for _, ps in pairs(arr) do
-        used = true
-        n = n + 1
-        fn(ps)
+        if ESPValid(ps) then
+          used = true
+          n = n + 1
+          fn(ps)
+        end
       end
     end)
     if used then return n end
@@ -4181,11 +4183,21 @@ do
       cnt = tonumber(arr.Num and arr:Num()) or tonumber(arr.Length and arr:Length())
         or tonumber(#arr) or 0
     end)
-    for i = 1, cnt do
+    -- UE TArray memakai index 0-based untuk :Get(). Fallback 1-based hanya
+    -- dipakai kalau tidak ada satu pun elemen yang terbaca.
+    for i = 0, cnt - 1 do
       local ps = nil
       pcall(function() ps = arr:Get(i) end)
       if ps == nil then pcall(function() ps = arr[i] end) end
       if ps ~= nil then n = n + 1 fn(ps) end
+    end
+    if n == 0 then
+      for i = 1, cnt do
+        local ps = nil
+        pcall(function() ps = arr:Get(i) end)
+        if ps == nil then pcall(function() ps = arr[i] end) end
+        if ps ~= nil then n = n + 1 fn(ps) end
+      end
     end
     return n
   end
@@ -4356,16 +4368,15 @@ do
     local fn = nil
     pcall(function() if util then fn = util.GetRankTableData end end)
     if type(fn) ~= "function" then return nil end
-    local season = 0
-    pcall(function() season = tonumber(_G.DataMgr and _G.DataMgr.season_id) or 0 end)
-    local tries = { season, 0 }
-    for _, s in ipairs(tries) do
-      local ok, cfg = pcall(fn, level, s)
-      if ok and type(cfg) == "table" then return cfg end
-    end
-    -- Sebagian build tidak memakai argumen season.
+    -- Jalur yang dipakai game sendiri: GetRankTableData(segment) satu argumen.
     local ok, cfg = pcall(fn, level)
     if ok and type(cfg) == "table" then return cfg end
+    local season = 0
+    pcall(function() season = tonumber(_G.DataMgr and _G.DataMgr.season_id) or 0 end)
+    for _, s in ipairs({ season, 0 }) do
+      local ok2, cfg2 = pcall(fn, level, s)
+      if ok2 and type(cfg2) == "table" then return cfg2 end
+    end
     return nil
   end
 
@@ -4404,8 +4415,10 @@ do
     return nil
   end
 
-  -- Fallback nama tier dari segment id: 1xx Bronze ... 8xx Conqueror,
-  -- sub-level 1..5 = V..I. Berlaku walau CDataTable/FuncUtil tidak ada.
+  -- Fallback nama tier dari segment id: 1xx Bronze ... 8xx Conqueror.
+  -- 1xx-6xx masih memakai sub-level 1..5 = V..I. Untuk 7xx (ladder Ace)
+  -- sub-level adalah jumlah bintang; di PUBG Mobile KR Ace Master mulai
+  -- sekitar bintang 10 dan Ace Dominator sekitar bintang 20.
   local function rankFallbackName(level)
     local n = tonumber(level)
     if not n or n <= 0 then return nil end
@@ -4413,16 +4426,23 @@ do
     local sub = n % 100
     local tierName = RANK_TIER_NAMES[tier]
     if not tierName then return nil end
+    if tier == 7 then
+      if sub >= 20 then return "Ace Dominator" end
+      if sub >= 10 then return "Ace Master" end
+      return "Ace"
+    end
     if tier <= 6 and sub >= 1 and sub <= #RANK_SUB_NAMES then
       return tierName .. " " .. RANK_SUB_NAMES[sub]
     end
     return tierName
   end
 
+  local function rankCfgFor(level)
+    return rankCfgFromUtil(level) or rankCfgFromTables(level)
+  end
+
   local function rankLabel(level)
-    local name = rankNameFromCfg(rankCfgFromUtil(level))
-      or rankNameFromCfg(rankCfgFromTables(level))
-      or rankFallbackName(level)
+    local name = rankNameFromCfg(rankCfgFor(level)) or rankFallbackName(level)
     if name then return name end
     return "Lv" .. tostring(level)
   end
@@ -4433,6 +4453,104 @@ do
     v = tonumber(v)
     if v and v == v and v > 0 and v ~= math.huge then return v end
     return nil
+  end
+
+  -- Nama file ikon rank menyimpan angka bintang/divisi. Contoh:
+  -- .../RankIntegralLevel/Ace/Ace_15.Ace_15 -> 15. Dipakai sebagai
+  -- cadangan kalau SegmentLevel tidak membawa sub-level.
+  local function rankNumFromIcon(cfg)
+    if type(cfg) ~= "table" then return nil end
+    for _, key in ipairs({ "SubIcon", "BigIcon", "Icon", "SmallIcon", "RankIcon" }) do
+      local path = cfg[key]
+      if type(path) == "string" and path ~= "" then
+        local tail = path:match("([%w_%-%.]+)$") or path
+        local last = nil
+        for digits in tail:gmatch("%d+") do last = tonumber(digits) end
+        if last and last >= 1 and last <= 99 then return last end
+      end
+    end
+    return nil
+  end
+
+  local function rankIconText(cfg)
+    if type(cfg) ~= "table" then return "" end
+    local parts = {}
+    for _, key in ipairs({ "SubIcon", "BigIcon", "Icon", "SmallIcon", "RankIcon" }) do
+      local v = cfg[key]
+      if type(v) == "string" then parts[#parts + 1] = v:lower() end
+    end
+    return table.concat(parts, " ")
+  end
+
+  -- Angka yang ditampilkan di samping nama rank:
+  --   1xx-6xx : divisi V..I dari sub-level;
+  --   7xx     : bintang dari sub-level SegmentLevel (fallback angka di
+  --             path ikon). PromotionLayer BUKAN bintang: nilainya bracket
+  --             promosi (mis. 1 = 605..710, 2 = 714..715, 3 = 719..720).
+  --   8xx     : Conqueror, tanpa angka.
+  local function rankStarNumber(level, cfg)
+    local n = tonumber(level) or 0
+    if n <= 0 then return nil end
+    local sub = n % 100
+    if sub >= 1 and sub <= 99 then return sub end
+    return rankNumFromIcon(cfg)
+  end
+
+  -- Angka yang ditampilkan di samping nama rank:
+  --   1xx-6xx : divisi V..I dari sub-level;
+  --   7xx     : bintang (sub-level SegmentLevel, fallback angka ikon);
+  --   8xx     : Conqueror, tanpa angka.
+  local function rankSubText(level, cfg)
+    local n = tonumber(level) or 0
+    if n <= 0 then return nil end
+    local tier = math.floor(n / 100)
+    local sub = n % 100
+    if tier == 7 then
+      local num = rankStarNumber(level, cfg)
+      if num and num >= 1 then return tostring(num) end
+      return nil
+    end
+    if tier >= 1 and tier <= 6 then
+      if sub >= 1 and sub <= #RANK_SUB_NAMES then return RANK_SUB_NAMES[sub] end
+      return nil
+    end
+    return nil
+  end
+
+  -- Susun teks rank final, mis. "Ace 4", "Ace Master 15",
+  -- "Ace Dominator 20", "Crown I", "Conqueror".
+  local function rankDisplay(level, ps, tag)
+    local n = tonumber(level) or 0
+    local tier = math.floor(n / 100)
+    local cfg = rankCfgFor(level)
+    local name = rankNameFromCfg(cfg)
+    if not name then
+      name = rankFallbackName(level)
+    end
+    if not name then return "Lv" .. tostring(level) end
+    if tier == 7 then
+      local low = name:lower():gsub("[%s_%-]", "")
+      if low == "ace" or low == "acemaster" or low == "acedominator" or low:find("王牌", 1, true) then
+        local icons = rankIconText(cfg)
+        local star = rankStarNumber(level, cfg)
+        if star and star >= 20 then
+          name = "Ace Dominator"
+        elseif star and star >= 10 then
+          name = "Ace Master"
+        elseif star and star >= 1 then
+          name = "Ace"
+        elseif icons:find("dominator", 1, true) then
+          name = "Ace Dominator"
+        elseif icons:find("master", 1, true) then
+          name = "Ace Master"
+        end
+      end
+    end
+    local suffix = rankSubText(level, cfg)
+    if suffix and not name:match("%d+%s*$") and not name:match("%s[IVX]+%s*$") then
+      name = name .. " " .. suffix
+    end
+    return name
   end
 
   -- Sumber rank musuh, berurutan dari yang paling "current":
@@ -4504,13 +4622,13 @@ do
           return tostring(v)
         end
         local pf = rankFeature(ps)
-        print(string.format("[ESP RANK] key=%s states=%s ps=%s seg=%s segRaw=%s cur=%s unlock=%s peak=%s layer=%s featSeg=%s featTitle=%s",
+        print(string.format("[ESP RANK] key=%s states=%s ps=%s seg=%s segRaw=%s cur=%s unlock=%s peak=%s layer=%s featSeg=%s featTitle=%s name=%s",
           tostring(key), tostring(EX._PSMapN or 0), tostring(ps ~= nil),
           dbgVal(ps, "SegmentLevel"), dbgVal(ps, "Segment_Level"),
           dbgVal(ps, "CurSegLevel"),
           dbgVal(ps, "UnlockSegLevel"), dbgVal(ps, "PeakSegmentID"),
           dbgVal(ps, "PromotionLayer"), dbgVal(pf, "SegmentLevel"),
-          dbgVal(pf, "SegmentTitle")))
+          dbgVal(pf, "SegmentTitle"), dbgVal(ps, "PlayerName")))
       end
     end
     if not ps then
@@ -4541,7 +4659,7 @@ do
     level = math.floor(level + 0.5)
     local text = "RANK "
     if tag == "PEAK" then text = text .. "PEAK " end
-    c.rank = text .. rankLabel(level)
+    c.rank = text .. rankDisplay(level, ps, tag)
     return c.rank
   end
 
@@ -4582,7 +4700,9 @@ do
           if cid then break end
         end
         if not cid then return end
-        for _, f in ipairs({ "CorpsName", "Name", "CorpsSimpleName", "SimpleName", "ShortName", "CorpsTag", "Tag" }) do
+        for _, f in ipairs({ "CorpsName", "GuildName", "ClanName", "Name",
+          "CorpsSimpleName", "SimpleName", "ShortName",
+          "CorpsTag", "GuildTag", "ClanTag", "Tag" }) do
           local v = firstText(propOf(info, f))
           if v then map[cid] = v return end
         end
@@ -4595,7 +4715,8 @@ do
           cnt = tonumber(arr.Num and arr:Num()) or tonumber(arr.Length and arr:Length())
             or tonumber(#arr) or 0
         end)
-        for i = 1, cnt do
+        -- UE TArray di slua memakai index 0-based untuk :Get().
+        for i = 0, cnt - 1 do
           local info = nil
           pcall(function() info = arr:Get(i) end)
           if info == nil then pcall(function() info = arr[i] end) end
@@ -4605,6 +4726,34 @@ do
       EX._CorpsMap, EX._CorpsMapT = map, now
     end
     return map[n]
+  end
+
+  local CLAN_TAG_PATTERNS = {
+    "^%[([^%]]+)%]", "^【([^】]+)】", "^〔([^〕]+)〕", "^「([^」]+)」",
+    "^『([^』]+)』", "^《([^》]+)》", "^<([^>]+)>", "^%(([^%)]+)%)",
+    "^（([^）]+)）", "^%|([^|]+)%|",
+    "%[([^%]]+)%]%s*$", "【([^】]+)】%s*$", "〔([^〕]+)〕%s*$",
+    "「([^」]+)」%s*$", "『([^』]+)』%s*$", "《([^》]+)》%s*$",
+    "<([^>]+)>%s*$", "%(([^%)]+)%)%s*$", "（([^）]+)）%s*$",
+    "%|([^|]+)%|%s*$",
+  }
+
+  -- Tag clan biasanya ditulis pemain di nama, mis. "[ABC]Nick",
+  -- "Nick[ABC]", "【ABC】Nick", "(ABC)Nick". Tidak ada field clan di build
+  -- ini, jadi nama adalah satu-satunya sumber yang tersisa.
+  function EX.ParseClanTag(name)
+    if type(name) ~= "string" then return nil end
+    local s = name:gsub("^%s+", ""):gsub("%s+$", "")
+    for _, pat in ipairs(CLAN_TAG_PATTERNS) do
+      local tag = s:match(pat)
+      if tag then
+        tag = tag:gsub("^%s+", ""):gsub("%s+$", "")
+        if #tag >= 1 and #tag <= 16 and not tag:match("^%d+$") then
+          return tag
+        end
+      end
+    end
+    return nil
   end
 
   function EX.GetClanText(Character, isBot)
@@ -4647,21 +4796,37 @@ do
         if cid then value = corpsNameFromID(cid) end
       end
     end
-    -- Fallback terakhir: tag clan yang ditulis pemain di depan namanya,
-    -- mis. "[ABC]Nick" atau "【ABC】Nick". Tidak ada field clan di build ini.
+    -- Fallback terakhir: tag clan yang ditulis pemain di nama, mis.
+    -- "[ABC]Nick", "Nick[ABC]" atau "【ABC】Nick". Tidak ada field clan
+    -- di build ini.
     if not value and not isBot then
-      local name = ESP.ResolveName(Character, false)
-      if type(name) == "string" then
-        local tag = name:match("^%[([%w_%-%.]+)%]") or name:match("^【([^】]+)】")
-        if tag then
-          tag = tag:gsub("^%s+", ""):gsub("%s+$", "")
-          if #tag >= 2 and #tag <= 12 then value = tag end
-        end
+      local names = {}
+      local okName, resolved = pcall(ESP.ResolveName, Character, false)
+      if okName and type(resolved) == "string" then names[#names + 1] = resolved end
+      if ESPValid(ps) then
+        local pn = propOf(ps, "PlayerName")
+        if type(pn) == "string" and pn ~= "" then names[#names + 1] = pn end
+      end
+      for _, candidate in ipairs(names) do
+        local tag = EX.ParseClanTag(candidate)
+        if tag then value = tag break end
       end
     end
     if not value then
       if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then
-        c.clan = ps and "CLAN [?]" or "CLAN [?noPS]"
+        local cidDbg = nil
+        if ps then
+          for _, f in ipairs({ "CorpsID", "CorpsId", "corps_id" }) do
+            cidDbg = tonumber(propOf(ps, f))
+            if cidDbg and cidDbg > 0 then break end
+            cidDbg = nil
+          end
+        end
+        if cidDbg then
+          c.clan = "CLAN [?corps " .. tostring(math.floor(cidDbg + 0.5)) .. "]"
+        else
+          c.clan = ps and "CLAN [?]" or "CLAN [?noPS]"
+        end
         return c.clan
       end
       c.clan = "" return ""
