@@ -7070,6 +7070,7 @@ do
                 out[#out + 1] = {
                   key = key,
                   id = picked.id,
+                  actor = a,
                   x = loc.X, y = loc.Y, z = loc.Z,
                   dist = dist,
                   text = string.format("%s · %dm", name, math.floor(dist + 0.5)),
@@ -7123,11 +7124,54 @@ do
     local lastSeen = extra.LastSeen or {}
     for _, key in ipairs(gone) do
       lastSeen[key] = nil
+      -- Sembunyikan dulu: DestroyMark bisa tertunda/gagal di sebagian build,
+      -- sedangkan HideLabel langsung membuat widget tidak terlihat.
+      if extra.HideLabel then pcall(extra.HideLabel, key) end
       if extra.DestroyMark then pcall(extra.DestroyMark, key) end
     end
   end
 
+  -- Buang cache loot yang sudah di luar radius scan saat ini. Dipanggil tiap
+  -- frame draw supaya label tidak menunggu scan berikutnya (0,55 dtk; 0,90 dtk
+  -- saat Optimasi ESP Low) ketika pemain bergerak keluar radius atau slider
+  -- radius diperkecil. Actor yang sudah tidak valid juga langsung dibuang.
+  function ADV.PruneLootRange()
+    local list = ADV.LootCache or {}
+    if #list == 0 then return end
+    local me = ESP.GetLocalCharacter()
+    local meLoc = me and ESP.ActorLocation(me) or nil
+    if not meLoc then
+      ADV.LootCache = {}
+      pcall(ADV.SyncLootLabels)
+      return
+    end
+    local c = cfg()
+    local radius = tonumber(c.Esp9_LootDist) or 120
+    radius = math.max(20, math.min(300, radius))
+    local keep, changed = {}, false
+    for _, it in ipairs(list) do
+      local alive = true
+      if it.actor ~= nil and ESPValid then
+        local ok, valid = pcall(ESPValid, it.actor)
+        if ok and valid == false then alive = false end
+      end
+      local d = ESP.DistMeters(meLoc, { X = it.x, Y = it.y, Z = it.z })
+      if alive and d <= radius then
+        keep[#keep + 1] = it
+      else
+        changed = true
+      end
+    end
+    if changed then
+      ADV.LootCache = keep
+      pcall(ADV.SyncLootLabels)
+    end
+  end
+
   function ADV.DrawLoot(pc, now)
+    -- Radius dicek tiap frame: label yang sudah di luar jangkauan langsung
+    -- hilang tanpa menunggu ScanLoot berikutnya.
+    pcall(ADV.PruneLootRange)
     -- Sinkronisasi label tidak boleh memblokir render loot kalau ada API
     -- widget yang tidak tersedia di build tertentu.
     pcall(ADV.SyncLootLabels)
@@ -7137,6 +7181,10 @@ do
       if s then
         ESP.Extra.DrawLabel(it.key, s.X, s.Y + (it.off or 0), it.text, it.color)
         ESP.Extra.LastSeen[it.key] = now
+      elseif ESP.Extra.HideLabel then
+        -- Proyeksi gagal (di belakang kamera/tepi layar): jangan biarkan
+        -- label tertinggal di posisi terakhir.
+        pcall(ESP.Extra.HideLabel, it.key)
       end
     end
   end
