@@ -165,21 +165,25 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     Esp9_GrenadeMark = true,
     Esp9_GrenadeRadius = true,
     Esp9_Rank = false,
-    -- Diagnostik rank: set true di rapzhang_settings.txt untuk log field mentah.
-    Esp9_RankDebug = false,
     Esp9_Clan = false,
     Esp9_Ammo = false,
     -- Advanced overlay: satu parent switch, semua anak default OFF.
     Esp9_Adv = false,
-    Esp9_Loot = false,
-    Esp9_LootBox = false,
-    Esp9_LootValuable = true,
-    Esp9_LootDist = 120,
     Esp9_DmgDir = false,
     Esp9_Ghost = false,
     Esp9_Squad = false,
     Esp9_VehIntel = false,
-    Esp9_SoundRadar = false,
+    -- ESP LOOT: menu mandiri, parent hanya gerbang. Setiap kategori punya
+    -- switch sendiri supaya pemain memilih item yang ingin ditampilkan.
+    Esp9_Loot = false,
+    Esp9_LootWeapon = false,
+    Esp9_LootGear = false,
+    Esp9_LootAmmo = false,
+    Esp9_LootMeds = false,
+    Esp9_LootAttach = false,
+    Esp9_LootThrow = false,
+    Esp9_LootMisc = false,
+    Esp9_LootDist = 120,
     AutoParachute = false,
     AutoJump = true,
     AutoJumpRadius = 300,
@@ -286,7 +290,6 @@ _G.RapzhangConfig.AutoFeedbackEnabled = true
 _G.RapzhangConfig.Esp9_Radar360 = _G.RapzhangConfig.Esp9_Radar360 == true
 _G.RapzhangConfig.Esp9_TeamNumber = _G.RapzhangConfig.Esp9_TeamNumber == true
 _G.RapzhangConfig.Esp9_Adv = _G.RapzhangConfig.Esp9_Adv == true
-_G.RapzhangConfig.Esp9_LootValuable = _G.RapzhangConfig.Esp9_LootValuable ~= false
 _G.RapzhangConfig.Esp9_LootDist = math.max(20, math.min(300, tonumber(_G.RapzhangConfig.Esp9_LootDist) or 120))
 _G.RapzhangConfig.AutoJumpRadius = math.max(50, math.min(1500, tonumber(_G.RapzhangConfig.AutoJumpRadius) or 300))
 
@@ -1410,21 +1413,28 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_ESP9_GrenadeRadius", UI = AliasMap.Switcher, Text = T("      Blast Radius", "      Blast Radius"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeRadius == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeRadius = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Rank", UI = AliasMap.Switcher, Text = T("   Enemy Rank", "   Enemy Rank"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Rank == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Rank = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Clan", UI = AliasMap.Switcher, Text = T("   Enemy Clan", "   Enemy Clan"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Clan == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Clan = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ESP9_RankDebug", UI = AliasMap.Switcher, Text = T("   Debug Rank / Clan", "   Debug Rank / Clan"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_RankDebug == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_RankDebug = v and true or false; if _G.ESP and _G.ESP.ResetWidgets then pcall(_G.ESP.ResetWidgets) end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Ammo", UI = AliasMap.Switcher, Text = T("   Enemy Ammo / Reload", "   Enemy Ammo / Reload"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ammo == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ammo = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             -- =============================================
             -- ADVANCED OVERLAY: parent ON/OFF + anak-anaknya
             -- =============================================
-            { Key = "ModMenu_ADV_Ex", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Advanced Overlay", "   ▶ Advanced Overlay"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Adv == true end, SetFunc = function(_,v) local onv = v and true or false; _G.RapzhangConfig.Esp9_Adv = onv; if not onv then for _,k in ipairs(_G.ESP and _G.ESP.AdvChildren or {"Esp9_Loot","Esp9_LootBox","Esp9_DmgDir","Esp9_Ghost","Esp9_Squad","Esp9_VehIntel","Esp9_SoundRadar"}) do _G.RapzhangConfig[k] = false end end; pcall(function() if _G.ESP and _G.ESP.Adv then _G.ESP.Adv.ClearAll() end end); if not onv then pcall(function() if _G.ESP and _G.ESP.Adv and _G.ESP.Adv.UninstallDamageHook then _G.ESP.Adv.UninstallDamageHook() end end) end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ADV_Loot", UI = AliasMap.Switcher, Text = T("      Loot ESP (ground)", "      Loot ESP (ground)"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Loot == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Loot = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ADV_LootBox", UI = AliasMap.Switcher, Text = T("      Deathbox ESP + Contents", "      Deathbox ESP + Contents"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootBox == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootBox = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ADV_LootVal", UI = AliasMap.Switcher, Text = T("      Only Valuable Items", "      Only Valuable Items"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootValuable ~= false end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootValuable = v and true or false; return true end },
-            { Key = "ModMenu_ADV_LootDist", UI = AliasMap.Slider, Text = T("      Scan Radius (20-300m)", "      Scan Radius (20-300m)"), ExpandHandle = "ModMenu_ADV_Ex", MinValue = 20, MaxValue = 300, min = 20, max = 300, Min = 20, Max = 300, GetFunc = function() return math.max(20, math.min(300, math.floor((_G.RapzhangConfig.Esp9_LootDist or 120) + 0.5))) end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootDist = math.max(20, math.min(300, math.floor(v + 0.5))); return true end },
+            { Key = "ModMenu_ADV_Ex", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Advanced Overlay", "   ▶ Advanced Overlay"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Adv == true end, SetFunc = function(_,v) local onv = v and true or false; _G.RapzhangConfig.Esp9_Adv = onv; if not onv then for _,k in ipairs(_G.ESP and _G.ESP.AdvChildren or {"Esp9_DmgDir","Esp9_Ghost","Esp9_Squad","Esp9_VehIntel"}) do _G.RapzhangConfig[k] = false end end; pcall(function() if _G.ESP and _G.ESP.Adv then _G.ESP.Adv.ClearAll() end end); if not onv then pcall(function() if _G.ESP and _G.ESP.Adv and _G.ESP.Adv.UninstallDamageHook then _G.ESP.Adv.UninstallDamageHook() end end) end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ADV_Dmg", UI = AliasMap.Switcher, Text = T("      Damage Direction + Attacker", "      Damage Direction + Attacker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_DmgDir == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_DmgDir = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true; pcall(function() if _G.ESP and _G.ESP.Adv then _G.ESP.Adv.InstallDamageHook() end end) else pcall(function() if _G.ESP and _G.ESP.Adv and _G.ESP.Adv.UninstallDamageHook then _G.ESP.Adv.UninstallDamageHook() end end) end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ADV_Ghost", UI = AliasMap.Switcher, Text = T("      Ghost Last-Seen Marker", "      Ghost Last-Seen Marker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ghost == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ghost = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ADV_Squad", UI = AliasMap.Switcher, Text = T("      Squad Strength Tracker", "      Squad Strength Tracker"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Squad == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Squad = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ADV_Veh", UI = AliasMap.Switcher, Text = T("      Vehicle Intel (Enemy)", "      Vehicle Intel (Enemy)"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_VehIntel == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_VehIntel = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ADV_Sound", UI = AliasMap.Switcher, Text = T("      Sound Radar", "      Sound Radar"), ExpandHandle = "ModMenu_ADV_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_SoundRadar == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_SoundRadar = v and true or false; if v then _G.RapzhangConfig.Esp9_Adv = true end; if not v and _G.ESP and _G.ESP.Adv and _G.ESP.Adv.UninstallSoundHook then pcall(_G.ESP.Adv.UninstallSoundHook) end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            -- =============================================
+            -- ESP LOOT: menu mandiri, parent hanya gerbang.
+            -- Anak = kategori item, ON/OFF terpisah.
+            -- =============================================
+            { Key = "ModMenu_Loot_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ ESP LOOT", "▶ ESP LOOT"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Loot == true end, SetFunc = function(_,v) local onv = v and true or false; _G.RapzhangConfig.Esp9_Loot = onv; if not onv then for _,k in ipairs(_G.ESP and _G.ESP.LootChildren or {"Esp9_LootWeapon","Esp9_LootGear","Esp9_LootAmmo","Esp9_LootMeds","Esp9_LootAttach","Esp9_LootThrow","Esp9_LootMisc"}) do _G.RapzhangConfig[k] = false end; pcall(function() if _G.ESP and _G.ESP.Adv and _G.ESP.Adv.ClearLoot then _G.ESP.Adv.ClearLoot() end end) end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_Loot_Weapon", UI = AliasMap.Switcher, Text = T("   Weapon", "   Weapon"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootWeapon == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootWeapon = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_Loot_Gear", UI = AliasMap.Switcher, Text = T("   Backpack / Armor", "   Backpack / Armor"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootGear == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootGear = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_Loot_Ammo", UI = AliasMap.Switcher, Text = T("   Ammo", "   Ammo"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootAmmo == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootAmmo = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_Loot_Meds", UI = AliasMap.Switcher, Text = T("   Meds / Consumables", "   Meds / Consumables"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootMeds == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootMeds = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_Loot_Attach", UI = AliasMap.Switcher, Text = T("   Attachments", "   Attachments"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootAttach == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootAttach = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_Loot_Throw", UI = AliasMap.Switcher, Text = T("   Throwables", "   Throwables"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootThrow == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootThrow = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_Loot_Misc", UI = AliasMap.Switcher, Text = T("   Misc / Chips", "   Misc / Chips"), ExpandHandle = "ModMenu_Loot_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_LootMisc == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootMisc = v and true or false; if v then _G.RapzhangConfig.Esp9_Loot = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_Loot_Dist", UI = AliasMap.Slider, Text = T("   Scan Radius (20-300m)", "   Scan Radius (20-300m)"), ExpandHandle = "ModMenu_Loot_Ex", MinValue = 20, MaxValue = 300, min = 20, max = 300, Min = 20, Max = 300, GetFunc = function() return math.max(20, math.min(300, math.floor((_G.RapzhangConfig.Esp9_LootDist or 120) + 0.5))) end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_LootDist = math.max(20, math.min(300, math.floor(v + 0.5))); return true end },
         }
 
         local RequestMenuRefresh = function() end
@@ -3209,8 +3219,14 @@ end
 -- Anak dari Advanced Overlay. Didefinisikan di sini supaya menu, config
 -- sync, dan modul ESP.Adv memakai daftar yang sama (tidak duplikat).
 ESP.AdvChildren = ESP.AdvChildren or {
-  "Esp9_Loot", "Esp9_LootBox", "Esp9_DmgDir", "Esp9_Ghost",
-  "Esp9_Squad", "Esp9_VehIntel", "Esp9_SoundRadar",
+  "Esp9_DmgDir", "Esp9_Ghost", "Esp9_Squad", "Esp9_VehIntel",
+}
+
+-- Anak ESP LOOT: kategori item. Parent hanya gerbang; ON tidak memaksa
+-- kategori mana pun, tetapi kategori ON selalu menyalakan parent.
+ESP.LootChildren = ESP.LootChildren or {
+  "Esp9_LootWeapon", "Esp9_LootGear", "Esp9_LootAmmo", "Esp9_LootMeds",
+  "Esp9_LootAttach", "Esp9_LootThrow", "Esp9_LootMisc",
 }
 
 function ESP.SyncMenuConfig()
@@ -3221,6 +3237,12 @@ function ESP.SyncMenuConfig()
   if cfg.Esp9_Adv ~= true then
     for _, k in ipairs(ESP.AdvChildren) do
       if cfg[k] == true then cfg.Esp9_Adv = true break end
+    end
+  end
+  -- ESP LOOT punya gerbang sendiri, terpisah dari Advanced Overlay.
+  if cfg.Esp9_Loot ~= true then
+    for _, k in ipairs(ESP.LootChildren) do
+      if cfg[k] == true then cfg.Esp9_Loot = true break end
     end
   end
   ESP.Menu.ShowCount = cfg.Esp9_Count == true
@@ -3237,6 +3259,7 @@ function ESP.SyncMenuConfig()
   ESP.Menu.ShowClan = cfg.Esp9_Clan == true
   ESP.Menu.ShowAmmo = cfg.Esp9_Ammo == true
   ESP.Menu.Adv = cfg.Esp9_Adv == true
+  ESP.Menu.Loot = cfg.Esp9_Loot == true
 end
 
 -- Team color mapping: jangan memakai teamID % jumlah warna karena Team 20,
@@ -3580,10 +3603,9 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
   local weapon = weaponCache.text or ""
   local weaponInfo = weaponCache.info
   local rankText, clanText, ammoText = "", "", ""
-  local dbgRank = _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true
   if ESP.Extra then
-    if menu.ShowRank or dbgRank then rankText = ESP.Extra.GetRankText(Character, isBot) or "" end
-    if menu.ShowClan or dbgRank then clanText = ESP.Extra.GetClanText(Character, isBot) or "" end
+    if menu.ShowRank then rankText = ESP.Extra.GetRankText(Character, isBot) or "" end
+    if menu.ShowClan then clanText = ESP.Extra.GetClanText(Character, isBot) or "" end
     if menu.ShowAmmo then ammoText = ESP.Extra.GetAmmoText(Character, isBot) or "" end
   end
   -- Visibility: Open (green) / Close (red)
@@ -3644,8 +3666,8 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
       d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
       d.State:SetWidgetVisibility(menu.ShowVisibility and visible or hidden)
-      d.Rank:SetWidgetVisibility(((menu.ShowRank or dbgRank) and rankText ~= "") and visible or hidden)
-      d.Clan:SetWidgetVisibility(((menu.ShowClan or dbgRank) and clanText ~= "") and visible or hidden)
+      d.Rank:SetWidgetVisibility((menu.ShowRank and rankText ~= "") and visible or hidden)
+      d.Clan:SetWidgetVisibility((menu.ShowClan and clanText ~= "") and visible or hidden)
       d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
       d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
       d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
@@ -3658,8 +3680,8 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
       d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
       d.State:SetWidgetVisibility(menu.ShowVisibility and visible or hidden)
-      d.Rank:SetWidgetVisibility(((menu.ShowRank or dbgRank) and rankText ~= "") and visible or hidden)
-      d.Clan:SetWidgetVisibility(((menu.ShowClan or dbgRank) and clanText ~= "") and visible or hidden)
+      d.Rank:SetWidgetVisibility((menu.ShowRank and rankText ~= "") and visible or hidden)
+      d.Clan:SetWidgetVisibility((menu.ShowClan and clanText ~= "") and visible or hidden)
       d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
       d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
       d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
@@ -5039,39 +5061,11 @@ do
     -- Data rank baru tersedia beberapa saat setelah PlayerState/feature siap;
     -- jangan mengunci hasil kosong selama 5 detik.
     local ttl = (c.rank and c.rank ~= "") and 10.0 or 0.75
-    if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then ttl = 0.75 end
     if c.rankT and (now - c.rankT) < ttl then return c.rank or "" end
     c.rankT = now
     c.t = now
     local ps = EX.GetPlayerState(Character)
-    -- Diagnostik opsional: tambahkan Esp9_RankDebug = true di
-    -- rapzhang_settings.txt untuk melihat field rank mentah tiap 5 detik.
-    if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then
-      if (now - (c.dbgT or 0)) >= 5.0 then
-        c.dbgT = now
-        local function dbgVal(obj, field)
-          local v = propOf(obj, field)
-          return tostring(v)
-        end
-        local pf = rankFeature(ps)
-        print(string.format("[ESP RANK] key=%s eng=%s arr=%s map=%s score=%s ps=%s name=%s seg=%s segRaw=%s cur=%s unlock=%s peak=%s layer=%s featSeg=%s featTitle=%s pname=%s",
-          tostring(key), tostring(EX._PSMapN or 0), tostring(EX._PSArrN or 0),
-          tostring(EX._PSMapC or 0), tostring(psRankScore(ps)), tostring(ps ~= nil),
-          tostring(ESP.ResolveName(Character, false)),
-          dbgVal(ps, "SegmentLevel"), dbgVal(ps, "Segment_Level"),
-          dbgVal(ps, "CurSegLevel"),
-          dbgVal(ps, "UnlockSegLevel"), dbgVal(ps, "PeakSegmentID"),
-          dbgVal(ps, "PromotionLayer"), dbgVal(pf, "SegmentLevel"),
-          dbgVal(pf, "SegmentTitle"), dbgVal(ps, "PlayerName")))
-      end
-    end
     if not ps then
-      if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then
-        c.rank = string.format("RANK [?noPS e%d a%d m%d]",
-          tonumber(EX._PSMapN or 0) or 0, tonumber(EX._PSArrN or 0) or 0,
-          tonumber(EX._PSMapC or 0) or 0)
-        return c.rank
-      end
       c.rank = "" return ""
     end
     local level, tag = rankLevelFromPS(ps)
@@ -5079,15 +5073,6 @@ do
       local title = rankTitleFromPS(ps)
       if title then
         c.rank = "RANK " .. title
-        return c.rank
-      end
-      if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then
-        -- Baris rank tetap tampil supaya kelihatan apakah panel & PlayerState
-        -- hidup; angkanya menunjukkan field mentah yang terbaca.
-        c.rank = string.format("RANK [?%s/%s/%s]",
-          tostring(rankNumField(ps, "SegmentLevel") or 0),
-          tostring(rankNumField(ps, "CurSegLevel") or 0),
-          tostring(rankNumField(ps, "PeakSegmentID") or 0))
         return c.rank
       end
       c.rank = "" return ""
@@ -5198,7 +5183,6 @@ do
     local now = ESP.Now()
     local c = playerCache(key)
     local ttl = (c.clan and c.clan ~= "") and 10.0 or 0.75
-    if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then ttl = 0.75 end
     if c.clanT and (now - c.clanT) < ttl then return c.clan or "" end
     c.clanT = now
     c.t = now
@@ -5249,22 +5233,6 @@ do
       end
     end
     if not value then
-      if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then
-        local cidDbg = nil
-        if ps then
-          for _, f in ipairs({ "CorpsID", "CorpsId", "corps_id" }) do
-            cidDbg = tonumber(propOf(ps, f))
-            if cidDbg and cidDbg > 0 then break end
-            cidDbg = nil
-          end
-        end
-        if cidDbg then
-          c.clan = "CLAN [?corps " .. tostring(math.floor(cidDbg + 0.5)) .. "]"
-        else
-          c.clan = ps and "CLAN [?]" or "CLAN [?noPS]"
-        end
-        return c.clan
-      end
       c.clan = "" return ""
     end
     local text = "CLAN " .. value
@@ -5948,8 +5916,10 @@ function ESP.Scan()
   return pc, nReal, nBot
 end
 -- ==========================================================
--- [ADV] ADVANCED OVERLAY — loot / damage / ghost / squad / vehicle / sound
+-- [ADV] ADVANCED OVERLAY — damage / ghost / squad / vehicle
 -- Master switch: Esp9_Adv. Semua overlay read-only dan pcall-guarded.
+-- ESP LOOT (ground) memakai modul yang sama untuk scan/draw, tetapi
+-- punya menu + gate sendiri (Esp9_Loot) dan tidak tergantung Esp9_Adv.
 -- ==========================================================
 do
   local ADV = {}
@@ -6122,11 +6092,11 @@ do
     return list
   end
 
-  -- Pola client milik game sendiri (GameAPI:UpdatePickupActorLocation /
-  -- UpdateDeadBoxLocation): static object grid, bukan GetActorsByClass.
-  -- flag 0 = PickUpWrapperActor, flag 1 = PlayerTombBox. Argumen ke-5
-  -- disamakan dengan pemakaian game (`1`); filter radius dilakukan di Lua
-  -- karena arti parameter native itu tidak terdokumentasi di dump.
+  -- Pola client milik game sendiri (GameAPI:UpdatePickupActorLocation):
+  -- static object grid, bukan GetActorsByClass. Flag 0 dipakai untuk
+  -- PickUpWrapperActor. Argumen ke-5 disamakan dengan pemakaian game (`1`);
+  -- filter radius dilakukan di Lua karena arti parameter native itu tidak
+  -- terdokumentasi di dump.
   local function staticObjectsInRegion(path, alias, flag, loc)
     local out = nil
     pcall(function()
@@ -6172,8 +6142,8 @@ do
   ADV.StaticOK = ADV.StaticOK or {}
 
   -- Urutan: query spasial game -> static object grid -> class scan.
-  -- QueryDeathBoxs/QueryPickUpWrappers bisa kosong di client walau aktornya
-  -- ada; static grid adalah pola yang dipakai GameAPI untuk kedua tipe.
+  -- QueryPickUpWrappers bisa kosong di client walau aktornya ada; static
+  -- grid adalah pola yang dipakai GameAPI untuk pickup.
   local function queryOrScan(key, queryFn, scanFn, staticFn)
     local state = ADV.QueryOK[key]
     local pool = nil
@@ -6215,23 +6185,25 @@ do
     return COL.white
   end
 
-  local function isValuable(typ, id, data)
+  -- Kategori item mengikuti ENUM_ITEM_TYPE PUBG:
+  -- 1 weapon, 2 attachment, 3 ammo, 5 backpack/armor/helmet,
+  -- 6 consumable (602xxx = throwable), 10 chip/extra.
+  local function lootCategory(typ, id, data)
     typ = tonumber(typ)
+    if typ == nil and data ~= nil then
+      typ = tonumber(data.ItemType) or tonumber(data.Type)
+    end
     id = tonumber(id)
-    if typ == nil then return true end
-    if typ == 1 or typ == 5 then return true end
-    if typ == 2 then
-      return (tonumber(data and data.ItemQuality) or 0) >= 3
-    end
+    if typ == 1 then return "weapon" end
+    if typ == 2 then return "attach" end
+    if typ == 3 then return "ammo" end
+    if typ == 5 then return "gear" end
     if typ == 6 then
-      -- 602xxx = throwable (frag/smoke/molotov/flash), selalu berguna.
-      if id and id >= 602000 and id < 603000 then return true end
-      return (tonumber(data and data.ItemQuality) or 0) >= 2
+      if id and id >= 602000 and id < 603000 then return "throw" end
+      return "meds"
     end
-    if typ == 10 then
-      return (tonumber(data and data.ItemQuality) or 0) >= 3
-    end
-    return false
+    if typ == 10 then return "misc" end
+    return "misc"
   end
 
   local function itemEntry(id, typ, count)
@@ -6324,12 +6296,21 @@ do
   end
 
   -- --------------------------------------------------------
-  -- 1) Loot & deathbox ESP
+  -- 1) Ground loot ESP (ESP LOOT, kategori terpisah)
   -- --------------------------------------------------------
   ADV.LootCache = ADV.LootCache or {}
   ADV.LootScan = ADV.LootScan or -999.0
   ADV.GroundKey = ADV.GroundKey or "lt_"
-  ADV.BoxKey = ADV.BoxKey or "db_"
+
+  local LOOT_CAT_KEY = {
+    weapon = "Esp9_LootWeapon",
+    gear   = "Esp9_LootGear",
+    ammo   = "Esp9_LootAmmo",
+    meds   = "Esp9_LootMeds",
+    attach = "Esp9_LootAttach",
+    throw  = "Esp9_LootThrow",
+    misc   = "Esp9_LootMisc",
+  }
 
   function ADV.ScanLoot(me, now)
     local c = cfg()
@@ -6338,83 +6319,39 @@ do
     local meLoc = ESP.ActorLocation(me)
     if not meLoc then ADV.LootCache = {} return end
 
-    local wantGround = c.Esp9_Loot == true
-    local wantBox = c.Esp9_LootBox == true
-    local onlyValuable = c.Esp9_LootValuable ~= false
-    local out = {}
-
-    if wantGround then
-      local pool = queryOrScan("loot",
-        function(g) return g:QueryPickUpWrappers(meLoc, radius * 100.0, nil, false, 70) end,
-        function() return actorsOfClass(class("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor")) end,
-        function() return staticObjectsInRegion("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor", 0, meLoc) end)
-      for _, a in ipairs(pool) do
-        local loc = ESP.ActorLocation(a)
-        if loc then
-          local dist = ESP.DistMeters(meLoc, loc)
-          if dist <= radius then
-            local id, typ, count = readDefineID(a)
-            local entries = listItems(a)
-            if #entries == 0 and id then
-              entries = { { id = id, typ = typ, count = count } }
-            end
-            if #entries > 0 then
-              local e = entries[1]
-              local name, data = itemEntry(e.id, e.typ, e.count)
-              if (not onlyValuable) or isValuable(e.typ, e.id, data) then
-                out[#out + 1] = {
-                  key = objectKey(ADV.GroundKey, a, loc),
-                  x = loc.X, y = loc.Y, z = loc.Z,
-                  dist = dist,
-                  text = string.format("%s · %dm", name, math.floor(dist + 0.5)),
-                  color = qualityColor(data and data.ItemQuality),
-                  off = 0,
-                }
-              end
-            end
-          end
-        end
-      end
+    local want = {}
+    local any = false
+    for cat, key in pairs(LOOT_CAT_KEY) do
+      if c[key] == true then want[cat] = true any = true end
     end
+    if not any then ADV.LootCache = {} return end
 
-    if wantBox then
-      local pool = queryOrScan("box",
-        function(g) return g:QueryDeathBoxs(meLoc, radius * 100.0) end,
-        function() return actorsOfClass(class("/Script/ShadowTrackerExtra.PlayerTombBox", "PlayerTombBox")) end,
-        function() return staticObjectsInRegion("/Script/ShadowTrackerExtra.PlayerTombBox", "PlayerTombBox", 1, meLoc) end)
-      for _, b in ipairs(pool) do
-        local loc = ESP.ActorLocation(b)
-        if loc then
-          local dist = ESP.DistMeters(meLoc, loc)
-          if dist <= radius then
-            local title = nil
-            pcall(function() title = b.TombName end)
-            if type(title) ~= "string" or title == "" or tonumber(title) then
-              title = "DEATHBOX"
-            end
-            if #title > 20 then title = title:sub(1, 20) .. ".." end
-            local key = objectKey(ADV.BoxKey, b, loc)
-            out[#out + 1] = {
-              key = key, x = loc.X, y = loc.Y, z = loc.Z, dist = dist,
-              text = string.format("%s · %dm", title, math.floor(dist + 0.5)),
-              color = COL.yellow, off = 0,
-            }
-            local names = {}
-            pcall(function()
-              local w = b:GetBoxPickupWrapperActor()
-              if ESPValid(w) then
-                for _, e in ipairs(listItems(w)) do
-                  if #names < 3 then
-                    names[#names + 1] = (itemEntry(e.id, e.typ, e.count))
-                  end
-                end
-              end
-            end)
-            if #names > 0 then
+    local out = {}
+    local pool = queryOrScan("loot",
+      function(g) return g:QueryPickUpWrappers(meLoc, radius * 100.0, nil, false, 70) end,
+      function() return actorsOfClass(class("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor")) end,
+      function() return staticObjectsInRegion("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor", 0, meLoc) end)
+    for _, a in ipairs(pool) do
+      local loc = ESP.ActorLocation(a)
+      if loc then
+        local dist = ESP.DistMeters(meLoc, loc)
+        if dist <= radius then
+          local id, typ, count = readDefineID(a)
+          local entries = listItems(a)
+          if #entries == 0 and id then
+            entries = { { id = id, typ = typ, count = count } }
+          end
+          if #entries > 0 then
+            local e = entries[1]
+            local name, data = itemEntry(e.id, e.typ, e.count)
+            if want[lootCategory(e.typ, e.id, data)] then
               out[#out + 1] = {
-                key = key .. "_c", x = loc.X, y = loc.Y, z = loc.Z, dist = dist,
-                text = table.concat(names, ", "),
-                color = COL.gray, off = 13,
+                key = objectKey(ADV.GroundKey, a, loc),
+                x = loc.X, y = loc.Y, z = loc.Z,
+                dist = dist,
+                text = string.format("%s · %dm", name, math.floor(dist + 0.5)),
+                color = qualityColor(data and data.ItemQuality),
+                off = 0,
               }
             end
           end
@@ -6995,169 +6932,36 @@ do
   end
 
   -- --------------------------------------------------------
-  -- 6) Sound radar (shot / footstep / vehicle / glass)
-  -- --------------------------------------------------------
-  ADV.Sounds = ADV.Sounds or {}
-  ADV._soundHooked = false
-  ADV._soundOrig = nil
-  ADV._soundWrap = nil
-
-  local function enemyActor(ch, myTeam)
-    if not ESPValid(ch) then return true end
-    local tid = ESP.GetTeamID(ch)
-    if tid == nil or myTeam == nil then return true end
-    return tostring(tid) ~= tostring(myTeam)
-  end
-
-  local function soundRecord(kind, pos, ch)
-    if not pos or not tonumber(pos.X) then return end
-    -- Tim lokal dibaca saat event terjadi, bukan saat hook dipasang: spawn
-    -- island bisa dimuat sebelum tim pemain terbentuk.
-    local me = ESP.GetLocalCharacter()
-    local myTeam = ESPValid(me) and ESP.GetTeamID(me) or nil
-    if not enemyActor(ch, myTeam) then return end
-    local list = ADV.Sounds
-    list[#list + 1] = {
-      x = pos.X, y = pos.Y, z = pos.Z,
-      t = ESP.Now(), kind = kind,
-    }
-    while #list > 40 do table.remove(list, 1) end
-  end
-
-  function ADV.InstallSoundHook()
-    if ADV._soundHooked then return end
-    local now = ESP.Now()
-    if ADV._soundTried and (now - (ADV._soundTryAt or -999.0)) < 5.0 then return end
-    ADV._soundTried = true
-    ADV._soundTryAt = now
-    local sub = subsystem("SoundVisualizationSubsystem")
-    if not sub then return end
-    local installed = 0
-
-    local function wrap(name, kind, posIndex, charIndex)
-      local orig = nil
-      pcall(function() orig = sub[name] end)
-      if type(orig) ~= "function" then return end
-      local w = function(self, a, b, c, d, e, f)
-        pcall(function()
-          local pos = nil
-          if posIndex == 1 then pos = a elseif posIndex == 2 then pos = b
-          elseif posIndex == 3 then pos = c elseif posIndex == 4 then pos = d end
-          local ch = nil
-          if charIndex == 1 then ch = a
-          elseif charIndex == 2 then ch = b
-          elseif charIndex == 0 and a then
-            -- Kendaraan: game sendiri memakai vehicle:GetDriver().
-            if a.GetDriver then pcall(function() ch = a:GetDriver() end) end
-          end
-          soundRecord(kind, pos, ch)
-        end)
-        return orig(self, a, b, c, d, e, f)
-      end
-      local applied = pcall(function() sub[name] = w end)
-      if not applied then return end
-      ADV._soundWrap = ADV._soundWrap or {}
-      ADV._soundWrap[name] = w
-      ADV._soundOrig = ADV._soundOrig or {}
-      ADV._soundOrig[name] = orig
-      installed = installed + 1
-    end
-
-    wrap("AddWeaponShotVoiceToCache", 1, 3, 1)
-    wrap("AddMoveVoiceToCache", 2, 2, 1)
-    wrap("AddVehicleVoiceToCache", 3, 2, 0)
-    wrap("AddGlassVoiceToCache", 4, 1, nil)
-    ADV._soundHooked = installed > 0
-  end
-
-  function ADV.UninstallSoundHook()
-    local sub = subsystem("SoundVisualizationSubsystem")
-    if sub and ADV._soundWrap then
-      for name, w in pairs(ADV._soundWrap) do
-        pcall(function()
-          if sub[name] == w and ADV._soundOrig and ADV._soundOrig[name] then
-            sub[name] = ADV._soundOrig[name]
-          end
-        end)
-      end
-    end
-    ADV._soundWrap = nil
-    ADV._soundOrig = nil
-    ADV._soundHooked = false
-    ADV._soundTried = false
-    ADV._soundTryAt = -999.0
-  end
-
-  function ADV.DrawSounds(pc, me, vw, vh, now)
-    local meLoc = ESP.ActorLocation(me)
-    if not meLoc then return end
-    local yaw = camYaw(pc)
-    local cx, cy = vw * 0.5, vh * 0.5
-    local rad = math.min(vw, vh) * 0.22
-    local drawn = 0
-    local ttl = { [1] = 2.2, [2] = 1.1, [3] = 1.8, [4] = 1.4 }
-    local col = { [1] = COL.red, [2] = COL.yellow, [3] = COL.blue, [4] = COL.cyan }
-
-    for i = #(ADV.Sounds or {}), 1, -1 do
-      local s = (ADV.Sounds or {})[i]
-      local age = now - (s.t or 0)
-      local life = ttl[s.kind] or 1.5
-      if age <= life and drawn < 8 then
-        local ang = bearing(meLoc, { X = s.x, Y = s.y, Z = s.z }, yaw)
-        if ang then
-          local a = math.rad(ang - 90.0)
-          local x = cx + math.cos(a) * rad
-          local y = cy + math.sin(a) * rad
-          drawn = drawn + 1
-          local key = "sd_" .. tostring(drawn)
-          ESP.Extra.DrawRing(key, x, y, 4.0, 4.0, col[s.kind] or COL.white, "sd_" .. tostring(s.kind), 1.6, 8)
-          local dist = ESP.DistMeters(meLoc, { X = s.x, Y = s.y, Z = s.z })
-          ESP.Extra.DrawLabel(key .. "_t", x, y + 12.0,
-            string.format("%dm", math.floor(dist + 0.5)), col[s.kind] or COL.white)
-          ESP.Extra.LastSeen[key] = now
-          ESP.Extra.LastSeen[key .. "_t"] = now
-        end
-      end
-    end
-    for i = drawn + 1, 8 do
-      ESP.Extra.HideRing("sd_" .. tostring(i))
-      ESP.Extra.HideLabel("sd_" .. tostring(i) .. "_t")
-    end
-  end
-
-  -- --------------------------------------------------------
   -- Orchestrator
   -- --------------------------------------------------------
-  function ADV.Sweep(now)
-    local sounds = ADV.Sounds or {}
-    for i = #sounds, 1, -1 do
-      if (now - (sounds[i].t or 0)) > 3.0 then table.remove(sounds, i) end
-    end
+  function ADV.ClearLoot()
+    ADV.LootCache = {}
+    hidePrefix("lt_")
   end
 
   function ADV.ClearAll()
-    hidePrefix("lt_")
-    hidePrefix("db_")
+    ADV.ClearLoot()
     hidePrefix("dm_")
     hidePrefix("gh_")
     hidePrefix("sq_")
     hidePrefix("vh_")
-    hidePrefix("sd_")
-    ADV.LootCache = {}
     ADV.VehCache = {}
     ADV.Ghosts = {}
-    ADV.Sounds = {}
     ADV.SquadCache = {}
     ADV.QueryOK = {}
     ADV.StaticOK = {}
     if ADV.Dmg then ADV.Dmg.hits = 0 ADV.Dmg.t = -999.0 ADV.Dmg.casterT = -999.0
       ADV.Dmg.casterName = nil ADV.Dmg.caster = nil ADV.Dmg.cx = nil end
-    if ADV._soundHooked then pcall(ADV.UninstallSoundHook) end
     pcall(ADV.UninstallDamageHook)
   end
 
   function ADV.Update(pc, vw, vh, camLoc, now, me)
-    if not masterOn() then
+    -- ESP LOOT dan Advanced Overlay adalah dua gerbang terpisah.
+    -- Loot tetap berjalan walau Esp9_Adv OFF. Advanced Overlay tetap milik
+    -- menu ESP V2, jadi ikut mati saat EspLoai9 OFF walau parent-nya ON.
+    local lootOn = on("Esp9_Loot")
+    local advOn = cfg().EspLoai9 == true and masterOn()
+    if not lootOn and not advOn then
       if not ADV._cleared then
         ADV._cleared = true
         pcall(ADV.ClearAll)
@@ -7175,16 +6979,14 @@ do
       ADV._hooked = false
       ADV._hookTried = false
       ADV._hookAt = -999.0
-      ADV._soundHooked = false
-      ADV._soundTried = false
-      ADV._soundTryAt = -999.0
       ADV._dmgWrap, ADV._dmgOrig = nil, nil
       ADV._dmgSeen, ADV._dmgSeenT = nil, -999.0
       ADV.QueryOK = {}
       ADV.StaticOK = {}
-      ADV.LootCache, ADV.VehCache, ADV.Ghosts, ADV.Sounds = {}, {}, {}, {}
+      ADV.LootCache, ADV.VehCache, ADV.Ghosts = {}, {}, {}
       ADV.SquadCache = {}
       ADV.LootScan, ADV.VehScan, ADV.SquadScan = -999.0, -999.0, -999.0
+      ADV._lootCleared, ADV._advCleared = false, false
       if ADV.Dmg then
         ADV.Dmg.t, ADV.Dmg.casterT = -999.0, -999.0
         ADV.Dmg.hits, ADV.Dmg.sum, ADV.Dmg.head = 0, 0, 0
@@ -7194,74 +6996,102 @@ do
     end
     if not ESPValid(me) then return end
 
-    if on("Esp9_DmgDir") then pcall(ADV.InstallDamageHook) end
-
-    if on("Esp9_Loot") or on("Esp9_LootBox") then
+    if lootOn then
+      ADV._lootCleared = false
       if (now - (ADV.LootScan or -999.0)) >= 0.55 then
         ADV.LootScan = now
         pcall(ADV.ScanLoot, me, now)
       end
       pcall(ADV.DrawLoot, pc, now)
-    else
-      ADV.LootCache = {}
-      hidePrefix("lt_")
-      hidePrefix("db_")
+    elseif not ADV._lootCleared then
+      ADV._lootCleared = true
+      pcall(ADV.ClearLoot)
     end
 
-    if on("Esp9_DmgDir") then
-      pcall(ADV.DrawDamage, pc, me, vw, vh, now)
-    else
+    if advOn then
+      ADV._advCleared = false
+      if on("Esp9_DmgDir") then
+        pcall(ADV.InstallDamageHook)
+        pcall(ADV.DrawDamage, pc, me, vw, vh, now)
+      else
+        ADV.Dmg.t, ADV.Dmg.casterT = -999.0, -999.0
+        ADV.Dmg.cx = nil
+        ADV.Dmg.casterName = nil
+        pcall(ADV.UninstallDamageHook)
+        pcall(ADV.HideDamage)
+      end
+
+      if on("Esp9_Ghost") then
+        pcall(ADV.UpdateGhosts, me, now)
+        pcall(ADV.DrawGhosts, pc, me, now)
+      else
+        if next(ADV.Ghosts or {}) then ADV.Ghosts = {} end
+        hidePrefix("gh_")
+      end
+
+      if on("Esp9_Squad") then
+        if (now - (ADV.SquadScan or -999.0)) >= 0.8 then
+          ADV.SquadScan = now
+          pcall(ADV.ScanSquad, me, now)
+        end
+        pcall(ADV.DrawSquad, pc, me, vw, vh, now)
+      else
+        ADV.SquadCache = {}
+        pcall(ADV.HideSquad)
+      end
+
+      if on("Esp9_VehIntel") then
+        if (now - (ADV.VehScan or -999.0)) >= 0.45 then
+          ADV.VehScan = now
+          pcall(ADV.ScanVehicles, me, now)
+        end
+        pcall(ADV.DrawVehicles, pc, now)
+      else
+        ADV.VehCache = {}
+        hidePrefix("vh_")
+      end
+    elseif not ADV._advCleared then
+      ADV._advCleared = true
       ADV.Dmg.t, ADV.Dmg.casterT = -999.0, -999.0
       ADV.Dmg.cx = nil
       ADV.Dmg.casterName = nil
       pcall(ADV.UninstallDamageHook)
       pcall(ADV.HideDamage)
-    end
-
-    if on("Esp9_Ghost") then
-      pcall(ADV.UpdateGhosts, me, now)
-      pcall(ADV.DrawGhosts, pc, me, now)
-    else
       if next(ADV.Ghosts or {}) then ADV.Ghosts = {} end
       hidePrefix("gh_")
-    end
-
-    if on("Esp9_Squad") then
-      if (now - (ADV.SquadScan or -999.0)) >= 0.8 then
-        ADV.SquadScan = now
-        pcall(ADV.ScanSquad, me, now)
-      end
-      pcall(ADV.DrawSquad, pc, me, vw, vh, now)
-    else
       ADV.SquadCache = {}
       pcall(ADV.HideSquad)
-    end
-
-    if on("Esp9_VehIntel") then
-      if (now - (ADV.VehScan or -999.0)) >= 0.45 then
-        ADV.VehScan = now
-        pcall(ADV.ScanVehicles, me, now)
-      end
-      pcall(ADV.DrawVehicles, pc, now)
-    else
       ADV.VehCache = {}
       hidePrefix("vh_")
     end
-
-    if on("Esp9_SoundRadar") then
-      if not ADV._soundHooked then pcall(ADV.InstallSoundHook) end
-      pcall(ADV.DrawSounds, pc, me, vw, vh, now)
-    else
-      ADV.Sounds = {}
-      hidePrefix("sd_")
-      if ADV._soundHooked then pcall(ADV.UninstallSoundHook) end
-    end
-
-    pcall(ADV.Sweep, now)
   end
 end
 
 --// SRC HUB
+-- ESP LOOT adalah menu mandiri: tetap render walau ESP V2 (EspLoai9) OFF.
+-- Jalur ini hanya memanggil ADV.Update saat gate utama ESP mati; saat gate
+-- hidup, ADV.Update sudah dipanggil sekali dari ESP.Update.
+function ESP.UpdateLootOnly()
+  local cfg = _G.RapzhangConfig or {}
+  if cfg.Esp9_Loot ~= true then return end
+  local pc = ESP.GetController()
+  if not pc then return end
+  if not ESP.GetCanvas() then return end
+  local now = ESP.Now()
+  if (now - (ESP.LastTransform or -999.0)) >= (ESP.TransformInterval or 0.50) then
+    pcall(ESP.UpdateCanvasTransform, pc)
+    ESP.LastTransform = now
+  end
+  local vw, vh = ESP.Viewport(pc)
+  local me = ESP.GetLocalCharacter()
+  if ESP.Adv and ESP.Adv.Update then
+    pcall(ESP.Adv.Update, pc, vw, vh, ESP.GetCamLoc(pc), now, me)
+  end
+  if ESP.Extra and ESP.Extra.Sweep then
+    pcall(ESP.Extra.Sweep, now, 3.0)
+  end
+end
+
 function ESP.Update()
   ESP.SyncMenuConfig()
   local mainEnabled = _G.RapzhangConfig and _G.RapzhangConfig.EspLoai9 == true
@@ -7270,6 +7100,7 @@ function ESP.Update()
       ESP.ResetWidgets()
       ESP._MainOffCleaned = true
     end
+    pcall(ESP.UpdateLootOnly)
     return
   end
   ESP._MainOffCleaned = false
@@ -7474,6 +7305,9 @@ function ESP.Stop()
   ESP._TimerPC = nil
   ESP._MainOffCleaned = false
   ESP.ResetWidgets()
+  -- Kedua gate OFF: lepas hook overlay dan kosongkan cache, jangan biarkan
+  -- event damage tetap terpasang selama fitur tidak dipakai.
+  if ESP.Adv and ESP.Adv.ClearAll then pcall(ESP.Adv.ClearAll) end
 end
 function ESP.Start()
   if ESP.bActive and ESP._TimerHooked then
@@ -7502,8 +7336,11 @@ local function ESPRequestedEnabled()
   pcall(function()
     if _G.SyncRapzhangConfig then _G.SyncRapzhangConfig() end
   end)
-  return _G.RapzhangConfig
-    and _G.RapzhangConfig.EspLoai9 == true
+  local c = _G.RapzhangConfig
+  -- ESP LOOT punya gerbang sendiri: driver harus tetap hidup walau
+  -- ESP V2 (EspLoai9) OFF, supaya label loot tetap dirender.
+  return c ~= nil
+    and (c.EspLoai9 == true or c.Esp9_Loot == true)
     and ESP_Enabled == true
 end
 local function ESPStartAll()
@@ -11393,7 +11230,7 @@ local function MainLoop()
         ESPStartAll()
     end)
 
-    if _G.RapzhangConfig.EspLoai9 then
+    if _G.RapzhangConfig.EspLoai9 or _G.RapzhangConfig.Esp9_Loot then
         if _G.PlayerMapMarker and not _G.PlayerMapMarker.bActive then
             pcall(_G.PlayerMapMarker.Start)
         end
