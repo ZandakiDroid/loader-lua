@@ -2604,9 +2604,26 @@ function ESP.IsBot(Character)
 end
 
 function ESP.GetPlayerKey(Character)
+  if Character == nil then return "nil" end
   local key = nil
   pcall(function() if Character.GetPlayerKey then key = Character:GetPlayerKey() end end)
   if key == nil then pcall(function() key = Character.PlayerKey end) end
+  if key == nil then
+    -- Jangan langsung pakai tostring(Character): wrapper slua bisa berbeda
+    -- antar frame dan membuat panel baru terus-menerus untuk target yang sama.
+    local ps = nil
+    pcall(function()
+      if Character.GetPlayerStateSafety then ps = Character:GetPlayerStateSafety() end
+    end)
+    if not ESPValid(ps) then pcall(function() ps = Character.PlayerState end) end
+    if ESPValid(ps) then
+      pcall(function() key = ps.PlayerKey end)
+      if key == nil then pcall(function() key = ps.UID end) end
+    end
+  end
+  if key == nil then pcall(function() key = Character.UID end) end
+  local n = tonumber(key)
+  if n then return string.format("%.0f", n) end
   return tostring(key or Character)
 end
 
@@ -2851,7 +2868,15 @@ function ESP.GetCanvas()
     if ESPValid(root.CanvasPanel_0) then canvas = root.CanvasPanel_0
     elseif ESPValid(root.CanvasPanel_42) then canvas = root.CanvasPanel_42 end
   end)
-  if ESPValid(canvas) then ESP.Canvas = canvas return canvas end
+  if ESPValid(canvas) then
+    -- UI in-game dibangun ulang: widget lama menempel ke canvas yang sudah
+    -- mati. Reset supaya panel baru dibuat di canvas yang baru.
+    if ESP.Canvas ~= nil and ESP.Canvas ~= canvas then
+      pcall(ESP.ResetWidgets)
+    end
+    ESP.Canvas = canvas
+    return canvas
+  end
   return nil
 end
 
@@ -3073,6 +3098,18 @@ function ESP.Destroy(data)
     pcall(function() w:RemoveFromParent() end)
     pcall(function() w:ConditionalBeginDestroy() end)
   end
+end
+
+-- Panel info membuat 8 TextBlock anak. Hancurkan anaknya secara eksplisit:
+-- kalau hanya container yang di-destroy, widget anak bisa tertahan di Slate
+-- tree dan menumpuk sepanjang match (penyebab force close).
+function ESP.DestroyInfo(data)
+  if not data then return end
+  for _, w in pairs({ data.Name, data.Dist, data.State, data.Weapon,
+                       data.WeaponIcon, data.Rank, data.Clan, data.Ammo }) do
+    if w then ESP.Destroy({ Widget = w }) end
+  end
+  ESP.Destroy({ Widget = data.Container })
 end
 
 -- top counter "Players: X | Bots: Y" : bilkul center-top
@@ -3387,7 +3424,9 @@ function ESP.CreateInfo()
   pcall(function() tAmmo = CGame:NewObjectFromPath("/Script/UMG.TextBlock", container) end)
   if not ESPValid(tName) or not ESPValid(tDist) or not ESPValid(tState) or not ESPValid(tWeapon) or not ESPValid(tWeaponIcon)
      or not ESPValid(tRank) or not ESPValid(tClan) or not ESPValid(tAmmo) then
-    ESP.Destroy({ Widget = container })
+    ESP.DestroyInfo({ Container = container, Name = tName, Dist = tDist, State = tState,
+                      Weapon = tWeapon, WeaponIcon = tWeaponIcon, Rank = tRank,
+                      Clan = tClan, Ammo = tAmmo })
     return nil
   end
   pcall(function()
@@ -3441,7 +3480,9 @@ function ESP.CreateInfo()
   pcall(function() s8 = container:AddChildToCanvas(tAmmo) end)
   pcall(function() ms = canvas:AddChildToCanvas(container) end)
   if not s1 or not s2 or not s3 or not s4 or not s5 or not s6 or not s7 or not s8 or not ms then
-    ESP.Destroy({ Widget = container })
+    ESP.DestroyInfo({ Container = container, Name = tName, Dist = tDist, State = tState,
+                      Weapon = tWeapon, WeaponIcon = tWeaponIcon, Rank = tRank,
+                      Clan = tClan, Ammo = tAmmo })
     return nil
   end
   pcall(function()
@@ -3463,7 +3504,7 @@ end
 function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, topY)
   local d = ESP.Infos[key]
   if not d or not ESPValid(d.Container) or not d.Rank or not d.Clan or not d.Ammo then
-    ESP.Destroy(d)
+    ESP.DestroyInfo(d)
     d = ESP.CreateInfo()
     ESP.Infos[key] = d
   end
@@ -3665,9 +3706,10 @@ function ESP.ReleaseTarget(key)
   ESP.HealthFill[key] = nil
   ESP.Destroy(ESP.Lines[key])
   ESP.Lines[key] = nil
-  ESP.Destroy(ESP.Infos[key])
+  ESP.DestroyInfo(ESP.Infos[key])
   ESP.Infos[key] = nil
   ESP.VisCache[key] = nil
+  if ESP.Extra and ESP.Extra.PlayerCache then ESP.Extra.PlayerCache[key] = nil end
 end
 
 function ESP.ResetWidgets()
@@ -3677,7 +3719,7 @@ function ESP.ResetWidgets()
   for _, t in pairs(ESP.Corners) do for _, d in pairs(t) do ESP.Destroy(d) end end
   for _, d in pairs(ESP.HealthBg) do ESP.Destroy(d) end
   for _, d in pairs(ESP.HealthFill) do ESP.Destroy(d) end
-  for _, d in pairs(ESP.Infos) do ESP.Destroy(d) end
+  for _, d in pairs(ESP.Infos) do ESP.DestroyInfo(d) end
   ESP.Lines = {}
   ESP.Corners = {}
   ESP.HealthBg = {}
@@ -3688,6 +3730,7 @@ function ESP.ResetWidgets()
   ESP.Counter = nil
   ESP.Canvas = nil
   ESP.EnemyCache = {}
+  ESP.SeenKeys = {}
 end
 
 function ESP.SetupRadarScreenConfig()
@@ -4049,6 +4092,7 @@ do
       for _, x in ipairs(e) do ESP.Destroy(x) end
       EX.Extras[key] = nil
     end
+    EX.PredictCache[key] = nil
   end
 
   -- Buang widget aktor yang sudah tidak terlihat (grenade/airdrop lama).
@@ -4060,6 +4104,18 @@ do
         if key:sub(1, 4) ~= "zone" then
           EX.DestroyMark(key)
         end
+      end
+    end
+    -- Cache per-pemain dan cache tipe grenade tidak boleh tumbuh sepanjang
+    -- match; entri lama dibuang setelah 30 detik tidak disentuh.
+    for key, c in pairs(EX.PlayerCache) do
+      if (now - (tonumber(c and c.t) or 0)) > 30.0 then
+        EX.PlayerCache[key] = nil
+      end
+    end
+    for key, c in pairs(EX.GrenadeTypeCache) do
+      if (now - (tonumber(c and c.t) or 0)) > 30.0 then
+        EX.GrenadeTypeCache[key] = nil
       end
     end
   end
@@ -4074,9 +4130,38 @@ do
     EX.PlayerCache, EX.PredictCache = {}, {}
     EX.GrenadeTypeCache = {}
     EX.LastSeen = {}
+    EX._PSMap, EX._PSMapT = nil, nil
+    EX._CorpsMap, EX._CorpsMapT = nil, nil
     EX.LastAirdropScan, EX.LastGrenadeScan = -999.0, -999.0
     EX.ZoneRingT = -999.0
     EX.ZoneGroundZ = nil
+  end
+
+  -- Peta PlayerKey -> PlayerState milik game sendiri (GameplayData men-cache
+  -- semua PlayerState yang sudah di-bind di client). Rebuild max 1x/detik.
+  function EX.PlayerStateMap()
+    local now = ESP.Now()
+    if EX._PSMap and (now - (EX._PSMapT or -999.0)) < 1.0 then return EX._PSMap end
+    local map = {}
+    local gd = ESP.GetGameplayData()
+    local list = nil
+    if gd and gd.GetAllPlayerStates then
+      pcall(function() list = gd.GetAllPlayerStates() end)
+    end
+    if type(list) == "table" then
+      for k, ps in pairs(list) do
+        if ESPValid(ps) then
+          map["k:" .. tostring(k)] = ps
+          local pk, uid = nil, nil
+          pcall(function() pk = ps.PlayerKey end)
+          pcall(function() uid = ps.UID end)
+          if pk ~= nil then map["k:" .. tostring(pk)] = ps end
+          if uid ~= nil then map["u:" .. tostring(uid)] = ps end
+        end
+      end
+    end
+    EX._PSMap, EX._PSMapT = map, now
+    return map
   end
 
   function EX.GetPlayerState(Character)
@@ -4089,28 +4174,50 @@ do
       pcall(function() if Character.GetPlayerState then ps = Character:GetPlayerState() end end)
     end
     if not ESPValid(ps) then pcall(function() ps = Character.PlayerState end) end
-    if not ESPValid(ps) then
-      -- Fallback: registry GameplayData, dipakai game sendiri untuk UI player lain.
-      local gd = ESP.GetGameplayData()
-      local key = nil
-      pcall(function() if Character.GetPlayerKey then key = Character:GetPlayerKey() end end)
-      if key == nil then pcall(function() key = Character.PlayerKey end) end
-      if gd and key ~= nil then
-        for _, fn in ipairs({ "GetPlayerState", "GetPlayerStateByKey", "GetPlayerStateByPlayerKey" }) do
-          if type(gd[fn]) == "function" then
-            pcall(function() ps = gd[fn](key) end)
-            if not ESPValid(ps) then pcall(function() ps = gd[fn](gd, key) end) end
-            if ESPValid(ps) then
-              local psKey = nil
-              pcall(function() psKey = ps.PlayerKey end)
-              if psKey == nil or tostring(psKey) == tostring(key) then break end
-              ps = nil
+    if not ESPValid(ps) then pcall(function() ps = Character.PlayerStateReplicated end) end
+    if ESPValid(ps) then return ps end
+    -- Fallback: registry GameplayData, dipakai game sendiri untuk UI player lain.
+    local gd = ESP.GetGameplayData()
+    local key = nil
+    pcall(function() if Character.GetPlayerKey then key = Character:GetPlayerKey() end end)
+    if key == nil then pcall(function() key = Character.PlayerKey end) end
+    if key == nil then pcall(function() key = Character.UID end) end
+    if gd and key ~= nil then
+      for _, fn in ipairs({ "GetPlayerState", "GetPlayerStateByKey", "GetPlayerStateByPlayerKey" }) do
+        if type(gd[fn]) == "function" then
+          local cand = nil
+          pcall(function() cand = gd[fn](key) end)
+          if not ESPValid(cand) then
+            local nk = tonumber(key)
+            if nk ~= nil then pcall(function() cand = gd[fn](nk) end) end
+          end
+          if ESPValid(cand) then
+            local psKey = nil
+            pcall(function() psKey = cand.PlayerKey end)
+            if psKey == nil or tostring(psKey) == tostring(key) then
+              ps = cand
+              break
             end
           end
         end
       end
     end
-    return ESPValid(ps) and ps or nil
+    if ESPValid(ps) then return ps end
+    -- Fallback terakhir: peta PlayerKey/UID -> PlayerState.
+    if key ~= nil then
+      local map = EX.PlayerStateMap()
+      local ks = tostring(key)
+      local hit = map["k:" .. ks] or map["u:" .. ks]
+      if hit == nil then
+        local nk = tonumber(key)
+        if nk ~= nil then
+          ks = tostring(nk)
+          hit = map["k:" .. ks] or map["u:" .. ks]
+        end
+      end
+      if ESPValid(hit) then return hit end
+    end
+    return nil
   end
 
   local function playerCache(key)
@@ -4251,7 +4358,7 @@ do
     local ok = pcall(function() v = obj[field] end)
     if not ok then return nil end
     v = tonumber(v)
-    if v and v > 0 then return v end
+    if v and v == v and v > 0 and v ~= math.huge then return v end
     return nil
   end
 
@@ -4279,6 +4386,7 @@ do
     local pf = rankFeature(ps)
     local sources = {
       { obj = ps, field = "SegmentLevel", tag = nil },
+      { obj = ps, field = "Segment_Level", tag = nil },
       { obj = pf, field = "SegmentLevel", tag = nil },
       { obj = ps, field = "CurSegLevel", tag = nil },
       { obj = ps, field = "UnlockSegLevel", tag = nil },
@@ -4308,8 +4416,10 @@ do
     -- Data rank baru tersedia beberapa saat setelah PlayerState/feature siap;
     -- jangan mengunci hasil kosong selama 5 detik.
     local ttl = (c.rank and c.rank ~= "") and 10.0 or 0.75
+    if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then ttl = 0.75 end
     if c.rankT and (now - c.rankT) < ttl then return c.rank or "" end
     c.rankT = now
+    c.t = now
     local ps = EX.GetPlayerState(Character)
     -- Diagnostik opsional: tambahkan Esp9_RankDebug = true di
     -- rapzhang_settings.txt untuk melihat field rank mentah tiap 5 detik.
@@ -4322,20 +4432,36 @@ do
           return tostring(v)
         end
         local pf = rankFeature(ps)
-        print(string.format("[ESP RANK] key=%s ps=%s seg=%s cur=%s unlock=%s peak=%s layer=%s featSeg=%s featTitle=%s",
+        print(string.format("[ESP RANK] key=%s ps=%s seg=%s segRaw=%s cur=%s unlock=%s peak=%s layer=%s featSeg=%s featTitle=%s",
           tostring(key), tostring(ps ~= nil),
-          dbgVal(ps, "SegmentLevel"), dbgVal(ps, "CurSegLevel"),
+          dbgVal(ps, "SegmentLevel"), dbgVal(ps, "Segment_Level"),
+          dbgVal(ps, "CurSegLevel"),
           dbgVal(ps, "UnlockSegLevel"), dbgVal(ps, "PeakSegmentID"),
           dbgVal(ps, "PromotionLayer"), dbgVal(pf, "SegmentLevel"),
           dbgVal(pf, "SegmentTitle")))
       end
     end
-    if not ps then c.rank = "" return "" end
+    if not ps then
+      if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then
+        c.rank = "RANK [?noPS]"
+        return c.rank
+      end
+      c.rank = "" return ""
+    end
     local level, tag = rankLevelFromPS(ps)
     if not level then
       local title = rankTitleFromPS(ps)
       if title then
         c.rank = "RANK " .. title
+        return c.rank
+      end
+      if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then
+        -- Baris rank tetap tampil supaya kelihatan apakah panel & PlayerState
+        -- hidup; angkanya menunjukkan field mentah yang terbaca.
+        c.rank = string.format("RANK [?%s/%s/%s]",
+          tostring(rankNumField(ps, "SegmentLevel") or 0),
+          tostring(rankNumField(ps, "CurSegLevel") or 0),
+          tostring(rankNumField(ps, "PeakSegmentID") or 0))
         return c.rank
       end
       c.rank = "" return ""
@@ -4350,6 +4476,7 @@ do
   local CLAN_KEYS = {
     "ClanName", "ClanTag", "ClanShortName", "GuildName", "GuildTag",
     "AllianceName", "PlayerClanName", "TeamClanName", "CorpsName",
+    "CorpsShortName", "CorpsTag",
   }
 
   local function firstText(v)
@@ -4357,6 +4484,58 @@ do
     local s = tostring(v)
     if s == "" or s == "None" or s == "nil" or s == "0" then return nil end
     return s
+  end
+
+  -- Build ini tidak punya ClanName/GuildName sama sekali di GameLua; konsep
+  -- terdekat adalah Corps (corps_id). Nama corps diambil dari
+  -- GameState.CorpsInfoArray bila array itu tersedia di client.
+  local function corpsNameFromID(id)
+    local n = tonumber(id)
+    if not n or n <= 0 then return nil end
+    local now = ESP.Now()
+    local map = EX._CorpsMap
+    if not map or (now - (EX._CorpsMapT or -999.0)) >= 5.0 then
+      map = {}
+      local gs = nil
+      local gd = ESP.GetGameplayData()
+      if gd and gd.GetGameState then pcall(function() gs = gd.GetGameState() end) end
+      local arr = nil
+      if ESPValid(gs) then pcall(function() arr = gs.CorpsInfoArray end) end
+      local function entry(info)
+        if info == nil then return end
+        local cid = nil
+        for _, f in ipairs({ "CorpsID", "CorpsId", "corps_id", "ID", "Id" }) do
+          pcall(function()
+            local v = tonumber(info[f])
+            if v and v > 0 then cid = v end
+          end)
+          if cid then break end
+        end
+        if not cid then return end
+        for _, f in ipairs({ "CorpsName", "Name", "CorpsSimpleName", "SimpleName", "ShortName", "CorpsTag", "Tag" }) do
+          local v = nil
+          pcall(function() v = firstText(info[f]) end)
+          if v then map[cid] = v return end
+        end
+      end
+      if type(arr) == "table" then
+        for _, info in pairs(arr) do entry(info) end
+      elseif arr ~= nil then
+        local cnt = 0
+        pcall(function()
+          cnt = tonumber(arr.Num and arr:Num()) or tonumber(arr.Length and arr:Length())
+            or tonumber(#arr) or 0
+        end)
+        for i = 1, cnt do
+          local info = nil
+          pcall(function() info = arr:Get(i) end)
+          if info == nil then pcall(function() info = arr[i] end) end
+          entry(info)
+        end
+      end
+      EX._CorpsMap, EX._CorpsMapT = map, now
+    end
+    return map[n]
   end
 
   function EX.GetClanText(Character, isBot)
@@ -4367,24 +4546,50 @@ do
     local ttl = (c.clan and c.clan ~= "") and 10.0 or 0.75
     if c.clanT and (now - c.clanT) < ttl then return c.clan or "" end
     c.clanT = now
+    c.t = now
     local ps = EX.GetPlayerState(Character)
-    if not ps then c.clan = "" return "" end
     local value = nil
-    for _, field in ipairs(CLAN_KEYS) do
-      local v = nil
-      pcall(function() v = firstText(ps[field]) end)
-      if v then value = v break end
+    if ps then
+      for _, field in ipairs(CLAN_KEYS) do
+        local v = nil
+        pcall(function() v = firstText(ps[field]) end)
+        if v then value = v break end
+      end
+      if not value then
+        local info = nil
+        pcall(function() info = ps.ClanInfo end)
+        if not info then pcall(function() info = ps.GuildInfo end) end
+        if not info then pcall(function() info = ps.PlayerClanInfo end) end
+        if not info then pcall(function() info = ps.CorpsInfo end) end
+        if info then
+          for _, field in ipairs(CLAN_KEYS) do
+            local v = nil
+            pcall(function() v = firstText(info[field]) end)
+            if v then value = v break end
+          end
+        end
+      end
+      if not value then
+        local cid = nil
+        for _, f in ipairs({ "CorpsID", "CorpsId", "corps_id" }) do
+          pcall(function()
+            local v = tonumber(ps[f])
+            if v and v > 0 then cid = v end
+          end)
+          if cid then break end
+        end
+        if cid then value = corpsNameFromID(cid) end
+      end
     end
-    if not value then
-      local info = nil
-      pcall(function() info = ps.ClanInfo end)
-      if not info then pcall(function() info = ps.GuildInfo end) end
-      if not info then pcall(function() info = ps.PlayerClanInfo end) end
-      if info then
-        for _, field in ipairs(CLAN_KEYS) do
-          local v = nil
-          pcall(function() v = firstText(info[field]) end)
-          if v then value = v break end
+    -- Fallback terakhir: tag clan yang ditulis pemain di depan namanya,
+    -- mis. "[ABC]Nick" atau "【ABC】Nick". Tidak ada field clan di build ini.
+    if not value and not isBot then
+      local name = ESP.ResolveName(Character, false)
+      if type(name) == "string" then
+        local tag = name:match("^%[([%w_%-%.]+)%]") or name:match("^【([^】]+)】")
+        if tag then
+          tag = tag:gsub("^%s+", ""):gsub("%s+$", "")
+          if #tag >= 2 and #tag <= 12 then value = tag end
         end
       end
     end
@@ -4401,6 +4606,7 @@ do
     local c = playerCache(key)
     if c.ammoT and (now - c.ammoT) < 0.25 then return c.ammo or "" end
     c.ammoT = now
+    c.t = now
     local weapon = nil
     pcall(function()
       if Character.GetCurrentWeapon then weapon = Character:GetCurrentWeapon() end
@@ -5023,9 +5229,9 @@ end
 function ESP.Scan()
   local pc = ESP.GetController()
   local me = ESP.GetLocalCharacter()
-  if not pc or not me then ESP.EnemyCache = {} return pc, 0, 0 end
+  if not pc or not me then ESP.EnemyCache = {} ESP.SeenKeys = {} return pc, 0, 0 end
   local myLoc = ESP.ActorLocation(me)
-  if not myLoc then ESP.EnemyCache = {} return pc, 0, 0 end
+  if not myLoc then ESP.EnemyCache = {} ESP.SeenKeys = {} return pc, 0, 0 end
   local myTeam = ESP.GetTeamID(me)
   local list = {}
   local nReal, nBot = 0, 0
@@ -5049,6 +5255,15 @@ function ESP.Scan()
     end
   end
   table.sort(list, function(a, b) return (a.Distance or 99999) < (b.Distance or 99999) end)
+  -- Simpan SEMUA key yang masih terlihat, bukan hanya top-N. Dipakai sweep
+  -- untuk membedakan target yang benar-benar pergi dari target yang hanya
+  -- tergeser keluar dari batas MaxTracked (biar panel tidak dibuat-hancur
+  -- terus di perbatasan urutan jarak).
+  local seen = {}
+  for _, it in ipairs(list) do
+    if it.Key ~= nil then seen[it.Key] = true end
+  end
+  ESP.SeenKeys = seen
   local trimmed = {}
   local maxR = CFG.MaxTracked or 16
   for i, it in ipairs(list) do
@@ -5189,19 +5404,34 @@ function ESP.Update()
       end
     end
   end
-  -- stale: jo is frame me nahi dikha usko hide; jo cache me bhi nahi usko release
-  local seenCache = {}
-  for _, it in ipairs(ESP.EnemyCache) do seenCache[it.Key] = true end
-  local function stillActive(k)
-    return active[k] == true
+  -- stale: yang off-screen di-hide, yang sudah keluar dari EnemyCache di-release.
+  -- Dulu release hanya lewat Corners/HealthBg; saat Team box & Health bar OFF
+  -- tabel itu kosong, sehingga ESP.Infos (8 widget/target) dan ESP.Lines tidak
+  -- pernah dihancurkan -> UMG menumpuk -> force close di pertengahan match.
+  local seenCache = ESP.SeenKeys
+  if seenCache == nil then
+    seenCache = {}
+    for _, it in ipairs(ESP.EnemyCache) do seenCache[it.Key] = true end
   end
-  for k, _ in pairs(ESP.Lines) do if not stillActive(k) then ESP.HideTarget(k) end end
-  for k, _ in pairs(ESP.Infos) do if not stillActive(k) then ESP.HideTarget(k) end end
-  for k, _ in pairs(ESP.Corners) do
-    if not stillActive(k) and not seenCache[k] then ESP.ReleaseTarget(k) end
+  local stale = {}
+  local function markStale(t)
+    for k in pairs(t) do
+      if not seenCache[k] then stale[k] = true end
+    end
   end
-  for k, _ in pairs(ESP.HealthBg) do
-    if not seenCache[k] and not stillActive(k) then ESP.ReleaseTarget(k) end
+  markStale(ESP.Lines)
+  markStale(ESP.Infos)
+  markStale(ESP.Corners)
+  markStale(ESP.HealthBg)
+  markStale(ESP.HealthFill)
+  for k in pairs(stale) do
+    ESP.ReleaseTarget(k)
+  end
+  for k in pairs(ESP.Infos) do
+    if not active[k] then ESP.HideTarget(k) end
+  end
+  for k in pairs(ESP.Lines) do
+    if not active[k] then ESP.Hide(ESP.Lines[k]) end
   end
   -- Extra world ESP: airdrop, zone, grenade.
   if ESP.Extra and ESP.Extra.Update then
