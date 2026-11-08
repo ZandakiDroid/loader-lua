@@ -1396,6 +1396,7 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_ESP9_GrenadeRadius", UI = AliasMap.Switcher, Text = T("      Blast Radius", "      Blast Radius"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeRadius == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeRadius = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Rank", UI = AliasMap.Switcher, Text = T("   Enemy Rank", "   Enemy Rank"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Rank == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Rank = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Clan", UI = AliasMap.Switcher, Text = T("   Enemy Clan", "   Enemy Clan"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Clan == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Clan = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_RankDebug", UI = AliasMap.Switcher, Text = T("   Debug Rank / Clan", "   Debug Rank / Clan"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_RankDebug == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_RankDebug = v and true or false; if _G.ESP and _G.ESP.ResetWidgets then pcall(_G.ESP.ResetWidgets) end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Ammo", UI = AliasMap.Switcher, Text = T("   Enemy Ammo / Reload", "   Enemy Ammo / Reload"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ammo == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ammo = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
         }
 
@@ -3537,9 +3538,10 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
   local weapon = weaponCache.text or ""
   local weaponInfo = weaponCache.info
   local rankText, clanText, ammoText = "", "", ""
+  local dbgRank = _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true
   if ESP.Extra then
-    if menu.ShowRank then rankText = ESP.Extra.GetRankText(Character, isBot) or "" end
-    if menu.ShowClan then clanText = ESP.Extra.GetClanText(Character, isBot) or "" end
+    if menu.ShowRank or dbgRank then rankText = ESP.Extra.GetRankText(Character, isBot) or "" end
+    if menu.ShowClan or dbgRank then clanText = ESP.Extra.GetClanText(Character, isBot) or "" end
     if menu.ShowAmmo then ammoText = ESP.Extra.GetAmmoText(Character, isBot) or "" end
   end
   -- Visibility: Open (green) / Close (red)
@@ -3600,8 +3602,8 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
       d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
       d.State:SetWidgetVisibility(menu.ShowVisibility and visible or hidden)
-      d.Rank:SetWidgetVisibility((menu.ShowRank and rankText ~= "") and visible or hidden)
-      d.Clan:SetWidgetVisibility((menu.ShowClan and clanText ~= "") and visible or hidden)
+      d.Rank:SetWidgetVisibility(((menu.ShowRank or dbgRank) and rankText ~= "") and visible or hidden)
+      d.Clan:SetWidgetVisibility(((menu.ShowClan or dbgRank) and clanText ~= "") and visible or hidden)
       d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
       d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
       d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
@@ -3614,8 +3616,8 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
       d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
       d.State:SetWidgetVisibility(menu.ShowVisibility and visible or hidden)
-      d.Rank:SetWidgetVisibility((menu.ShowRank and rankText ~= "") and visible or hidden)
-      d.Clan:SetWidgetVisibility((menu.ShowClan and clanText ~= "") and visible or hidden)
+      d.Rank:SetWidgetVisibility(((menu.ShowRank or dbgRank) and rankText ~= "") and visible or hidden)
+      d.Clan:SetWidgetVisibility(((menu.ShowClan or dbgRank) and clanText ~= "") and visible or hidden)
       d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
       d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
       d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
@@ -4137,30 +4139,103 @@ do
     EX.ZoneGroundZ = nil
   end
 
-  -- Peta PlayerKey -> PlayerState milik game sendiri (GameplayData men-cache
-  -- semua PlayerState yang sudah di-bind di client). Rebuild max 1x/detik.
+  -- Baca properti objek slua. Sebagian properti C++ tidak terbaca lewat
+  -- indexing biasa, tetapi bisa lewat slua.IndexReference (game sendiri
+  -- memakai ini, mis. AliasDataUtil untuk PlayerState.AliasInfo).
+  local function propOf(obj, field)
+    if obj == nil then return nil end
+    local v = nil
+    local ok = pcall(function() v = obj[field] end)
+    if ok and v ~= nil then return v end
+    local sl = rawget(_G, "slua")
+    if sl and type(sl.IndexReference) == "function" then
+      pcall(function() v = sl.IndexReference(obj, field) end)
+      if v ~= nil then return v end
+    end
+    pcall(function()
+      local f = obj["Get" .. field]
+      if type(f) == "function" then v = f(obj) end
+    end)
+    return v
+  end
+
+  -- Iterasi seluruh PlayerState langsung dari engine. Ini jalur yang dipakai
+  -- game sendiri di client (AliasDataUtil: Game:GetAllPlayerStates()).
+  local function eachEnginePlayerState(fn)
+    local game = rawget(_G, "Game")
+    if not (game and game.GetAllPlayerStates) then return 0 end
+    local arr = nil
+    pcall(function() arr = game:GetAllPlayerStates() end)
+    if arr == nil then return 0 end
+    local n, used = 0, false
+    pcall(function()
+      for _, ps in pairs(arr) do
+        used = true
+        n = n + 1
+        fn(ps)
+      end
+    end)
+    if used then return n end
+    local cnt = 0
+    pcall(function()
+      cnt = tonumber(arr.Num and arr:Num()) or tonumber(arr.Length and arr:Length())
+        or tonumber(#arr) or 0
+    end)
+    for i = 1, cnt do
+      local ps = nil
+      pcall(function() ps = arr:Get(i) end)
+      if ps == nil then pcall(function() ps = arr[i] end) end
+      if ps ~= nil then n = n + 1 fn(ps) end
+    end
+    return n
+  end
+
+  -- Peta PlayerKey/UID/Character -> PlayerState. Sumber utama adalah engine
+  -- (Game:GetAllPlayerStates), lalu registry GameplayData sebagai pelengkap.
+  -- Rebuild max 1x/detik.
   function EX.PlayerStateMap()
     local now = ESP.Now()
     if EX._PSMap and (now - (EX._PSMapT or -999.0)) < 1.0 then return EX._PSMap end
     local map = {}
+    local function addKey(prefix, value, ps)
+      if value == nil then return end
+      local s = tostring(value)
+      if s == "" or s == "nil" then return end
+      if map[prefix .. s] == nil then map[prefix .. s] = ps end
+      local n = tonumber(value)
+      if n ~= nil then
+        local ns = string.format("%.0f", n)
+        if map[prefix .. ns] == nil then map[prefix .. ns] = ps end
+      end
+    end
+    local function addPS(ps, arrayKey)
+      if not ESPValid(ps) then return end
+      if arrayKey ~= nil then addKey("k:", arrayKey, ps) end
+      addKey("k:", propOf(ps, "PlayerKey"), ps)
+      addKey("u:", propOf(ps, "UID"), ps)
+      addKey("u:", propOf(ps, "PlayerUID"), ps)
+      local ch = nil
+      pcall(function() if ps.GetPlayerCharacter then ch = ps:GetPlayerCharacter() end end)
+      if ch == nil then ch = propOf(ps, "PlayerCharacter") end
+      if ch == nil then ch = propOf(ps, "Pawn") end
+      if ESPValid(ch) then
+        local ck = nil
+        pcall(function() if ch.GetPlayerKey then ck = ch:GetPlayerKey() end end)
+        if ck == nil then ck = propOf(ch, "PlayerKey") end
+        addKey("c:", ck, ps)
+      end
+    end
+    local engineCount = eachEnginePlayerState(function(ps) addPS(ps, nil) end)
     local gd = ESP.GetGameplayData()
     local list = nil
     if gd and gd.GetAllPlayerStates then
       pcall(function() list = gd.GetAllPlayerStates() end)
     end
     if type(list) == "table" then
-      for k, ps in pairs(list) do
-        if ESPValid(ps) then
-          map["k:" .. tostring(k)] = ps
-          local pk, uid = nil, nil
-          pcall(function() pk = ps.PlayerKey end)
-          pcall(function() uid = ps.UID end)
-          if pk ~= nil then map["k:" .. tostring(pk)] = ps end
-          if uid ~= nil then map["u:" .. tostring(uid)] = ps end
-        end
-      end
+      for k, ps in pairs(list) do addPS(ps, k) end
     end
     EX._PSMap, EX._PSMapT = map, now
+    EX._PSMapN = engineCount
     return map
   end
 
@@ -4173,15 +4248,15 @@ do
     if not ESPValid(ps) then
       pcall(function() if Character.GetPlayerState then ps = Character:GetPlayerState() end end)
     end
-    if not ESPValid(ps) then pcall(function() ps = Character.PlayerState end) end
-    if not ESPValid(ps) then pcall(function() ps = Character.PlayerStateReplicated end) end
+    if not ESPValid(ps) then ps = propOf(Character, "PlayerState") end
+    if not ESPValid(ps) then ps = propOf(Character, "PlayerStateReplicated") end
     if ESPValid(ps) then return ps end
     -- Fallback: registry GameplayData, dipakai game sendiri untuk UI player lain.
     local gd = ESP.GetGameplayData()
     local key = nil
     pcall(function() if Character.GetPlayerKey then key = Character:GetPlayerKey() end end)
-    if key == nil then pcall(function() key = Character.PlayerKey end) end
-    if key == nil then pcall(function() key = Character.UID end) end
+    if key == nil then key = propOf(Character, "PlayerKey") end
+    if key == nil then key = propOf(Character, "UID") end
     if gd and key ~= nil then
       for _, fn in ipairs({ "GetPlayerState", "GetPlayerStateByKey", "GetPlayerStateByPlayerKey" }) do
         if type(gd[fn]) == "function" then
@@ -4203,16 +4278,16 @@ do
       end
     end
     if ESPValid(ps) then return ps end
-    -- Fallback terakhir: peta PlayerKey/UID -> PlayerState.
+    -- Fallback: peta PlayerKey/UID/Character -> PlayerState.
     if key ~= nil then
       local map = EX.PlayerStateMap()
       local ks = tostring(key)
-      local hit = map["k:" .. ks] or map["u:" .. ks]
+      local hit = map["k:" .. ks] or map["u:" .. ks] or map["c:" .. ks]
       if hit == nil then
         local nk = tonumber(key)
         if nk ~= nil then
           ks = tostring(nk)
-          hit = map["k:" .. ks] or map["u:" .. ks]
+          hit = map["k:" .. ks] or map["u:" .. ks] or map["c:" .. ks]
         end
       end
       if ESPValid(hit) then return hit end
@@ -4354,9 +4429,7 @@ do
 
   local function rankNumField(obj, field)
     if obj == nil then return nil end
-    local v = nil
-    local ok = pcall(function() v = obj[field] end)
-    if not ok then return nil end
+    local v = propOf(obj, field)
     v = tonumber(v)
     if v and v == v and v > 0 and v ~= math.huge then return v end
     return nil
@@ -4427,13 +4500,12 @@ do
       if (now - (c.dbgT or 0)) >= 5.0 then
         c.dbgT = now
         local function dbgVal(obj, field)
-          local v = nil
-          pcall(function() if obj then v = obj[field] end end)
+          local v = propOf(obj, field)
           return tostring(v)
         end
         local pf = rankFeature(ps)
-        print(string.format("[ESP RANK] key=%s ps=%s seg=%s segRaw=%s cur=%s unlock=%s peak=%s layer=%s featSeg=%s featTitle=%s",
-          tostring(key), tostring(ps ~= nil),
+        print(string.format("[ESP RANK] key=%s states=%s ps=%s seg=%s segRaw=%s cur=%s unlock=%s peak=%s layer=%s featSeg=%s featTitle=%s",
+          tostring(key), tostring(EX._PSMapN or 0), tostring(ps ~= nil),
           dbgVal(ps, "SegmentLevel"), dbgVal(ps, "Segment_Level"),
           dbgVal(ps, "CurSegLevel"),
           dbgVal(ps, "UnlockSegLevel"), dbgVal(ps, "PeakSegmentID"),
@@ -4505,16 +4577,13 @@ do
         if info == nil then return end
         local cid = nil
         for _, f in ipairs({ "CorpsID", "CorpsId", "corps_id", "ID", "Id" }) do
-          pcall(function()
-            local v = tonumber(info[f])
-            if v and v > 0 then cid = v end
-          end)
+          local v = tonumber(propOf(info, f))
+          if v and v > 0 then cid = v end
           if cid then break end
         end
         if not cid then return end
         for _, f in ipairs({ "CorpsName", "Name", "CorpsSimpleName", "SimpleName", "ShortName", "CorpsTag", "Tag" }) do
-          local v = nil
-          pcall(function() v = firstText(info[f]) end)
+          local v = firstText(propOf(info, f))
           if v then map[cid] = v return end
         end
       end
@@ -4544,6 +4613,7 @@ do
     local now = ESP.Now()
     local c = playerCache(key)
     local ttl = (c.clan and c.clan ~= "") and 10.0 or 0.75
+    if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then ttl = 0.75 end
     if c.clanT and (now - c.clanT) < ttl then return c.clan or "" end
     c.clanT = now
     c.t = now
@@ -4551,8 +4621,7 @@ do
     local value = nil
     if ps then
       for _, field in ipairs(CLAN_KEYS) do
-        local v = nil
-        pcall(function() v = firstText(ps[field]) end)
+        local v = firstText(propOf(ps, field))
         if v then value = v break end
       end
       if not value then
@@ -4563,8 +4632,7 @@ do
         if not info then pcall(function() info = ps.CorpsInfo end) end
         if info then
           for _, field in ipairs(CLAN_KEYS) do
-            local v = nil
-            pcall(function() v = firstText(info[field]) end)
+            local v = firstText(propOf(info, field))
             if v then value = v break end
           end
         end
@@ -4572,10 +4640,8 @@ do
       if not value then
         local cid = nil
         for _, f in ipairs({ "CorpsID", "CorpsId", "corps_id" }) do
-          pcall(function()
-            local v = tonumber(ps[f])
-            if v and v > 0 then cid = v end
-          end)
+          local v = tonumber(propOf(ps, f))
+          if v and v > 0 then cid = v end
           if cid then break end
         end
         if cid then value = corpsNameFromID(cid) end
@@ -4593,7 +4659,13 @@ do
         end
       end
     end
-    if not value then c.clan = "" return "" end
+    if not value then
+      if _G.RapzhangConfig and _G.RapzhangConfig.Esp9_RankDebug == true then
+        c.clan = ps and "CLAN [?]" or "CLAN [?noPS]"
+        return c.clan
+      end
+      c.clan = "" return ""
+    end
     local text = "CLAN " .. value
     c.clan = text
     return text
