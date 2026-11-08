@@ -1282,7 +1282,6 @@ do
         { id = 106004, key = "P18C",           name = "P18C",            cat = "weapon", group = "Pistol" },
         { id = 106005, key = "R45",            name = "R45",             cat = "weapon", group = "Pistol" },
         { id = 106006, key = "SawedOff",       name = "Sawed-off",       cat = "weapon", group = "Pistol" },
-        { id = 106007, key = "FlareGun",       name = "Flare Gun",       cat = "weapon", group = "Pistol" },
         { id = 106008, key = "Vz61",           name = "Vz61",            cat = "weapon", group = "Pistol" },
         { id = 106010, key = "DesertEagle",    name = "Desert Eagle",    cat = "weapon", group = "Pistol" },
         -- WEAPON / MELEE + OTHER
@@ -1367,14 +1366,31 @@ do
         { id = 601004, key = "Bandage",         name = "Bandage",             cat = "meds" },
         { id = 601005, key = "FirstAid",        name = "First Aid Kit",       cat = "meds" },
         { id = 601006, key = "MedKit",          name = "Med Kit",             cat = "meds" },
+        -- ID Self-Aid beda per build/Metro; cocokkan lewat nama item.
+        { key = "SelfAid", name = "Self-Aid Kit", cat = "meds",
+          patterns = { "self ?aid" } },
         -- THROWABLES
         { id = 602001, key = "Flashbang",       name = "Flashbang",       cat = "throw" },
         { id = 602002, key = "Smoke",           name = "Smoke Grenade",   cat = "throw" },
         { id = 602003, key = "Molotov",         name = "Molotov Cocktail",cat = "throw" },
         { id = 602004, key = "Frag",            name = "Frag Grenade",    cat = "throw" },
         { id = 602005, key = "Apple",           name = "Apple",           cat = "throw" },
-        -- MISC
+        -- MISC / ITEM PENTING
         { id = 603001, key = "GasCan",          name = "Gas Can",         cat = "misc" },
+        -- Flare Gun tetap pistol di inventory, tetapi loot-nya dikelompokkan
+        -- ke Misc supaya ikut daftar item penting.
+        { id = 106007, key = "FlareGun",        name = "Flare Gun",       cat = "misc",
+          patterns = { "flare ?gun" } },
+        -- ID key/voucher/computer berbeda antar mode dan build. Toggle ini
+        -- memakai pencocokan nama saat ID tidak ada di tabel katalog.
+        { key = "Key",              name = "Key",              cat = "misc",
+          patterns = { "%f[%a]key%f[%A]" } },
+        { key = "Keycard",          name = "Keycard",          cat = "misc",
+          patterns = { "key ?card" } },
+        { key = "Voucher",          name = "Voucher",          cat = "misc",
+          patterns = { "%f[%a]vouchers?%f[%A]" } },
+        { key = "MilitaryComputer", name = "Military Computer", cat = "misc",
+          patterns = { "military ?computer", "military ?laptop" } },
     }
 
     L.ById = {}
@@ -1384,8 +1400,9 @@ do
     L.KeyCfg = {}
     L.ByCat = {}
     L.ByGroup = {}
+    L.Patterns = {}
     for _, e in ipairs(L.Catalog) do
-        L.ById[e.id] = e
+        if e.id ~= nil then L.ById[e.id] = e end
         L.KeyCat[e.key] = e.cat
         L.KeyName[e.key] = e.name
         L.KeyGroup[e.key] = e.group
@@ -1395,6 +1412,31 @@ do
         local gk = tostring(e.cat) .. ":" .. tostring(e.group or "")
         L.ByGroup[gk] = L.ByGroup[gk] or {}
         table.insert(L.ByGroup[gk], e)
+        if e.patterns and #e.patterns > 0 then
+            L.Patterns[#L.Patterns + 1] = e
+        end
+    end
+
+    -- Item yang ID-nya tidak tersedia (mis. key/voucher/computer Metro)
+    -- dicocokkan lewat nama dari CDataTable. Nama dinormalisasi ke huruf
+    -- kecil, pemisah spasi, supaya "Self-Aid", "Self Aid", dan "SelfAid"
+    -- sama-sama kena.
+    local function lootNameKey(name)
+        local s = tostring(name or ""):lower()
+        s = s:gsub("[%c]", " ")
+        s = s:gsub("[%s_%-]+", " ")
+        s = s:gsub("^%s+", ""):gsub("%s+$", "")
+        return s
+    end
+    function L.MatchName(name)
+        local s = lootNameKey(name)
+        if s == "" then return nil end
+        for _, e in ipairs(L.Patterns or {}) do
+            for _, pat in ipairs(e.patterns) do
+                if s:find(pat) then return e end
+            end
+        end
+        return nil
     end
 
     -- Varian model/warna gear memakai level yang sama, jadi cukup satu
@@ -2770,9 +2812,15 @@ pcall(function()
   else CachedHitResult = {} end
 end)
 
+-- pcall dengan fungsi bernama: tidak membuat closure baru tiap pemanggilan.
+-- ESPValid dipanggil ratusan kali per frame, jadi alokasi closure di sini
+-- ikut menyumbang GC dan lag di HP low-end.
+local function sluaIsValid(obj)
+  return slua.isValid(obj)
+end
 local function ESPValid(obj)
   if obj == nil then return false end
-  local ok, v = pcall(function() return slua.isValid(obj) end)
+  local ok, v = pcall(sluaIsValid, obj)
   return ok and v == true
 end
 
@@ -2870,6 +2918,9 @@ ESP.Counter = nil   -- top "Players: X | Bots: Y"
 ESP.EnemyCache = {}
 ESP.RadarMarks = {}
 ESP.VisCache = {}   -- visibility cache: key -> {b, t}
+ESP.TeamCache = {}  -- team id cache: key -> {id, t}
+ESP.HealthCache = {} -- health pct cache: key -> {pct, t}
+ESP.AliveCache = {} -- alive cache: key -> {b, t}
 ESP.ScaleX = 1.0
 ESP.ScaleY = 1.0
 ESP.OffsetX = 0.0
@@ -2919,6 +2970,19 @@ function ESP.GetLocalCharacter()
     pcall(function() if pc and pc.GetPawn then c = pc:GetPawn() end end)
   end
   return ESPValid(c) and c or nil
+end
+
+-- Cache pawn lokal sebentar. Draw path memanggilnya beberapa kali per
+-- frame (ESP, airdrop, grenade, zone); 0,25 detik cukup responsif untuk
+-- respawn/spectate dan menghemat query GameplayData.
+function ESP.GetLocalCharacterCached()
+  local now = ESP.Now()
+  if ESP._LocalCharT and (now - ESP._LocalCharT) < 0.25 then
+    return ESP._LocalChar
+  end
+  local c = ESP.GetLocalCharacter()
+  ESP._LocalChar, ESP._LocalCharT = c, now
+  return c
 end
 
 function ESP.GetAllCharacters()
@@ -2994,6 +3058,18 @@ function ESP.GetTeamID(Character)
       if id == nil then pcall(function() id = ps.TeamID end) end
     end
   end
+  return id
+end
+
+-- Tim tidak berubah selama satu match. Cache per player key supaya
+-- UpdateInfo tidak membaca TeamID 2-3 kali untuk setiap target tiap frame.
+function ESP.GetTeamIDCached(key, Character, now)
+  if key == nil then return ESP.GetTeamID(Character) end
+  now = now or ESP.Now()
+  local c = ESP.TeamCache[key]
+  if c and (now - (c.t or 0)) < 5.0 then return c.id end
+  local id = ESP.GetTeamID(Character)
+  ESP.TeamCache[key] = { id = id, t = now }
   return id
 end
 
@@ -3091,6 +3167,28 @@ function ESP.GetHealthPct(Character)
   if pct < 0 then pct = 0 end
   if pct > 1 then pct = 1 end
   return pct
+end
+
+-- Health bar cukup diperbarui 5x/detik. Cache ini memotong 3-4 akses
+-- properti + pcall per target per frame.
+function ESP.GetHealthPctCached(key, Character, now)
+  if key == nil then return ESP.GetHealthPct(Character) end
+  now = now or ESP.Now()
+  local c = ESP.HealthCache[key]
+  if c and (now - (c.t or 0)) < 0.20 then return c.pct end
+  local pct = ESP.GetHealthPct(Character)
+  ESP.HealthCache[key] = { pct = pct, t = now }
+  return pct
+end
+
+function ESP.IsAliveCached(key, Character, now)
+  if key == nil then return ESP.IsAlive(Character) end
+  now = now or ESP.Now()
+  local c = ESP.AliveCache[key]
+  if c and (now - (c.t or 0)) < 0.25 then return c.b end
+  local b = ESP.IsAlive(Character)
+  ESP.AliveCache[key] = { b = b, t = now }
+  return b
 end
 
 local function NormalizeName(v)
@@ -3205,6 +3303,8 @@ function ESP.IsBoneVisible(pc, camLoc, target, bonePos)
   return bVis
 end
 
+local VIS_BONES = { "head", "spine_03" }
+
 function ESP.IsVisible(key, pc, camLoc, Character)
   local now = ESP.Now()
   local cached = ESP.VisCache[key]
@@ -3213,9 +3313,10 @@ function ESP.IsVisible(key, pc, camLoc, Character)
   end
   local bVis = false
   if ESPValid(Character) and ESPValid(pc) and camLoc then
-    local bones = { "head", "spine_03", "pelvis" }
-    for _, bn in ipairs(bones) do
-      local bp = ESP.GetBonePos(Character, bn)
+    -- Cukup kepala + dada. Dulu 3 bone (head/spine/pelvis) = 3 line trace
+    -- per target; pelvis jarang menentukan dan justru paling mahal di HP low.
+    for i = 1, #VIS_BONES do
+      local bp = ESP.GetBonePos(Character, VIS_BONES[i])
       if bp and (bp.X ~= 0 or bp.Y ~= 0 or bp.Z ~= 0) then
         if ESP.IsBoneVisible(pc, camLoc, Character, bp) then bVis = true break end
       end
@@ -3227,13 +3328,16 @@ function ESP.IsVisible(key, pc, camLoc, Character)
   return bVis
 end
 
+local function actorLocationRaw(Character)
+  if Character.K2_GetActorLocation then return Character:K2_GetActorLocation() end
+  if Game and Game.GetActorLocation then return Game:GetActorLocation(Character) end
+  return nil
+end
+
 function ESP.ActorLocation(Character)
-  local loc = nil
   if not ESPValid(Character) then return nil end
-  pcall(function()
-    if Character.K2_GetActorLocation then loc = Character:K2_GetActorLocation()
-    elseif Game and Game.GetActorLocation then loc = Game:GetActorLocation(Character) end
-  end)
+  local ok, loc = pcall(actorLocationRaw, Character)
+  if not ok then return nil end
   return loc
 end
 
@@ -3285,22 +3389,33 @@ function ESP.GetHeadFeet(Character)
   return head, feet
 end
 
+local function nowRaw()
+  local w = (slua and slua.getWorld and slua.getWorld()) or nil
+  if GameplayStaticsESP and w and GameplayStaticsESP.GetRealTimeSeconds then
+    return GameplayStaticsESP.GetRealTimeSeconds(w)
+  end
+  return nil
+end
+
+-- Satu kali ambil waktu per tick. Semua pemanggil dalam frame yang sama
+-- memakai nilai cache, bukan memanggil UGameplayStatics puluhan kali.
 function ESP.Now()
-  local t = nil
-  pcall(function()
-    local w = (slua and slua.getWorld and slua.getWorld()) or nil
-    if GameplayStaticsESP and w and GameplayStaticsESP.GetRealTimeSeconds then
-      t = GameplayStaticsESP.GetRealTimeSeconds(w)
-    end
-  end)
-  if tonumber(t) then return tonumber(t) end
-  pcall(function() if os and os.clock then t = os.clock() end end)
-  return tonumber(t) or 0.0
+  if ESP._NowVal ~= nil then return ESP._NowVal end
+  local ok, t = pcall(nowRaw)
+  t = ok and tonumber(t) or nil
+  if not t then
+    t = (os and os.clock and os.clock()) or 0.0
+  end
+  ESP._NowVal = t
+  return t
 end
 
 function ESP.World()
+  if ESP._WorldDone then return ESP._WorldVal end
   local w = nil
   pcall(function() if slua and slua.getWorld then w = slua.getWorld() end end)
+  ESP._WorldVal = w
+  ESP._WorldDone = true
   return w
 end
 
@@ -3378,15 +3493,16 @@ function ESP.Viewport(pc)
   return w, h
 end
 
+local function projectRaw(pc, worldLoc, pix)
+  local res = pc:ProjectWorldLocationToScreen(worldLoc, pix, true)
+  return res == true or res == 1 or (pix and (pix.X ~= 0 or pix.Y ~= 0))
+end
+
 function ESP.Project(pc, worldLoc)
   if not pc or not worldLoc then return nil end
   local pix = ESPV2(0, 0)
-  local ok = false
-  pcall(function()
-    local res = pc:ProjectWorldLocationToScreen(worldLoc, pix, true)
-    ok = (res == true or res == 1 or (pix and (pix.X ~= 0 or pix.Y ~= 0)))
-  end)
-  if not ok then return nil end
+  local ok, res = pcall(projectRaw, pc, worldLoc, pix)
+  if not ok or not res then return nil end
   return ESPV2(pix.X * (ESP.ScaleX or 1.0) + (ESP.OffsetX or 0.0),
                pix.Y * (ESP.ScaleY or 1.0) + (ESP.OffsetY or 0.0)), pix
 end
@@ -3428,12 +3544,14 @@ function ESP.SetFont(w, size)
   end)
 end
 
+local function setTextColorRaw(w, color)
+  if SlateColor then w:SetColorAndOpacity(SlateColor(color))
+  else w:SetColorAndOpacity(color) end
+end
+
 function ESP.SetTextColor(w, color)
-  if not ESPValid(w) then return end
-  pcall(function()
-    if SlateColor then w:SetColorAndOpacity(SlateColor(color))
-    else w:SetColorAndOpacity(color) end
-  end)
+  if not w then return end
+  pcall(setTextColorRaw, w, color)
 end
 
 function ESP.NewLine(color, z)
@@ -3457,8 +3575,19 @@ function ESP.NewLine(color, z)
   return { Widget = border, Slot = slot }
 end
 
+local function setWidgetVisibleRaw(w, vis)
+  w:SetWidgetVisibility(vis)
+end
+
+local function drawLineRaw(data, x1, y1, len, thickness, angle, x2, y2)
+  data.Slot:SetPosition(ESPV2(x1, y1 - thickness * 0.5))
+  data.Slot:SetSize(ESPV2(len, thickness))
+  data.Widget:SetRenderAngle(angle)
+  data.Widget:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
+end
+
 function ESP.DrawLine(data, x1, y1, x2, y2, thickness)
-  if not data or not ESPValid(data.Widget) or not data.Slot then return false end
+  if not data or not data.Widget or not data.Slot then return false end
   if x1 ~= x1 or y1 ~= y1 or x2 ~= x2 or y2 ~= y2 then return false end
   x1, y1, x2, y2 = RND(x1), RND(y1), RND(x2), RND(y2)
   local dz = CFG.DeadZone or 0.5
@@ -3479,27 +3608,29 @@ function ESP.DrawLine(data, x1, y1, x2, y2, thickness)
   len = RND(len)
   if data.lx1 == x1 and data.ly1 == y1 and data.lx2 == x2 and data.ly2 == y2 and data.th == thickness then
     if data.hidden == true then
-      pcall(function() data.Widget:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible) end)
+      pcall(setWidgetVisibleRaw, data.Widget, UEnums.ESlateVisibility.SelfHitTestInvisible)
       data.hidden = false
     end
     return true
   end
-  local ok = pcall(function()
-    data.Slot:SetPosition(ESPV2(x1, y1 - thickness * 0.5))
-    data.Slot:SetSize(ESPV2(len, thickness))
-    data.Widget:SetRenderAngle(angle)
-    data.Widget:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
-  end)
+  local ok = pcall(drawLineRaw, data, x1, y1, len, thickness, angle, x2, y2)
   if ok then
     data.lx1, data.ly1, data.lx2, data.ly2, data.th = x1, y1, x2, y2, thickness
     data.hidden = false
   end
-  return true
+  return ok
+end
+
+local function drawVBarRaw(data, x, top, h, thickness)
+  data.Slot:SetPosition(ESPV2(x, top))
+  data.Slot:SetSize(ESPV2(thickness, h))
+  data.Widget:SetRenderAngle(0)
+  data.Widget:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
 end
 
 function ESP.DrawVBar(data, x, top, h, thickness)
   -- vertical health bar: no angle math, seedha Position+Size (double-draw fix)
-  if not data or not ESPValid(data.Widget) or not data.Slot then return false end
+  if not data or not data.Widget or not data.Slot then return false end
   if h ~= h or h < 1 then ESP.Hide(data) return false end
   x, top, h = RND(x), RND(top), RND(h)
   local dz = CFG.DeadZone or 0.5
@@ -3510,34 +3641,33 @@ function ESP.DrawVBar(data, x, top, h, thickness)
   end
   if data.bx == x and data.bt == top and data.bh == h then
     if data.hidden == true then
-      pcall(function() data.Widget:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible) end)
+      pcall(setWidgetVisibleRaw, data.Widget, UEnums.ESlateVisibility.SelfHitTestInvisible)
       data.hidden = false
     end
     return true
   end
-  local ok = pcall(function()
-    data.Slot:SetPosition(ESPV2(x, top))
-    data.Slot:SetSize(ESPV2(thickness, h))
-    data.Widget:SetRenderAngle(0)
-    data.Widget:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
-  end)
+  local ok = pcall(drawVBarRaw, data, x, top, h, thickness)
   if ok then data.bx, data.bt, data.bh = x, top, h data.hidden = false end
-  return true
+  return ok
 end
 
 function ESP.Hide(data)
-  if data and ESPValid(data.Widget) and data.hidden ~= true then
-    pcall(function() data.Widget:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
+  if data and data.Widget and data.hidden ~= true then
+    pcall(setWidgetVisibleRaw, data.Widget, UEnums.ESlateVisibility.Collapsed)
     data.hidden = true
     data.lx1, data.ly1, data.lx2, data.ly2, data.th = nil, nil, nil, nil, nil
     data.bx, data.bt, data.bh = nil, nil, nil
   end
 end
 
+local function setBrushRaw(w, color)
+  w:SetBrushColor(color)
+end
+
 function ESP.SetBrush(data, color, colorKey)
-  if not data or not ESPValid(data.Widget) then return end
+  if not data or not data.Widget then return end
   if colorKey and data.colorKey == colorKey then return end
-  pcall(function() data.Widget:SetBrushColor(color) end)
+  pcall(setBrushRaw, data.Widget, color)
   if colorKey then data.colorKey = colorKey end
 end
 
@@ -3689,8 +3819,9 @@ ESP.TeamColorPalette = ESP.TeamColorPalette or {
   ESPMKC(0.85, 0.75, 1.0, 1.0),
 }
 ESP.TeamColorMap = ESP.TeamColorMap or {}
-function ESP.TeamColor(Character)
-  local team = tonumber(ESP.GetTeamID(Character))
+function ESP.TeamColor(Character, teamID)
+  local team = tonumber(teamID)
+  if team == nil then team = tonumber(ESP.GetTeamID(Character)) end
   local teamKey = tostring(team or "unknown")
   local cached = ESP.TeamColorMap[teamKey]
   if cached then return ESP.TeamColorPalette[cached] end
@@ -3968,31 +4099,43 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
   end
   if not d then return end
   local menu = ESP.Menu or {}
+  local now = ESP.Now()
   -- Bot pe "Bot", real player pe real name (cache, flicker fix)
-  local name = d.CachedName
-  if not name then
-    name = ESP.ResolveName(Character, isBot)
-    d.CachedName = name
+  local baseName = d.CachedName
+  if not baseName then
+    baseName = ESP.ResolveName(Character, isBot)
+    d.CachedName = baseName
   end
   if isBot then
-    name = "Bot"
+    baseName = "Bot"
     d.CachedName = "Bot"
   end
-  if menu.ShowTeamNumber then
-    local team = ESP.GetTeamID(Character)
-    name = string.format("%s [T%s]", name, tostring(team or "-"))
+  local teamID = ESP.GetTeamIDCached(key, Character, now)
+  local teamText = tostring(teamID or "-")
+  -- Format nama/jarak hanya saat nilainya berubah; string.format tiap
+  -- frame untuk setiap target tidak perlu.
+  local showTeam = menu.ShowTeamNumber == true
+  local name = d.LastName
+  if name == nil or d.LastNameBase ~= baseName or d.LastNameTeam ~= teamText
+     or d.LastNameTeamOn ~= showTeam then
+    name = showTeam and string.format("%s [T%s]", baseName, teamText) or baseName
+    d.LastName, d.LastNameBase, d.LastNameTeam, d.LastNameTeamOn =
+      name, baseName, teamText, showTeam
   end
-  local dl = string.format("%dm", math.max(0, math.floor((tonumber(distM) or 0) + 0.5)))
-  local teamID = ESP.GetTeamID(Character)
-  local teamKey = tostring(teamID or "-")
-  local nameColor = ESP.TeamColor(Character)
-  local now = ESP.Now()
+  local distInt = math.max(0, math.floor((tonumber(distM) or 0) + 0.5))
+  local dl = d.LastDistText
+  if dl == nil or d.LastDistInt ~= distInt then
+    dl = string.format("%dm", distInt)
+    d.LastDistInt, d.LastDistText = distInt, dl
+  end
+  local nameColor = ESP.TeamColor(Character, teamID)
   local weaponCache = d.WeaponCache
   if not weaponCache or (now - (weaponCache.t or 0)) >= 0.50 then
-    weaponCache = { t = now, text = ESP.GetWeaponText(Character), info = ESP.GetWeaponInfo(Character) }
+    -- Teks nama senjata tidak pernah digambar (widget Weapon collapsed);
+    -- cukup ambil info ikon supaya tidak ada kerja string sia-sia.
+    weaponCache = { t = now, info = ESP.GetWeaponInfo(Character) }
     d.WeaponCache = weaponCache
   end
-  local weapon = weaponCache.text or ""
   local weaponInfo = weaponCache.info
   local ammoText = ""
   if ESP.Extra and menu.ShowAmmo then
@@ -4000,74 +4143,91 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
   end
   -- Visibility: Open (green) / Close (red)
   local st = bVisible and "Open" or "Close"
-  local stKey = bVisible and "open" or "close"
-  pcall(function()
-    if d.LastN ~= name then
-      d.Name:SetText(name) d.LastN = name
+
+  local iconChanged = false
+  if menu.ShowWeapon and weaponInfo and weaponInfo.WeaponID then
+    if d.LastWeaponID ~= weaponInfo.WeaponID then
+      d.LastWeaponID = weaponInfo.WeaponID
+      iconChanged = true
     end
-    if d.LastTeamColor ~= teamKey then
-      ESP.SetTextColor(d.Name, nameColor)
-      d.LastTeamColor = teamKey
-    end
-    if d.LastD ~= dl then d.Dist:SetText(dl) d.LastD = dl end
-    if d.LastS ~= st then
-      d.State:SetText(st) d.LastS = st
-      if bVisible then ESP.SetTextColor(d.State, C_GREEN)
-      else ESP.SetTextColor(d.State, C_RED) end
-    end
-    if d.LastW ~= weapon then d.LastW = weapon end
-    if d.LastAmmo ~= ammoText then d.Ammo:SetText(ammoText) d.LastAmmo = ammoText end
-    pcall(function() d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
-    if menu.ShowWeapon and weaponInfo and weaponInfo.WeaponID then
-      if d.LastWeaponID ~= weaponInfo.WeaponID then
-        d.LastWeaponID = weaponInfo.WeaponID
+  elseif d.LastWeaponID ~= nil then
+    d.LastWeaponID = nil
+    iconChanged = true
+  end
+
+  local textDirty = d.LastN ~= name
+    or d.LastTeamColor ~= nameColor
+    or d.LastD ~= dl
+    or d.LastS ~= st
+    or d.LastAmmo ~= ammoText
+    or iconChanged
+  if textDirty then
+    pcall(function()
+      if d.LastN ~= name then
+        d.Name:SetText(name) d.LastN = name
+      end
+      if d.LastTeamColor ~= nameColor then
+        ESP.SetTextColor(d.Name, nameColor)
+        d.LastTeamColor = nameColor
+      end
+      if d.LastD ~= dl then d.Dist:SetText(dl) d.LastD = dl end
+      if d.LastS ~= st then
+        d.State:SetText(st) d.LastS = st
+        if bVisible then ESP.SetTextColor(d.State, C_GREEN)
+        else ESP.SetTextColor(d.State, C_RED) end
+      end
+      if d.LastAmmo ~= ammoText then d.Ammo:SetText(ammoText) d.LastAmmo = ammoText end
+      if iconChanged then
         ESP.ApplyWeaponIconToImage(d.WeaponIcon, weaponInfo)
       end
-    else
-      d.LastWeaponID = nil
-    end
-    if d.LastK ~= stKey then d.LastK = stKey end
-  end)
+    end)
+  end
+
   -- 4 baris teks (nama, jarak, status, ammo), centered under feet.
   local w = 120.0
   local h1, h2, h3, h4 = 20.0, 17.0, 17.0, 15.0
   local panelH = h1 + h2 + h3 + h4 + 30.0
   local x = RND(footX - w * 0.5)
   local y = RND(footY + 4.0)
-  if d.ix == nil or math.abs(d.ix - x) >= 1.0 or math.abs((d.iy or 0) - y) >= 1.0 then
-    d.ix, d.iy = x, y
+  local moved = d.ix == nil
+    or math.abs(d.ix - x) >= 1.0
+    or math.abs((d.iy or 0) - y) >= 1.0
+
+  -- Bitmask visibility: setter UMG hanya dipanggil saat menu/ammo/ikon
+  -- berubah, bukan setiap frame untuk setiap target.
+  local vis = 0
+  if menu.ShowName then vis = vis + 1 end
+  if menu.ShowDistance then vis = vis + 2 end
+  if menu.ShowVisibility then vis = vis + 4 end
+  if menu.ShowAmmo and ammoText ~= "" then vis = vis + 8 end
+  if menu.ShowWeapon and d.LastWeaponID then vis = vis + 16 end
+  local visChanged = d.visMask ~= vis
+  if moved or visChanged then
+    if moved then d.ix, d.iy = x, y end
+    if visChanged then d.visMask = vis end
     pcall(function()
-      d.Slot:SetPosition(ESPV2(x, y))
-      d.Slot:SetSize(ESPV2(w, panelH))
-      d.S1:SetPosition(ESPV2(w * 0.5, h1 * 0.5))
-      d.S2:SetPosition(ESPV2(w * 0.5, h1 + h2 * 0.5 + CFG.TextGap))
-      d.S3:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 * 0.5 + CFG.TextGap * 2.0))
-      d.S6:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + h4 * 0.5 + CFG.TextGap * 3.0))
-      -- Weapon icon: above the target box/head, not in the bottom text panel.
-      local iconY = ((tonumber(topY) or (footY - 50.0)) - footY) - 18.0
-      d.S5:SetPosition(ESPV2(w * 0.5, iconY))
-      d.S4:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + CFG.TextGap * 3.0 + 8.0))
-      local visible = UEnums.ESlateVisibility.SelfHitTestInvisible
-      local hidden = UEnums.ESlateVisibility.Collapsed
-      d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
-      d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
-      d.State:SetWidgetVisibility(menu.ShowVisibility and visible or hidden)
-      d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
-      d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
-      d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
-      d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
-    end)
-  else
-    pcall(function()
-      local visible = UEnums.ESlateVisibility.SelfHitTestInvisible
-      local hidden = UEnums.ESlateVisibility.Collapsed
-      d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
-      d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
-      d.State:SetWidgetVisibility(menu.ShowVisibility and visible or hidden)
-      d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
-      d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
-      d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
-      d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
+      if moved then
+        d.Slot:SetPosition(ESPV2(x, y))
+        d.Slot:SetSize(ESPV2(w, panelH))
+        d.S1:SetPosition(ESPV2(w * 0.5, h1 * 0.5))
+        d.S2:SetPosition(ESPV2(w * 0.5, h1 + h2 * 0.5 + CFG.TextGap))
+        d.S3:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 * 0.5 + CFG.TextGap * 2.0))
+        d.S6:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + h4 * 0.5 + CFG.TextGap * 3.0))
+        -- Weapon icon: above the target box/head, not in the bottom text panel.
+        local iconY = ((tonumber(topY) or (footY - 50.0)) - footY) - 18.0
+        d.S5:SetPosition(ESPV2(w * 0.5, iconY))
+        d.S4:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + CFG.TextGap * 3.0 + 8.0))
+      end
+      if visChanged then
+        local visible = UEnums.ESlateVisibility.SelfHitTestInvisible
+        local hidden = UEnums.ESlateVisibility.Collapsed
+        d.Name:SetWidgetVisibility((vis % 2 >= 1) and visible or hidden)
+        d.Dist:SetWidgetVisibility((math.floor(vis / 2) % 2 >= 1) and visible or hidden)
+        d.State:SetWidgetVisibility((math.floor(vis / 4) % 2 >= 1) and visible or hidden)
+        d.Ammo:SetWidgetVisibility((math.floor(vis / 8) % 2 >= 1) and visible or hidden)
+        d.WeaponIcon:SetWidgetVisibility((math.floor(vis / 16) % 2 >= 1) and visible or hidden)
+        d.Container:SetWidgetVisibility(visible)
+      end
     end)
   end
 end
@@ -4114,7 +4274,11 @@ function ESP.UpdateHealthBar(key, pct, x, top, h)
   if pct >= 0.7 then bucket = "g_" .. math.floor(pct * 20 + 0.5)
   elseif pct >= 0.4 then bucket = "y_" .. math.floor(pct * 20 + 0.5)
   else bucket = "r_" .. math.floor(pct * 20 + 0.5) end
-  ESP.SetBrush(fill, HealthColor(pct), bucket)
+  -- HealthColor() membuat FLinearColor baru; hanya hitung saat bucket warna
+  -- benar-benar berubah.
+  if fill.colorKey ~= bucket then
+    ESP.SetBrush(fill, HealthColor(pct), bucket)
+  end
   local fh = h * pct
   if fh < 1 then
     ESP.Hide(fill)
@@ -4157,6 +4321,8 @@ function ESP.ReleaseTarget(key)
   ESP.DestroyInfo(ESP.Infos[key])
   ESP.Infos[key] = nil
   ESP.VisCache[key] = nil
+  ESP.HealthCache[key] = nil
+  ESP.AliveCache[key] = nil
   if ESP.Extra and ESP.Extra.PlayerCache then ESP.Extra.PlayerCache[key] = nil end
 end
 
@@ -4174,6 +4340,12 @@ function ESP.ResetWidgets()
   ESP.HealthFill = {}
   ESP.Infos = {}
   ESP.VisCache = {}
+  ESP.TeamCache = {}
+  ESP.HealthCache = {}
+  ESP.AliveCache = {}
+  ESP._LocalChar, ESP._LocalCharT = nil, nil
+  ESP._WorldVal, ESP._WorldDone = nil, false
+  ESP._NowVal = nil
   if ESP.Counter then ESP.Destroy(ESP.Counter) end
   ESP.Counter = nil
   ESP.Canvas = nil
@@ -4269,6 +4441,11 @@ do
   EX.ZoneGroundZ = nil
   EX.HitResult = nil
 
+  function EX.LocalCharacter()
+    if ESP.GetLocalCharacterCached then return ESP.GetLocalCharacterCached() end
+    return ESP.GetLocalCharacter()
+  end
+
   function EX.ImportClass(path, alias)
     local cached = EX.ClassCache[path]
     if cached ~= nil then return cached or nil end
@@ -4303,12 +4480,8 @@ do
   end
 
   function EX.ActorLoc(a)
-    local loc = nil
-    pcall(function()
-      if a.K2_GetActorLocation then loc = a:K2_GetActorLocation()
-      elseif Game and Game.GetActorLocation then loc = Game:GetActorLocation(a) end
-    end)
-    return loc
+    -- Pakai jalur yang sama dengan ESP: satu pcall bernama, tanpa closure.
+    return ESP.ActorLocation(a)
   end
 
   function EX.ActorVelocity(a)
@@ -4389,7 +4562,7 @@ do
       slot:SetZOrder(37)
     end)
     ESP.SetFont(txt, 11)
-    d = { Container = container, Text = txt, Slot = slot, Child = child }
+    d = { Container = container, Text = txt, Slot = slot, Child = child, vis = true }
     EX.Labels[key] = d
     return d
   end
@@ -4397,26 +4570,32 @@ do
   function EX.DrawLabel(key, x, y, text, color)
     local d = EX.GetLabel(key)
     if not d then return end
-    if d.lastText ~= text then
-      pcall(function() d.Text:SetText(text) end)
-      d.lastText = text
-    end
-    if d.lastColor ~= color then
-      ESP.SetTextColor(d.Text, color)
-      d.lastColor = color
-    end
+    local textChanged = d.lastText ~= text
+    local colorChanged = d.lastColor ~= color
     local px, py = RND(x), RND(y)
-    if d.px ~= px or d.py ~= py then
-      pcall(function() d.Slot:SetPosition(ESPV2(px, py)) end)
-      d.px, d.py = px, py
+    local posChanged = d.px ~= px or d.py ~= py
+    -- Widget UMG hanya disentuh saat ada perubahan atau saat label baru
+    -- muncul kembali. Sebelumnya visibility di-set tiap frame untuk setiap
+    -- label loot/airdrop/grenade.
+    if textChanged or colorChanged or posChanged or d.vis ~= true then
+      pcall(function()
+        if textChanged then d.Text:SetText(text) end
+        if posChanged then d.Slot:SetPosition(ESPV2(px, py)) end
+        if d.vis ~= true then
+          d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
+        end
+      end)
+      if colorChanged then ESP.SetTextColor(d.Text, color) end
+      d.lastText, d.lastColor = text, color
+      d.px, d.py, d.vis = px, py, true
     end
-    pcall(function() d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible) end)
   end
 
   function EX.HideLabel(key)
     local d = EX.Labels[key]
-    if d and ESPValid(d.Container) then
+    if d and d.vis ~= false then
       pcall(function() d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
+      d.vis = false
     end
   end
 
@@ -4544,8 +4723,12 @@ do
   end
 
   -- Buang widget aktor yang sudah tidak terlihat (grenade/airdrop lama).
+  -- Throttle 1 detik: sweep tidak perlu jalan 12x/detik; TTL tetap 3 detik.
   function EX.Sweep(now, ttl)
     ttl = ttl or 3.0
+    now = now or ESP.Now()
+    if EX.LastSweep and (now - EX.LastSweep) < 1.0 then return end
+    EX.LastSweep = now
     for key, seen in pairs(EX.LastSeen) do
       if (now - (tonumber(seen) or 0)) > ttl then
         EX.LastSeen[key] = nil
@@ -4578,6 +4761,8 @@ do
     EX.PlayerCache, EX.PredictCache = {}, {}
     EX.GrenadeTypeCache = {}
     EX.LastSeen = {}
+    EX.LastSweep = nil
+    EX.ZoneData, EX.ZoneDataT = nil, -999.0
     EX._PSMap, EX._PSMapT = nil, nil
     EX._PSCharMap, EX._PSIdentMiss = nil, nil
     EX._PSMapN, EX._PSArrN, EX._PSMapC = 0, 0, 0
@@ -5676,7 +5861,8 @@ do
   function EX.ScanAirdrops()
     local list = EX.ScanActors("/Script/ShadowTrackerExtra.AirDropBoxActor", "AirDropBoxActor")
     local myLoc = nil
-    pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
+    local mc = EX.LocalCharacter()
+    if mc then myLoc = ESP.ActorLocation(mc) end
     local out = {}
     for _, a in ipairs(list) do
       local loc = EX.ActorLoc(a)
@@ -5732,8 +5918,8 @@ do
     local showBox = cfg.Esp9_AirdropBox == true
     local showPred = cfg.Esp9_AirdropPredict == true
     local seen = {}
-    local myLoc = nil
-    pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
+    local mc = EX.LocalCharacter()
+    local myLoc = mc and ESP.ActorLocation(mc) or nil
     local shown = 0
     for _, item in ipairs(EX.Airdrops) do
       local a = item.Actor
@@ -5960,8 +6146,8 @@ do
 
   function EX.ScanGrenades()
     local list = EX.ScanActors("STExtraGrenadeBase", "/Script/ShadowTrackerExtra.STExtraGrenadeBase")
-    local myLoc = nil
-    pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
+    local mc = EX.LocalCharacter()
+    local myLoc = mc and ESP.ActorLocation(mc) or nil
     local out = {}
     for _, a in ipairs(list) do
       local loc = EX.ActorLoc(a)
@@ -6013,7 +6199,7 @@ do
     local showMark = cfg.Esp9_GrenadeMark == true
     local showRadius = cfg.Esp9_GrenadeRadius == true
     local seen = {}
-    local me = ESP.GetLocalCharacter()
+    local me = EX.LocalCharacter()
     local shown = 0
     for _, item in ipairs(EX.Grenades) do
       local a = item.Actor
@@ -6133,18 +6319,30 @@ do
     return data
   end
 
+  -- Draw path cukup 5x/detik; GetZoneData membaca beberapa properti
+  -- GameState + parse string circle setiap panggilan.
+  function EX.GetZoneDataCached(now)
+    now = now or ESP.Now()
+    if EX.ZoneDataT and (now - EX.ZoneDataT) < 0.20 then
+      return EX.ZoneData
+    end
+    local data = EX.GetZoneData()
+    EX.ZoneData, EX.ZoneDataT = data, now
+    return data
+  end
+
   function EX.DrawZone(pc, vw, vh, now)
     local cfg = _G.RapzhangConfig or {}
     local showTimer = cfg.Esp9_ZoneTimer == true
     local showNext = cfg.Esp9_ZoneNext == true
-    local data = EX.GetZoneData()
+    local data = EX.GetZoneDataCached(now)
     if not data or (not showTimer and not showNext) then
       EX.HideLabel("zone_text")
       EX.HideRing("zone_ring")
       return
     end
-    local myLoc = nil
-    pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
+    local mc = EX.LocalCharacter()
+    local myLoc = mc and ESP.ActorLocation(mc) or nil
     local white = data.white
     local whiteOK = white and tonumber(white.X) and tonumber(white.Y) and tonumber(white.Z) and tonumber(white.Z) > 0
     if showTimer then
@@ -6249,6 +6447,11 @@ do
   end
 end
 
+local function allPawnsRaw()
+  if Game and Game.GetAllPlayerPawns then return Game:GetAllPlayerPawns() end
+  return nil
+end
+
 function ESP.Scan()
   local pc = ESP.GetController()
   local me = ESP.GetLocalCharacter()
@@ -6256,36 +6459,46 @@ function ESP.Scan()
   local myLoc = ESP.ActorLocation(me)
   if not myLoc then ESP.EnemyCache = {} ESP.SeenKeys = {} return pc, 0, 0 end
   local myTeam = ESP.GetTeamID(me)
+  local myTeamText = myTeam ~= nil and tostring(myTeam) or nil
   local list = {}
+  local seen = {}
   local nReal, nBot = 0, 0
-  local pawns = nil
-  pcall(function() if Game and Game.GetAllPlayerPawns then pawns = Game:GetAllPlayerPawns() end end)
+  local okPawns, pawns = pcall(allPawnsRaw)
+  if not okPawns then pawns = nil end
   if pawns then
     for _, ch in pairs(pawns) do
       if ESPValid(ch) and ch ~= me and ESP.IsAlive(ch) then
         local team = ESP.GetTeamID(ch)
-        if myTeam == nil or team == nil or tostring(team) ~= tostring(myTeam) then
+        local sameTeam = false
+        if myTeam ~= nil and team ~= nil then
+          if type(team) == "number" and type(myTeam) == "number" then
+            sameTeam = team == myTeam
+          else
+            sameTeam = tostring(team) == myTeamText
+          end
+        end
+        if not sameTeam then
           local loc = ESP.ActorLocation(ch)
           local dm = ESP.DistMeters(myLoc, loc)
           if dm * 100.0 <= (CFG.MaxDistance or 40000) then
             local isBot = ESP.IsBot(ch)
+            local key = ESP.GetPlayerKey(ch)
             if isBot then nBot = nBot + 1 else nReal = nReal + 1 end
-            list[#list + 1] = { Character = ch, Key = ESP.GetPlayerKey(ch),
+            list[#list + 1] = { Character = ch, Key = key,
                                 IsBot = isBot, Distance = dm }
+            if key ~= nil then seen[key] = true end
           end
         end
       end
     end
   end
-  table.sort(list, function(a, b) return (a.Distance or 99999) < (b.Distance or 99999) end)
+  if #list > 1 then
+    table.sort(list, function(a, b) return (a.Distance or 99999) < (b.Distance or 99999) end)
+  end
   -- Simpan SEMUA key yang masih terlihat, bukan hanya top-N. Dipakai sweep
   -- untuk membedakan target yang benar-benar pergi dari target yang hanya
   -- tergeser keluar dari batas MaxTracked (biar panel tidak dibuat-hancur
   -- terus di perbatasan urutan jarak).
-  local seen = {}
-  for _, it in ipairs(list) do
-    if it.Key ~= nil then seen[it.Key] = true end
-  end
   ESP.SeenKeys = seen
   local trimmed = {}
   local maxR = CFG.MaxTracked or 16
@@ -6588,16 +6801,45 @@ do
     return "misc"
   end
 
-  local function itemEntry(id, typ, count)
-    local data = id and itemData("Item", id) or nil
-    local name = data and (data.ItemName or data.Name) or nil
-    if type(name) ~= "string" or name == "" then
-      name = "Item " .. tostring(id or "?")
+  -- Cache metadata per item ID: nama, data CDataTable, entri katalog hasil
+  -- pencocokan ID atau pola nama, dan warna kualitas. Satu wrapper loot bisa
+  -- memuat beberapa item dan scan berjalan beberapa kali per detik, jadi
+  -- CDataTable tidak perlu dibaca ulang untuk ID yang sama.
+  ADV.ItemMeta = ADV.ItemMeta or {}
+
+  local function itemMeta(id, data)
+    local ck = id or 0
+    local cached = ADV.ItemMeta[ck]
+    if cached then return cached end
+    data = data or (id and itemData("Item", id) or nil)
+    local rawName = data and (data.ItemName or data.Name) or nil
+    if type(rawName) ~= "string" or rawName == "" then rawName = nil end
+    local entry = nil
+    if _G.RapzhangLoot then
+      entry = (id and _G.RapzhangLoot.ById and _G.RapzhangLoot.ById[id]) or nil
+      if not entry and rawName and _G.RapzhangLoot.MatchName then
+        entry = _G.RapzhangLoot.MatchName(rawName)
+      end
     end
+    local meta = {
+      name = rawName or ("Item " .. tostring(id or "?")),
+      data = data,
+      entry = entry,
+      color = qualityColor(data and data.ItemQuality),
+    }
+    -- Jangan mengunci nama "Item ?" kalau tabel item belum siap; biarkan
+    -- percobaan berikutnya membaca CDataTable lagi.
+    if data ~= nil then ADV.ItemMeta[ck] = meta end
+    return meta
+  end
+
+  local function itemEntry(id, count, meta)
+    meta = meta or itemMeta(id)
+    local name = meta.name
     if #name > 26 then name = name:sub(1, 26) .. ".." end
     local n = tonumber(count) or 0
     if n > 1 then name = name .. " x" .. tostring(math.floor(n)) end
-    return name, data
+    return name, meta.data
   end
 
   local function readDefineID(obj)
@@ -6694,17 +6936,17 @@ do
     misc   = "Esp9_LootMisc",
   }
 
-  -- Filter per item. Entri katalog memakai toggle item sendiri; ID yang
-  -- belum tercatat tetap tampil selama toggle "Other" kategori ON.
-  local function lootItemVisible(c, id, cat)
-    local entry = _G.RapzhangLoot and _G.RapzhangLoot.ById and _G.RapzhangLoot.ById[id]
+  -- Filter per item. Entri katalog (hasil ID atau pola nama) memakai toggle
+  -- item sendiri; item yang tidak dikenal tetap tampil selama toggle
+  -- "Other" kategori ON.
+  local function lootItemVisible(c, entry, cat)
+    local loot = _G.RapzhangLoot
     if entry then
       if entry.group then
-        local groupKey = _G.RapzhangLoot.GroupCfg
-          and _G.RapzhangLoot.GroupCfg[entry.cat .. ":" .. entry.group]
+        local groupKey = loot and loot.GroupCfg and loot.GroupCfg[entry.cat .. ":" .. entry.group]
         if groupKey and c[groupKey] ~= true then return false end
       end
-      local cfgKey = (_G.RapzhangLoot.KeyCfg and _G.RapzhangLoot.KeyCfg[entry.key])
+      local cfgKey = (loot and loot.KeyCfg and loot.KeyCfg[entry.key])
         or ("Esp9_LootI_" .. entry.key)
       return c[cfgKey] == true
     end
@@ -6745,23 +6987,26 @@ do
           if #entries > 0 then
             -- Satu wrapper bisa berisi beberapa item. Pilih item pertama
             -- yang kategorinya ON dan toggle item-nya tidak dimatikan.
-            local picked = nil
+            -- Entri bisa berasal dari ID katalog atau pola nama (key,
+            -- voucher, Self-Aid, Military Computer).
+            local picked, pickedMeta = nil, nil
             for _, e in ipairs(entries) do
-              local entry = _G.RapzhangLoot and _G.RapzhangLoot.ById and _G.RapzhangLoot.ById[e.id]
+              local meta = itemMeta(e.id)
+              local entry = meta.entry
               local cat = entry and entry.cat or lootCategory(e.typ, e.id, nil)
-              if want[cat] and lootItemVisible(c, e.id, cat) then
-                picked = e
+              if want[cat] and lootItemVisible(c, entry, cat) then
+                picked, pickedMeta = e, meta
                 break
               end
             end
             if picked then
-              local name, data = itemEntry(picked.id, picked.typ, picked.count)
+              local name = itemEntry(picked.id, picked.count, pickedMeta)
               out[#out + 1] = {
                 key = objectKey(ADV.GroundKey, a, loc),
                 x = loc.X, y = loc.Y, z = loc.Z,
                 dist = dist,
                 text = string.format("%s · %dm", name, math.floor(dist + 0.5)),
-                color = qualityColor(data and data.ItemQuality),
+                color = pickedMeta.color or qualityColor(pickedMeta.data and pickedMeta.data.ItemQuality),
                 off = 0,
               }
             end
@@ -7395,6 +7640,7 @@ do
       ADV.QueryOK = {}
       ADV.StaticOK = {}
       ADV.LootCache, ADV.VehCache, ADV.Ghosts = {}, {}, {}
+      ADV.ItemMeta = {}
       ADV.SquadCache = {}
       ADV.LootScan, ADV.VehScan, ADV.SquadScan = -999.0, -999.0, -999.0
       ADV._lootCleared, ADV._advCleared = false, false
@@ -7494,7 +7740,7 @@ function ESP.UpdateLootOnly()
     ESP.LastTransform = now
   end
   local vw, vh = ESP.Viewport(pc)
-  local me = ESP.GetLocalCharacter()
+  local me = ESP.GetLocalCharacterCached()
   if ESP.Adv and ESP.Adv.Update then
     pcall(ESP.Adv.Update, pc, vw, vh, ESP.GetCamLoc(pc), now, me)
   end
@@ -7504,7 +7750,17 @@ function ESP.UpdateLootOnly()
 end
 
 function ESP.Update()
-  ESP.SyncMenuConfig()
+  -- Snapshot baru untuk pemanggilan langsung (Start/reattach), bukan hanya
+  -- lewat ESP.Tick.
+  ESP._NowVal = nil
+  ESP._WorldDone = false
+  local now = ESP.Now()
+  -- Menu SetFunc sudah memanggil SyncMenuConfig; sync periodik di sini
+  -- hanya untuk self-heal, jadi 2x/detik cukup (bukan tiap frame).
+  if (now - (ESP.LastSync or -999.0)) >= 0.50 then
+    ESP.SyncMenuConfig()
+    ESP.LastSync = now
+  end
   local mainEnabled = _G.RapzhangConfig and _G.RapzhangConfig.EspLoai9 == true
   if not mainEnabled or not ESP_Enabled then
     if not ESP._MainOffCleaned then
@@ -7524,7 +7780,6 @@ function ESP.Update()
   end
   local canvas = ESP.GetCanvas()
   if not canvas then return end
-  local now = ESP.Now()
   local pc = ESP.GetController()
   if (now - ESP.LastScan) >= (ESP.ScanInterval or 0.35) then
     local r, b
@@ -7554,7 +7809,8 @@ function ESP.Update()
   for _, item in ipairs(ESP.EnemyCache) do
     local c = item.Character
     local key = item.Key
-    if ESPValid(c) and ESP.IsAlive(c) then
+    if ESPValid(c) and ESP.IsAliveCached(key, c, now) then
+      local teamID = ESP.GetTeamIDCached(key, c, now)
       local head, feet = ESP.GetHeadFeet(c)
       if head and feet then
         local headS, headPix = ESP.Project(pc, head)
@@ -7582,7 +7838,7 @@ function ESP.Update()
 
               -- 1) team-colored corners (8 segments)
               local arm = math.min(R - L, B - T) * (CFG.CornerLen or 0.28)
-              local boxColor = ESP.TeamColor(c)
+              local boxColor = ESP.TeamColor(c, teamID)
               arm = math.max(CFG.CornerMin or 6, math.min(CFG.CornerMax or 28, arm))
               local th = CFG.CornerThickness or 2.2
               if (ESP.Menu or {}).ShowTeam then
@@ -7599,7 +7855,7 @@ function ESP.Update()
               end
 
               -- 2) health bar (left): bg full + fill pct + HealthColor
-              local pct = ESP.GetHealthPct(c)
+              local pct = ESP.GetHealthPctCached(key, c, now)
               local sbX = L - (CFG.SideBarGap or 5.0)
               if (ESP.Menu or {}).ShowHealth then
                 ESP.UpdateHealthBar(key, pct, sbX, T, B - T)
@@ -7663,7 +7919,7 @@ function ESP.Update()
     if not active[k] then ESP.Hide(ESP.Lines[k]) end
   end
   -- Extra world ESP: airdrop, zone, grenade.
-  local me = ESP.GetLocalCharacter()
+  local me = ESP.GetLocalCharacterCached()
   if ESP.Extra and ESP.Extra.Update then
     pcall(ESP.Extra.Update, pc, vw, vh, camLoc, now)
   end
@@ -7676,6 +7932,10 @@ end
 -- Single driver: sirf ek repeating timer (lag/flicker fix).
 -- Purana triple-driver (Tick loop + 2x AddGameTimer) hata diya.
 function ESP.Tick()
+  -- Reset cache waktu/world per tick supaya semua modul dalam frame ini
+  -- memakai satu snapshot, bukan query engine berulang.
+  ESP._NowVal = nil
+  ESP._WorldDone = false
   pcall(ESP.Update)
 end
 
@@ -7728,6 +7988,8 @@ function ESP.Start()
   -- Apply persisted menu values before the first render/update pass.
   ESP.SyncMenuConfig()
   ESP.bActive = true
+  ESP._NowVal = nil
+  ESP._WorldDone = false
   pcall(ESP.Update)
   ESP.AttachTimers()
 end
