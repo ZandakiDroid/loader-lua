@@ -6765,12 +6765,133 @@ do
     return false
   end
 
+  -- Item yang baru diambil lokal. Data wrapper di client bisa terlambat
+  -- ter-update, jadi key+item di-blacklist sebentar supaya scan berikutnya
+  -- tidak menggambar ulang label yang sudah dihapus.
+  ADV.Picked = ADV.Picked or {}
+  ADV.PickTTL = 3.0
+
+  function ADV.NoteLootPicked(wrapper, itemID)
+    local loc = wrapper and ESP.ActorLocation(wrapper) or nil
+    if not loc then return end
+    local key = objectKey(ADV.GroundKey or "lt_", wrapper, loc)
+    local now = ESP.Now()
+    if itemID then
+      ADV.Picked[key .. "|" .. tostring(itemID)] = now + (ADV.PickTTL or 3.0)
+    end
+    local keep, changed = {}, false
+    for _, it in ipairs(ADV.LootCache or {}) do
+      local sameItem = (itemID == nil) or (it.id == itemID)
+      if it.key == key and sameItem then
+        changed = true
+      else
+        keep[#keep + 1] = it
+      end
+    end
+    if changed then
+      ADV.LootCache = keep
+      pcall(ADV.SyncLootLabels)
+    end
+  end
+
+  function ADV.OnPawnPickup(_, _, uCharacter, uWrapperActor)
+    if not uWrapperActor then return end
+    local me = ESP.GetLocalCharacter()
+    if me and uCharacter and uCharacter ~= me then return end
+    pcall(ADV.NoteLootPicked, uWrapperActor, nil)
+  end
+
+  -- Panel pickup adalah jalur Lua yang dipakai pickup manual maupun auto-pick.
+  -- Bungkus method instance-nya supaya label bisa hilang tepat saat pickup,
+  -- tanpa menunggu RPC/sinkronisasi wrapper.
+  function ADV.InstallPickupHook()
+    local installed = false
+    local panel = nil
+    -- Jalur resmi game (BackPackItemUI): library UI client, bukan global.
+    pcall(function()
+      local lib = require("GameLua.Mod.Library.Client.ClientIngameUIFunctionLibrary")
+      local icp = lib and lib.GetInputControlPanel and lib.GetInputControlPanel() or nil
+      local main = icp and icp.MainControlBaseUI
+      local bp = main and main.BackPackPickUpPanel_BP
+      panel = bp and bp.PickUpListPanel_BP
+    end)
+    if not panel then
+      pcall(function()
+        local icp = worldGlobal("InputControlPanel")
+        local main = icp and icp.MainControlBaseUI
+        local bp = main and main.BackPackPickUpPanel_BP
+        panel = bp and bp.PickUpListPanel_BP
+      end)
+    end
+    if panel and type(panel.PickUpWrapperActor) == "function" then
+      if panel.PickUpWrapperActor == ADV._pickWrap then
+        installed = true
+      else
+        local orig = panel.PickUpWrapperActor
+        local wrap = function(self, uPlayerCharacter, pickupItem, pickCount)
+          pcall(function()
+            local wrapper = pickupItem and pickupItem.Wrapper
+            local mainItem = pickupItem and pickupItem.MainItemData
+            local id = mainItem and mainItem.ID and tonumber(mainItem.ID.TypeSpecificID) or nil
+            if wrapper then ADV.NoteLootPicked(wrapper, id) end
+          end)
+          return orig(self, uPlayerCharacter, pickupItem, pickCount)
+        end
+        if pcall(function() panel.PickUpWrapperActor = wrap end) then
+          ADV._pickWrap, ADV._pickOrig = wrap, orig
+          installed = true
+        end
+      end
+    end
+
+    -- Fallback untuk jalur yang memanggil method karakter/pickup manager
+    -- langsung (mis. quick pickup). Best-effort: kalau userdata menolak
+    -- assignment, panel hook di atas tetap dipakai.
+    local me = ESP.GetLocalCharacter()
+    if me and type(me.PickUpWrapperActor) == "function"
+      and me.PickUpWrapperActor ~= ADV._charWrap then
+      local orig = me.PickUpWrapperActor
+      local wrap = function(self, wrapper, mainItem, cnt, flag)
+        pcall(function()
+          local id = mainItem and mainItem.ID and tonumber(mainItem.ID.TypeSpecificID) or nil
+          if wrapper then ADV.NoteLootPicked(wrapper, id) end
+        end)
+        return orig(self, wrapper, mainItem, cnt, flag)
+      end
+      if pcall(function() me.PickUpWrapperActor = wrap end) then
+        ADV._charWrap, ADV._charOrig = wrap, orig
+        installed = true
+      end
+    end
+
+    -- Sinyal event pickup (kalau build mengirimnya ke client). Signature
+    -- mengikuti PickupSearchSubsystem:CheckRemove(_, _, Character, Wrapper).
+    if not ADV._pickEvent then
+      local es = worldGlobal("EventSystem")
+      local et = worldGlobal("EVENTTYPE_INGAME_NORMAL")
+      local eid = worldGlobal("EVENTID_PAWN_PICK_UP_ITEM")
+      if es and es.registEvent and et and eid then
+        if pcall(function() es:registEvent(et, eid, ADV.OnPawnPickup) end) then
+          ADV._pickEvent = true
+          installed = true
+        end
+      end
+    end
+
+    return installed
+  end
+
   function ADV.ScanLoot(me, now)
     local c = cfg()
+    now = now or ESP.Now()
     local radius = tonumber(c.Esp9_LootDist) or 120
     radius = math.max(20, math.min(300, radius))
     local meLoc = ESP.ActorLocation(me)
     if not meLoc then ADV.LootCache = {} return end
+    -- Bersihkan blacklist pickup yang sudah kedaluwarsa.
+    for k, exp in pairs(ADV.Picked or {}) do
+      if (tonumber(exp) or 0) <= now then ADV.Picked[k] = nil end
+    end
 
     local want = {}
     local any = false
@@ -6814,7 +6935,8 @@ do
               for _, e in ipairs(entries) do
                 local entry = _G.RapzhangLoot and _G.RapzhangLoot.ById and _G.RapzhangLoot.ById[e.id]
                 local cat = entry and entry.cat or lootCategory(e.typ, e.id, nil)
-                if want[cat] and lootItemVisible(c, e.id, cat) then
+                local blk = ADV.Picked[key .. "|" .. tostring(e.id)]
+                if not (blk and blk > now) and want[cat] and lootItemVisible(c, e.id, cat) then
                   picked = e
                   break
                 end
@@ -6823,6 +6945,7 @@ do
                 local name, data = itemEntry(picked.id, picked.typ, picked.count)
                 out[#out + 1] = {
                   key = key,
+                  id = picked.id,
                   x = loc.X, y = loc.Y, z = loc.Z,
                   dist = dist,
                   text = string.format("%s · %dm", name, math.floor(dist + 0.5)),
@@ -7510,6 +7633,12 @@ do
 
     if lootOn then
       ADV._lootCleared = false
+      -- Pasang hook panel pickup sekali; instance panel bisa dibuat ulang
+      -- saat match/UI reload, jadi dicek berkala.
+      if (now - (ADV._pickHookAt or -999.0)) >= 2.0 then
+        ADV._pickHookAt = now
+        pcall(ADV.InstallPickupHook)
+      end
       if (now - (ADV.LootScan or -999.0)) >= (ESP.LootInterval or 0.55) then
         ADV.LootScan = now
         pcall(ADV.ScanLoot, me, now)
