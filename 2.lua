@@ -185,6 +185,9 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     -- OFF (cfg[key] == true). Item baru dari update game baru tampil setelah
     -- switch "Other" kategorinya dinyalakan.
     Esp9_LootDist = 120,
+    -- Optimasi ESP low-end: batasi scan/label supaya RAM tidak membengkak
+    -- walau semua overlay dinyalakan. Default OFF (perilaku lama).
+    Esp9_OptLow = false,
     AutoParachute = false,
     AutoJump = true,
     AutoJumpRadius = 300,
@@ -292,6 +295,7 @@ _G.RapzhangConfig.Esp9_Radar360 = _G.RapzhangConfig.Esp9_Radar360 == true
 _G.RapzhangConfig.Esp9_TeamNumber = _G.RapzhangConfig.Esp9_TeamNumber == true
 _G.RapzhangConfig.Esp9_Adv = _G.RapzhangConfig.Esp9_Adv == true
 _G.RapzhangConfig.Esp9_LootDist = math.max(20, math.min(300, tonumber(_G.RapzhangConfig.Esp9_LootDist) or 120))
+_G.RapzhangConfig.Esp9_OptLow = _G.RapzhangConfig.Esp9_OptLow == true
 _G.RapzhangConfig.AutoJumpRadius = math.max(50, math.min(1500, tonumber(_G.RapzhangConfig.AutoJumpRadius) or 300))
 
 _G.RapzhangState = _G.RapzhangState or { 
@@ -2148,6 +2152,12 @@ function _G.InitModMenuTab()
             if _G.SaveModSettings then pcall(_G.SaveModSettings) end
             return true
         end },
+        { Key = "ModMenu_EspLowOpt", UI = AliasMap.Switcher, Text = T("Optimasi ESP Low (Hemat RAM)", "ESP LOW Optimization (RAM Saver)"), GetFunc = function() return _G.RapzhangConfig.Esp9_OptLow == true end, SetFunc = function(_, v)
+            _G.RapzhangConfig.Esp9_OptLow = v == true
+            if _G.ESP and _G.ESP.SetLowEnd then pcall(_G.ESP.SetLowEnd, _G.RapzhangConfig.Esp9_OptLow) end
+            if _G.SaveModSettings then pcall(_G.SaveModSettings) end
+            return true
+        end },
         { Key = "ModMenu_Ipad_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ iPad View", "▶ iPad View"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.IpadView == true end, SetFunc = function(_, v) _G.RapzhangConfig.IpadView = v and true or false; return true end },
         { Key = "ModMenu_Ipad_FOV", UI = AliasMap.Slider, Text = T("   FOV", "   FOV"), ExpandHandle = "ModMenu_Ipad_Ex", MinValue = 1, MaxValue = 100, min = 1, max = 100, GetFunc = function() return (_G.RapzhangState.CustomTextData.IpadViewFOV or 120) - 90 end, SetFunc = function(_, v) _G.RapzhangState.CustomTextData.IpadViewFOV = 90 + v; return true end },
         { Key = "ModMenu_ColorBodyNew", UI = AliasMap.Switcher, Text = T("Wallhack", "Wallhack"), GetFunc = function() return _G.RapzhangConfig.ColorBodyNew == true end, SetFunc = function(_, v) _G.RapzhangConfig.ColorBodyNew = v and true or false; return true end },
@@ -2883,6 +2893,39 @@ ESP.LastScan = -999.0
 ESP.LastTransform = -999.0
 ESP.LastWorld = nil
 ESP.bActive = false
+-- Mode hemat resource (menu GRAPHIC). OFF = perilaku lama persis.
+ESP.LowEnd = false
+ESP.LootInterval = 0.55
+ESP.VehInterval = 0.45
+ESP.SquadInterval = 0.80
+ESP.LootCap = 70
+ESP.SweepTTL = 3.0
+ESP.CacheTTL = 30.0
+ESP.LowTickInterval = 0.080
+
+function ESP.SetLowEnd(on)
+  on = on == true
+  ESP.LowEnd = on
+  CFG.MaxTracked = on and 16 or 24
+  CFG.VisInterval = on and 1.00 or 0.50
+  ESP.ScanInterval = on and 0.72 or 0.50
+  ESP.TransformInterval = on and 1.00 or 0.75
+  ESP.LootInterval = on and 0.90 or 0.55
+  ESP.VehInterval = on and 0.90 or 0.45
+  ESP.SquadInterval = on and 1.20 or 0.80
+  ESP.LootCap = on and 40 or 70
+  ESP.SweepTTL = on and 1.25 or 3.0
+  ESP.CacheTTL = on and 10.0 or 30.0
+  ESP.LowTickInterval = on and 0.120 or 0.080
+  if on then
+    -- Buang label/cache basi saat mode diaktifkan supaya penghematan
+    -- langsung terasa, bukan menunggu TTL 3 detik.
+    pcall(function()
+      if ESP.Adv and ESP.Adv.SyncLootLabels then ESP.Adv.SyncLootLabels() end
+      if ESP.Extra and ESP.Extra.Sweep then ESP.Extra.Sweep(ESP.Now(), ESP.SweepTTL) end
+    end)
+  end
+end
 
 function ESP.GetGameplayData()
   if ESP._GDP then return ESP._GDP end
@@ -3670,6 +3713,8 @@ function ESP.SyncMenuConfig()
   ESP.Menu.ShowAmmo = cfg.Esp9_Ammo == true
   ESP.Menu.Adv = cfg.Esp9_Adv == true
   ESP.Menu.Loot = cfg.Esp9_Loot == true
+  local lowEnd = cfg.Esp9_OptLow == true
+  if lowEnd ~= ESP.LowEnd then pcall(ESP.SetLowEnd, lowEnd) end
 end
 
 -- Team color mapping: jangan memakai teamID % jumlah warna karena Team 20,
@@ -4556,13 +4601,14 @@ do
     end
     -- Cache per-pemain dan cache tipe grenade tidak boleh tumbuh sepanjang
     -- match; entri lama dibuang setelah 30 detik tidak disentuh.
+    local cacheTTL = tonumber(ESP.CacheTTL) or 30.0
     for key, c in pairs(EX.PlayerCache) do
-      if (now - (tonumber(c and c.t) or 0)) > 30.0 then
+      if (now - (tonumber(c and c.t) or 0)) > cacheTTL then
         EX.PlayerCache[key] = nil
       end
     end
     for key, c in pairs(EX.GrenadeTypeCache) do
-      if (now - (tonumber(c and c.t) or 0)) > 30.0 then
+      if (now - (tonumber(c and c.t) or 0)) > cacheTTL then
         EX.GrenadeTypeCache[key] = nil
       end
     end
@@ -6245,7 +6291,7 @@ do
       if #(EX.Grenades or {}) > 0 then EX.Grenades = {} end
       EX.HidePrefix("gr_")
     end
-    pcall(EX.Sweep, now, 3.0)
+    pcall(EX.Sweep, now, ESP.SweepTTL or 3.0)
   end
 end
 
@@ -6630,10 +6676,12 @@ do
 
   local function listItems(obj)
     local out = {}
+    local readable = false
     pcall(function()
       if not obj.GetPickUpDataList then return end
       local l = obj:GetPickUpDataList()
       if not l then return end
+      readable = true
       local n = 0
       pcall(function() n = tonumber(l:Num()) or 0 end)
       if n <= 0 then
@@ -6648,13 +6696,14 @@ do
           local d = e.ID or e.DefineID or e.ItemDefineID
           local id = d and tonumber(d.TypeSpecificID) or tonumber(e.ItemID)
           local typ = d and tonumber(d.Type) or nil
-          if id and id > 0 then
-            out[#out + 1] = { id = id, typ = typ, count = tonumber(e.Count) or 1 }
+          local cnt = tonumber(e.Count) or 1
+          if id and id > 0 and cnt > 0 then
+            out[#out + 1] = { id = id, typ = typ, count = cnt }
           end
         end
       end
     end)
-    return out
+    return out, readable
   end
 
   local function actorKey(prefix, loc)
@@ -6728,6 +6777,11 @@ do
     if not any then ADV.LootCache = {} return end
 
     local out = {}
+    -- Key yang masih tampil pada scan sebelumnya. Kalau wrapper yang sama
+    -- sekarang daftar itemnya kosong, isinya sudah diambil dan label harus
+    -- langsung dibuang, bukan menunggu TTL Sweep.
+    local prevVisible = {}
+    for _, it in ipairs(ADV.LootCache or {}) do prevVisible[it.key] = true end
     local pool = queryOrScan("loot",
       function(g) return g:QueryPickUpWrappers(meLoc, radius * 100.0, nil, false, 70) end,
       function() return actorsOfClass(class("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor")) end,
@@ -6737,33 +6791,42 @@ do
       if loc then
         local dist = ESP.DistMeters(meLoc, loc)
         if dist <= radius then
+          local key = objectKey(ADV.GroundKey, a, loc)
+          local removed = false
+          pcall(function()
+            removed = a.bItemRemoved == true or a.bPickedUp == true
+              or a.bIsPickedUp == true or a.bTaken == true
+          end)
           local id, typ, count = readDefineID(a)
-          local entries = listItems(a)
-          if #entries == 0 and id then
-            entries = { { id = id, typ = typ, count = count } }
-          end
-          if #entries > 0 then
-            -- Satu wrapper bisa berisi beberapa item. Pilih item pertama
-            -- yang kategorinya ON dan toggle item-nya tidak dimatikan.
-            local picked = nil
-            for _, e in ipairs(entries) do
-              local entry = _G.RapzhangLoot and _G.RapzhangLoot.ById and _G.RapzhangLoot.ById[e.id]
-              local cat = entry and entry.cat or lootCategory(e.typ, e.id, nil)
-              if want[cat] and lootItemVisible(c, e.id, cat) then
-                picked = e
-                break
-              end
+          local entries, listed = listItems(a)
+          local emptied = listed and #entries == 0 and prevVisible[key] == true
+          if not removed and not emptied then
+            if #entries == 0 and id and (tonumber(count) == nil or tonumber(count) > 0) then
+              entries = { { id = id, typ = typ, count = count } }
             end
-            if picked then
-              local name, data = itemEntry(picked.id, picked.typ, picked.count)
-              out[#out + 1] = {
-                key = objectKey(ADV.GroundKey, a, loc),
-                x = loc.X, y = loc.Y, z = loc.Z,
-                dist = dist,
-                text = string.format("%s · %dm", name, math.floor(dist + 0.5)),
-                color = qualityColor(data and data.ItemQuality),
-                off = 0,
-              }
+            if #entries > 0 then
+              -- Satu wrapper bisa berisi beberapa item. Pilih item pertama
+              -- yang kategorinya ON dan toggle item-nya tidak dimatikan.
+              local picked = nil
+              for _, e in ipairs(entries) do
+                local entry = _G.RapzhangLoot and _G.RapzhangLoot.ById and _G.RapzhangLoot.ById[e.id]
+                local cat = entry and entry.cat or lootCategory(e.typ, e.id, nil)
+                if want[cat] and lootItemVisible(c, e.id, cat) then
+                  picked = e
+                  break
+                end
+              end
+              if picked then
+                local name, data = itemEntry(picked.id, picked.typ, picked.count)
+                out[#out + 1] = {
+                  key = key,
+                  x = loc.X, y = loc.Y, z = loc.Z,
+                  dist = dist,
+                  text = string.format("%s · %dm", name, math.floor(dist + 0.5)),
+                  color = qualityColor(data and data.ItemQuality),
+                  off = 0,
+                }
+              end
             end
           end
         end
@@ -6772,11 +6835,38 @@ do
 
     table.sort(out, function(a, b) return (a.dist or 99999) < (b.dist or 99999) end)
     local trimmed = {}
-    for i = 1, math.min(#out, 70) do trimmed[i] = out[i] end
+    local cap = tonumber(ESP.LootCap) or 70
+    for i = 1, math.min(#out, 70) do
+      if i > cap then break end
+      trimmed[i] = out[i]
+    end
     ADV.LootCache = trimmed
   end
 
+  -- Samakan label loot dengan cache scan. Label yang itemnya sudah diambil
+  -- atau aktornya hilang dihancurkan pada frame yang sama supaya tidak ada
+  -- tanda hantu dan widget tidak menumpuk.
+  function ADV.SyncLootLabels()
+    local keep = {}
+    for _, it in ipairs(ADV.LootCache or {}) do keep[it.key] = true end
+    local prefix = ADV.GroundKey or "lt_"
+    local n = #prefix
+    local gone = nil
+    for key in pairs(EX.Labels or {}) do
+      if key:sub(1, n) == prefix and not keep[key] then
+        gone = gone or {}
+        gone[#gone + 1] = key
+      end
+    end
+    if not gone then return end
+    for _, key in ipairs(gone) do
+      EX.LastSeen[key] = nil
+      EX.DestroyMark(key)
+    end
+  end
+
   function ADV.DrawLoot(pc, now)
+    ADV.SyncLootLabels()
     local list = ADV.LootCache or {}
     for _, it in ipairs(list) do
       local s = ESP.Project(pc, { X = it.x, Y = it.y, Z = it.z + 25.0 })
@@ -7409,7 +7499,7 @@ do
 
     if lootOn then
       ADV._lootCleared = false
-      if (now - (ADV.LootScan or -999.0)) >= 0.55 then
+      if (now - (ADV.LootScan or -999.0)) >= (ESP.LootInterval or 0.55) then
         ADV.LootScan = now
         pcall(ADV.ScanLoot, me, now)
       end
@@ -7441,7 +7531,7 @@ do
       end
 
       if on("Esp9_Squad") then
-        if (now - (ADV.SquadScan or -999.0)) >= 0.8 then
+        if (now - (ADV.SquadScan or -999.0)) >= (ESP.SquadInterval or 0.8) then
           ADV.SquadScan = now
           pcall(ADV.ScanSquad, me, now)
         end
@@ -7452,7 +7542,7 @@ do
       end
 
       if on("Esp9_VehIntel") then
-        if (now - (ADV.VehScan or -999.0)) >= 0.45 then
+        if (now - (ADV.VehScan or -999.0)) >= (ESP.VehInterval or 0.45) then
           ADV.VehScan = now
           pcall(ADV.ScanVehicles, me, now)
         end
@@ -7499,7 +7589,7 @@ function ESP.UpdateLootOnly()
     pcall(ESP.Adv.Update, pc, vw, vh, ESP.GetCamLoc(pc), now, me)
   end
   if ESP.Extra and ESP.Extra.Sweep then
-    pcall(ESP.Extra.Sweep, now, 3.0)
+    pcall(ESP.Extra.Sweep, now, ESP.SweepTTL or 3.0)
   end
 end
 
@@ -7676,6 +7766,11 @@ end
 -- Single driver: sirf ek repeating timer (lag/flicker fix).
 -- Purana triple-driver (Tick loop + 2x AddGameTimer) hata diya.
 function ESP.Tick()
+  if ESP.LowEnd then
+    local now = ESP.Now()
+    if (now - (ESP._LowTick or -999.0)) < (ESP.LowTickInterval or 0.120) then return end
+    ESP._LowTick = now
+  end
   pcall(ESP.Update)
 end
 
