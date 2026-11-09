@@ -7267,7 +7267,9 @@ do
               id = id, typ = typ, count = cnt,
               -- InstanceID dipakai PickupManager:PickUpTarget (pickup per
               -- entri, bukan per wrapper) untuk fast auto pickup.
-              iid = tonumber(e.InstanceID),
+              -- Loot ground sering hanya punya ID.InstanceID; deathbox
+              -- menulis InstanceID di level entri.
+              iid = tonumber(e.InstanceID) or (d and tonumber(d.InstanceID)),
             }
           end
         end
@@ -8464,6 +8466,11 @@ do
   SUPPORT._pickAt = -999.0
   SUPPORT._rescueAt = -999.0
   SUPPORT._pruneAt = -999.0
+  SUPPORT._panel = nil
+  SUPPORT._panelAt = -999.0
+  SUPPORT._panelSearchAt = -999.0
+  SUPPORT._classAt = -999.0
+  SUPPORT._classPool = {}
 
   local SUPPORT_PICK_BUDGET = 2
   local SUPPORT_PICK_WINDOW = 0.10
@@ -8477,9 +8484,9 @@ do
     return math.max(1.0, math.min(15.0, v))
   end
 
-  -- Urutan ambil: meds -> ammo -> attachment -> gear -> weapon -> throw/misc.
-  -- Kapasitas backpack tetap divalidasi server; urutan ini hanya memastikan
-  -- item penting masuk lebih dulu saat banyak item dalam radius.
+  -- Tie-breaker lama: meds -> ammo -> attachment -> gear -> weapon ->
+  -- throw/misc. Urutan utama sekarang mengikuti hasil search panel game
+  -- (terdekat dulu); prioritas ini hanya memecah jarak yang sama.
   local function supportPriority(typ, id)
     typ = tonumber(typ)
     if typ == 6 then
@@ -8493,6 +8500,292 @@ do
     return 6
   end
 
+  -- ------------------------------------------------------------
+  -- Helper SUPPORT (mandiri, tidak memakai local ADV) supaya blok ini
+  -- tetap bisa diekstrak test_support.lua tanpa runtime game.
+  -- ------------------------------------------------------------
+
+  -- Iterasi aman untuk TArray/map slua: pairs() dulu, lalu Num()/Get()
+  -- 0-based. Nilai yang tidak terbaca tidak membuat scan gagal total.
+  local function supportArray(arr)
+    local list = {}
+    if arr == nil then return list end
+    local used = false
+    pcall(function()
+      for _, v in pairs(arr) do
+        if v ~= nil then
+          used = true
+          list[#list + 1] = v
+        end
+      end
+    end)
+    if used then return list end
+    local n = 0
+    pcall(function() n = tonumber(arr:Num()) end)
+    if not n or n <= 0 then pcall(function() n = tonumber(arr:Length()) end) end
+    if not n or n <= 0 then pcall(function() n = tonumber(#arr) end) end
+    if not n or n <= 0 then return list end
+    for i = 0, n - 1 do
+      local v = nil
+      pcall(function() v = arr:Get(i) end)
+      if v == nil then pcall(function() v = arr[i] end) end
+      if v ~= nil then list[#list + 1] = v end
+    end
+    return list
+  end
+
+  -- Panggil method tabel Game tanpa melempar error ke frame driver.
+  -- Mengembalikan nil bila API tidak ada di build ini. Ariti tetap dibatasi
+  -- supaya tidak butuh table.pack/table.unpack di host Lua yang lebih tua.
+  local function supportQuery(method, a, b, c, d, e, f)
+    local g = rawget(_G, "Game")
+    if g == nil then return nil end
+    local fn = nil
+    pcall(function() fn = g[method] end)
+    if type(fn) ~= "function" then return nil end
+    local ok, res = pcall(fn, g, a, b, c, d, e, f)
+    if ok then return res end
+    return nil
+  end
+
+  -- Baca field struct slua. Akses langsung biasanya cukup, tapi game sendiri
+  -- memakai slua.IndexReference untuk field struct bersarang; kalau akses
+  -- langsung nil, coba IndexReference sebelum menyerah.
+  local function supportIndex(obj, field)
+    if obj == nil then return nil end
+    local v = nil
+    pcall(function() v = obj[field] end)
+    if v == nil then
+      pcall(function()
+        local s = rawget(_G, "slua")
+        if s and type(s.IndexReference) == "function" then
+          v = s.IndexReference(obj, field)
+        end
+      end)
+    end
+    return v
+  end
+
+  -- Ambil ID/type/count/InstanceID dari MainItemData (atau entry mentah).
+  -- Tiap field dibaca terpisah supaya satu field yang tidak ada di build
+  -- lain tidak membatalkan pembacaan field lainnya.
+  local function supportDefineID(mid)
+    if mid == nil then return nil end
+    local id, typ, cnt, iid = nil, nil, nil, nil
+    local d = supportIndex(mid, "ID") or supportIndex(mid, "DefineID")
+      or supportIndex(mid, "ItemDefineID")
+    if d then
+      id = tonumber(supportIndex(d, "TypeSpecificID"))
+      typ = tonumber(supportIndex(d, "Type"))
+      iid = tonumber(supportIndex(d, "InstanceID"))
+    end
+    cnt = tonumber(supportIndex(mid, "Count"))
+    if iid == nil then iid = tonumber(supportIndex(mid, "InstanceID")) end
+    if id == nil or id == 0 then id = tonumber(supportIndex(mid, "ItemID")) end
+    if id == 0 then id = nil end
+    return id, typ, cnt, iid
+  end
+
+  -- Satu elemen SortedItemsArray adalah BattleSearchItemSortingInfo:
+  -- { bHighPriority = bool, SearchItemResult = { Wrapper, MainItemData } }.
+  -- Beberapa build menaruh field langsung di elemen, jadi keduanya dicek.
+  local function supportEntry(el, boxActor)
+    if el == nil then return nil end
+    local sr = supportIndex(el, "SearchItemResult") or el
+    local wrapper = supportIndex(sr, "Wrapper") or supportIndex(el, "Wrapper")
+    local mid = supportIndex(sr, "MainItemData") or supportIndex(el, "MainItemData")
+    local hp = supportIndex(el, "bHighPriority")
+    if hp == nil then hp = supportIndex(sr, "bHighPriority") end
+    local id, typ, cnt, iid = supportDefineID(mid)
+    if id == nil or id <= 0 then return nil end
+    local exact = wrapper ~= nil
+    if wrapper == nil and boxActor ~= nil then
+      -- Deathbox: utamakan wrapper pickup milik box (GetPickupWrapperActor).
+      -- Box sendiri bukan PickUpWrapperActor, jadi hanya dipakai sebagai
+      -- sumber lokasi bila wrapper tidak bisa diambil.
+      pcall(function()
+        if boxActor.GetPickupWrapperActor then wrapper = boxActor:GetPickupWrapperActor() end
+      end)
+      if wrapper ~= nil then
+        exact = true
+      else
+        wrapper = boxActor
+      end
+    end
+    local define = supportIndex(mid, "ID")
+    return {
+      result = sr, define = define, wrapper = wrapper, exact = exact,
+      id = id, typ = typ, count = cnt, iid = iid, hp = hp,
+    }
+  end
+
+  -- Instance PickUpListPanel adalah sumber filter pickup setting utama.
+  -- Cache 2 detik supaya UIManager.GetUI tidak dipanggil tiap window.
+  local function supportPanel(now)
+    if (now - (SUPPORT._panelAt or -999.0)) < 2.0 then return SUPPORT._panel end
+    SUPPORT._panelAt = now
+    local panel = nil
+    pcall(function()
+      if type(findPickupPanel) == "function" then panel = findPickupPanel() end
+    end)
+    SUPPORT._panel = panel
+    return panel
+  end
+
+  -- Field search ada di panel dan/atau UIRoot; cek dua-duanya.
+  local function supportPanelInfo(panel, field)
+    local info = nil
+    if panel == nil then return nil end
+    pcall(function() info = panel[field] end)
+    if info == nil then
+      pcall(function()
+        local root = panel.UIRoot
+        if root then info = root[field] end
+      end)
+    end
+    return info
+  end
+
+  -- Segarkan hasil search (throttle 0,5 dtk). Kalau UIRoot tidak punya
+  -- method ini, data lama tetap dipakai.
+  local function supportRefresh(panel, me, now)
+    if panel == nil then return end
+    if (now - (SUPPORT._panelSearchAt or -999.0)) < 0.5 then return end
+    SUPPORT._panelSearchAt = now
+    pcall(function()
+      local root = panel.UIRoot
+      if root and type(root.UpdatePickupsAndTombBoxesData) == "function" then
+        root:UpdatePickupsAndTombBoxesData(me)
+      end
+    end)
+  end
+
+  -- Kumpulkan kandidat dari hasil search panel. SortedItemsArray sudah
+  -- difilter pickup setting utama (limit jenis, jumlah, kapasitas), dan
+  -- bHighPriority menandai item yang boleh di-auto-pick — persis seperti
+  -- AutoPickGroundItem / CheckIsRevivalCardCanPick di PickUpListPanel.
+  -- Mengembalikan jumlah item ground mentah dan total item mentah.
+  local function supportCollectPanel(panel, meLoc, radius, out, seenKey)
+    if panel == nil then return 0, 0 end
+    local raw, groundRaw = 0, 0
+    local items = {}
+    local function addArray(arr, boxActor, isGround)
+      for _, el in ipairs(supportArray(arr)) do
+        local item = supportEntry(el, boxActor)
+        if item then
+          raw = raw + 1
+          if isGround then groundRaw = groundRaw + 1 end
+          items[#items + 1] = { item = item }
+        end
+      end
+    end
+    local ground = supportPanelInfo(panel, "SearchedPickupItemInfo")
+    if ground then
+      local arr = nil
+      pcall(function() arr = ground.SortedItemsArray end)
+      if arr then addArray(arr, nil, true) end
+    end
+    local boxes = supportPanelInfo(panel, "AllSearchedTombBoxesInfo")
+    if boxes then
+      local list = nil
+      pcall(function() list = boxes.AllBoxes end)
+      for _, box in ipairs(supportArray(list)) do
+        local boxActor, arr = nil, nil
+        pcall(function() boxActor = box.Box end)
+        pcall(function() arr = box.SortedItemsArray end)
+        if arr then addArray(arr, boxActor, false) end
+      end
+    end
+    -- Build yang punya flag boolean harus mengikuti auto-pick game: hanya
+    -- bHighPriority == true. Build tanpa flag sama sekali menerima semua
+    -- entri panel (perilaku lama).
+    local strict = false
+    for _, rec in ipairs(items) do
+      if type(rec.item.hp) == "boolean" then strict = true break end
+    end
+    for _, rec in ipairs(items) do
+      local item = rec.item
+      if not strict or item.hp == true then
+        local loc = nil
+        pcall(function() loc = ESP.ActorLocation(item.wrapper) end)
+        -- Kandidat tanpa wrapper pickup yang pasti hanya berguna untuk
+        -- fallback PickUpTarget; simpan exact supaya FastLoot tidak
+        -- memanggil jalur panel dengan struct yang salah.
+        if loc then
+          local dist = ESP.DistMeters(meLoc, loc)
+          if dist <= radius then
+            local key = tostring(item.wrapper) .. "|" .. tostring(item.iid or 0)
+              .. "|" .. tostring(item.id)
+            if not seenKey[key] then
+              seenKey[key] = true
+              out[#out + 1] = {
+                wrapper = item.wrapper, iid = item.iid or 0,
+                count = item.count or 1, id = item.id, typ = item.typ,
+                dist = dist, prio = supportPriority(item.typ, item.id),
+                key = key, result = item.result, define = item.define,
+                exact = item.exact,
+              }
+            end
+          end
+        end
+      end
+    end
+    return groundRaw, raw
+  end
+
+  -- Fallback saat panel belum punya data: query spasial game, lalu class
+  -- scan yang di-cache ~1 detik (GetActorsByClass menyusuri seluruh world).
+  local function supportWorldPool(meLoc, radius, me, now)
+    local dist = radius * 100.0
+    local list = supportArray(supportQuery(
+      "QueryUsefulPickUpWrappers", meLoc, dist, nil, false, me, 40))
+    if #list > 0 then return list end
+    list = supportArray(supportQuery("QueryPickUpWrappers", meLoc, dist, nil, false, 40))
+    if #list > 0 then return list end
+    if (now - (SUPPORT._classAt or -999.0)) >= 1.0 then
+      SUPPORT._classAt = now
+      local pool = nil
+      pcall(function()
+        local cls = class("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor")
+        if cls then pool = actorsOfClass(cls) end
+      end)
+      SUPPORT._classPool = pool or {}
+    end
+    return SUPPORT._classPool or {}
+  end
+
+  local function supportCollectWorld(meLoc, radius, out, seenKey, me, now)
+    local pool = supportWorldPool(meLoc, radius, me, now)
+    for _, a in ipairs(pool) do
+      local loc = ESP.ActorLocation(a)
+      if loc then
+        local dist = ESP.DistMeters(meLoc, loc)
+        if dist <= radius then
+          local removed = false
+          pcall(function()
+            removed = a.bItemRemoved == true or a.bPickedUp == true
+              or a.bIsPickedUp == true or a.bTaken == true
+          end)
+          if not removed then
+            local entries = listItems(a) or {}
+            for _, e in ipairs(entries) do
+              local iid = e.iid or 0
+              local key = tostring(a) .. "|" .. tostring(iid) .. "|" .. tostring(e.id)
+              if not seenKey[key] then
+                seenKey[key] = true
+                out[#out + 1] = {
+                  wrapper = a, iid = iid, count = e.count or 1,
+                  id = e.id, typ = e.typ, dist = dist,
+                  prio = supportPriority(e.typ, e.id), key = key,
+                }
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+
   function SUPPORT.Reset()
     SUPPORT.Pickups = {}
     SUPPORT.Cooldown = {}
@@ -8503,6 +8796,9 @@ do
     SUPPORT._pruneAt = -999.0
     SUPPORT._panel = nil
     SUPPORT._panelAt = -999.0
+    SUPPORT._panelSearchAt = -999.0
+    SUPPORT._classAt = -999.0
+    SUPPORT._classPool = {}
   end
 
   function SUPPORT.Prune(now)
@@ -8540,43 +8836,23 @@ do
     local radius = supportDistance("Sup_FastLootDist", 4.0)
     local meLoc = ESP.ActorLocation(me)
     if not meLoc then SUPPORT.Pickups = {} return end
+    now = tonumber(now) or ESP.Now()
     local out, seenKey = {}, {}
-    local pool = queryOrScan("fastloot",
-      function(g) return g:QueryPickUpWrappers(meLoc, radius * 100.0, nil, false, 40) end,
-      function() return actorsOfClass(class("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor")) end,
-      function() return staticObjectsInRegion("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor", 0, meLoc) end)
-    for _, a in ipairs(pool) do
-      local loc = ESP.ActorLocation(a)
-      if loc then
-        local dist = ESP.DistMeters(meLoc, loc)
-        if dist <= radius then
-          local removed = false
-          pcall(function()
-            removed = a.bItemRemoved == true or a.bPickedUp == true
-              or a.bIsPickedUp == true or a.bTaken == true
-          end)
-          if not removed then
-            local entries = listItems(a)
-            for _, e in ipairs(entries) do
-              local iid = e.iid or 0
-              local ek = tostring(a) .. "|" .. tostring(iid) .. "|" .. tostring(e.id)
-              if not seenKey[ek] then
-                seenKey[ek] = true
-                out[#out + 1] = {
-                  wrapper = a, iid = iid, count = e.count or 1,
-                  id = e.id, typ = e.typ, dist = dist,
-                  prio = supportPriority(e.typ, e.id),
-                  key = ek,
-                }
-              end
-            end
-          end
-        end
-      end
+    local panel = supportPanel(now)
+    supportRefresh(panel, me, now)
+    local groundRaw = supportCollectPanel(panel, meLoc, radius, out, seenKey)
+    -- groundRaw == 0 berarti panel belum punya data ground (UI belum
+    -- dibangun, build tanpa panel, atau array ground kosong). Scan world
+    -- tetap dipakai untuk ground supaya pickup tidak mati; kalau panel
+    -- punya data ground, panel yang menentukan filter.
+    if groundRaw <= 0 then
+      supportCollectWorld(meLoc, radius, out, seenKey, me, now)
     end
+    -- Terdekat dulu; prioritas lama hanya tie-breaker supaya item penting
+    -- tidak menang hanya karena jenisnya.
     table.sort(out, function(x, y)
-      if x.prio ~= y.prio then return x.prio < y.prio end
       if x.dist ~= y.dist then return x.dist < y.dist end
+      if x.prio ~= y.prio then return x.prio < y.prio end
       return tostring(x.key) < tostring(y.key)
     end)
     if #out > 40 then
@@ -8607,6 +8883,7 @@ do
   function SUPPORT.FastLoot(me, now)
     if cfg().Sup_FastLoot ~= true then return end
     if not SUPPORT.CanOperate(me) then return end
+    now = tonumber(now) or ESP.Now()
     if (now - (SUPPORT.ScanAt or -999.0)) >= SUPPORT_SCAN_INTERVAL then
       SUPPORT.ScanAt = now
       pcall(SUPPORT.Scan, me, now)
@@ -8616,15 +8893,14 @@ do
     local pm = nil
     pcall(function() if me.GetPickupManager then pm = me:GetPickupManager() end end)
     if not ESPValid(pm) then pm = nil end
-    local panel = nil
-    if not pm then
-      if (now - (SUPPORT._panelAt or -999.0)) >= 2.0 then
-        SUPPORT._panelAt = now
-        SUPPORT._panel = findPickupPanel()
-      end
-      panel = SUPPORT._panel
+    local panel = supportPanel(now)
+    local panelFn = false
+    if panel ~= nil then
+      local fn = nil
+      pcall(function() fn = panel.PickUpWrapperActorWithoutAnim end)
+      panelFn = type(fn) == "function"
     end
-    if not pm and not (panel and panel.PickUpWrapperActorWithoutAnim) then return end
+    if not pm and not panelFn then return end
     local radius = supportDistance("Sup_FastLootDist", 4.0)
     local meLoc = ESP.ActorLocation(me)
     if not meLoc then return end
@@ -8637,21 +8913,48 @@ do
           local d = ESP.DistMeters(meLoc, loc)
           if d <= radius then
             local count = math.max(1, math.floor(tonumber(it.count) or 1))
+            local skip = false
+            -- GetUseful2 adalah fungsi yang dipakai game sendiri untuk
+            -- menghitung jumlah yang boleh diambil menurut pickup setting
+            -- utama (limit jenis, kapasitas, status item). 0 = tidak
+            -- berguna menurut setting, jadi jangan diambil.
+            local usefulFn = nil
+            if panel ~= nil then pcall(function() usefulFn = panel.GetUseful2 end) end
+            if type(usefulFn) == "function" and it.result then
+              local useful = nil
+              pcall(function() useful = usefulFn(panel, it.define, it.result) end)
+              if useful ~= nil then
+                useful = tonumber(useful)
+                if not useful or useful <= 0 then
+                  skip = true
+                else
+                  count = math.max(1, math.floor(useful))
+                  if it.count and it.count > 0 then
+                    count = math.min(count, math.floor(it.count))
+                  end
+                end
+              end
+            end
             local ok = false
-            if pm then
-              ok = pcall(function() pm:PickUpTarget(it.wrapper, it.iid, count, 0) end)
-            end
-            if not ok and panel and panel.PickUpWrapperActorWithoutAnim then
-              ok = pcall(function()
-                panel:PickUpWrapperActorWithoutAnim(me, {
-                  Wrapper = it.wrapper,
-                  MainItemData = { InstanceID = it.iid, Count = count },
-                }, count)
-              end)
-            end
-            if ok then
-              budget = budget - 1
-              SUPPORT.NoteAttempt(it.key, now)
+            if not skip then
+              -- Jalur game tanpa animasi memakai struct hasil search asli,
+              -- termasuk InstanceID dan MainItemData yang benar.
+              if panelFn and it.result and it.exact == true then
+                ok = pcall(function()
+                  panel:PickUpWrapperActorWithoutAnim(me, it.result, count)
+                end)
+              end
+              if not ok and pm then
+                ok = pcall(function() pm:PickUpTarget(it.wrapper, it.iid, count, 0) end)
+              end
+              if ok then
+                budget = budget - 1
+                SUPPORT.NoteAttempt(it.key, now)
+              end
+            else
+              -- Cek ulang setelah 1 dtk: bisa jadi baru berguna setelah
+              -- isi backpack berubah, tanpa men-spam GetUseful2.
+              SUPPORT.Cooldown[it.key] = now + 1.0
             end
           end
         end
