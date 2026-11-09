@@ -165,7 +165,14 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     Esp9_GrenadeMark = true,
     Esp9_GrenadeRadius = true,
     Esp9_GrenadeBounce = true,
+    -- Fuse countdown tidak ditulis di sini: default ON memakai pola
+    -- `cfg.Esp9_GrenadeFuse ~= false` supaya config lama tetap menampilkan
+    -- countdown tanpa migrasi dan pilihan OFF pemain tetap dihormati.
     Esp9_Ammo = false,
+    -- Garis bidik musuh + countdown reload + badge self-rescue.
+    Esp9_AimLine = false,
+    Esp9_ReloadTimer = false,
+    Esp9_SelfRescue = false,
     -- Advanced overlay: satu parent switch, semua anak default OFF.
     Esp9_Adv = false,
     Esp9_DmgDir = false,
@@ -192,6 +199,11 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     AutoParachute = false,
     AutoJump = true,
     AutoJumpRadius = 300,
+    -- SUPPORT automation: pickup cepat + auto rescue teammate.
+    Sup_FastLoot = false,
+    Sup_FastLootDist = 4,
+    Sup_AutoRescue = false,
+    Sup_AutoRescueDist = 3,
     AutoReportKiller = false,
     -- Auto feedback is always on and is intentionally not exposed in the menu.
     AutoFeedbackEnabled = true,
@@ -1215,6 +1227,16 @@ do
     end
 end
 
+-- Clamp nilai SUPPORT setelah config tersimpan dimuat (angka tidak ikut
+-- di-reset oleh ResetFeatureBooleansOff, jadi cukup sekali di sini).
+do
+    local cfg = _G.RapzhangConfig
+    if cfg then
+        cfg.Sup_FastLootDist = math.max(1, math.min(15, math.floor((tonumber(cfg.Sup_FastLootDist) or 4) + 0.5)))
+        cfg.Sup_AutoRescueDist = math.max(1, math.min(15, math.floor((tonumber(cfg.Sup_AutoRescueDist) or 3) + 0.5)))
+    end
+end
+
 _G.ReadLiveConfig = function()
     if _G.SaveModSettings then _G.SaveModSettings() end
 end
@@ -1666,9 +1688,12 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_ESP9_Team", UI = AliasMap.Switcher, Text = T("   Team Color Box", "   Team Color Box"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Team == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_Team = (v == true) return true end },
             { Key = "ModMenu_ESP9_TeamNumber", UI = AliasMap.Switcher, Text = T("   Team Number", "   Team Number"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_TeamNumber == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_TeamNumber = v and true or false; return true end },
             { Key = "ModMenu_ESP9_Visibility", UI = AliasMap.Switcher, Text = T("   Visibility (Open/Close)", "   Visibility (Open/Close)"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Visibility == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Visibility = (v == true); return true end },
+            { Key = "ModMenu_ESP9_AimLine", UI = AliasMap.Switcher, Text = T("   Enemy Aim Line", "   Enemy Aim Line"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_AimLine == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_AimLine = (v == true); pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_SelfRescue", UI = AliasMap.Switcher, Text = T("   Self-Rescue Badge", "   Self-Rescue Badge"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_SelfRescue == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_SelfRescue = (v == true); pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Line", UI = AliasMap.Switcher, Text = T("   Snapline", "   Snapline"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Line == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Line = (v == true); return true end },
             { Key = "ModMenu_ESP9_Weapon", UI = AliasMap.Switcher, Text = T("   Weapon Icon", "   Weapon Icon"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Weapon == true end, SetFunc = function(c,v) _G.RapzhangConfig.Esp9_Weapon = (v == true) return true end },
             { Key = "ModMenu_ESP9_Ammo", UI = AliasMap.Switcher, Text = T("   Enemy Ammo + Reload", "   Enemy Ammo + Reload"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Ammo == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Ammo = v and true or false; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_ReloadTimer", UI = AliasMap.Switcher, Text = T("   Reload Countdown", "   Reload Countdown"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_ReloadTimer == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_ReloadTimer = v and true or false; if v then _G.RapzhangConfig.Esp9_Ammo = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Radar360", UI = AliasMap.Switcher, Text = T("   360 Radar + Distance", "   360 Radar + Distance"), ExpandHandle = "ModMenu_ESP9_Ex", GetFunc = function() return _G.RapzhangConfig.Esp9_Radar360 == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_Radar360 = v and true or false; return true end },
             { Key = "ModMenu_ESP9_Airdrop", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Airdrop ESP", "   ▶ Airdrop ESP"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Airdrop == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Airdrop = on; if on then _G.RapzhangConfig.Esp9_AirdropBox = true; _G.RapzhangConfig.Esp9_AirdropPredict = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_AirdropBox", UI = AliasMap.Switcher, Text = T("      Airdrop Box", "      Airdrop Box"), ExpandHandle = "ModMenu_ESP9_Airdrop", GetFunc = function() return _G.RapzhangConfig.Esp9_AirdropBox == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_AirdropBox = v and true or false; if v then _G.RapzhangConfig.Esp9_Airdrop = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
@@ -1676,10 +1701,11 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_ESP9_Zone", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Zone + Circle Info", "   ▶ Zone + Circle Info"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Zone == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Zone = on; if on then _G.RapzhangConfig.Esp9_ZoneTimer = true; _G.RapzhangConfig.Esp9_ZoneNext = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_ZoneTimer", UI = AliasMap.Switcher, Text = T("      Zone Timer", "      Zone Timer"), ExpandHandle = "ModMenu_ESP9_Zone", GetFunc = function() return _G.RapzhangConfig.Esp9_ZoneTimer == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_ZoneTimer = v and true or false; if v then _G.RapzhangConfig.Esp9_Zone = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_ZoneNext", UI = AliasMap.Switcher, Text = T("      Next Circle", "      Next Circle"), ExpandHandle = "ModMenu_ESP9_Zone", GetFunc = function() return _G.RapzhangConfig.Esp9_ZoneNext == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_ZoneNext = v and true or false; if v then _G.RapzhangConfig.Esp9_Zone = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ESP9_Grenade", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Grenade ESP", "   ▶ Grenade ESP"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Grenade == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Grenade = on; if on then _G.RapzhangConfig.Esp9_GrenadeMark = true; _G.RapzhangConfig.Esp9_GrenadeRadius = true; _G.RapzhangConfig.Esp9_GrenadeBounce = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_Grenade", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Grenade ESP", "   ▶ Grenade ESP"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Grenade == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Grenade = on; if on then _G.RapzhangConfig.Esp9_GrenadeMark = true; _G.RapzhangConfig.Esp9_GrenadeRadius = true; _G.RapzhangConfig.Esp9_GrenadeBounce = true; _G.RapzhangConfig.Esp9_GrenadeFuse = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_GrenadeMark", UI = AliasMap.Switcher, Text = T("      Grenade Marker + Type", "      Grenade Marker + Type"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeMark == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeMark = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_GrenadeRadius", UI = AliasMap.Switcher, Text = T("      Blast Radius", "      Blast Radius"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeRadius == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeRadius = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_GrenadeBounce", UI = AliasMap.Switcher, Text = T("      Bounce Prediction", "      Bounce Prediction"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeBounce == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeBounce = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_GrenadeFuse", UI = AliasMap.Switcher, Text = T("      Fuse Countdown", "      Fuse Countdown"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeFuse ~= false end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeFuse = (v == true); if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             -- =============================================
             -- ADVANCED OVERLAY: parent ON/OFF + anak-anaknya
             -- =============================================
@@ -1980,6 +2006,10 @@ function _G.InitModMenuTab()
         { Key = "ModMenu_AutoParachute", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Auto Parachute (Map Mark)", "   ▶ Auto Parachute (Map Mark)"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.AutoParachute == true end, SetFunc = function(_, v) local on = v and true or false; if _G.RapzhangAutoParachute and _G.RapzhangAutoParachute.Set then pcall(_G.RapzhangAutoParachute.Set, on) else _G.RapzhangConfig.AutoParachute = on end; if on then _G.RapzhangConfig.AutoJump = true end; return true end },
         { Key = "ModMenu_AutoJump", UI = AliasMap.Switcher, Text = T("      Auto Jump From Plane", "      Auto Jump From Plane"), ExpandHandle = "ModMenu_AutoParachute", GetFunc = function() return _G.RapzhangConfig.AutoJump == true end, SetFunc = function(_, v) _G.RapzhangConfig.AutoJump = v and true or false; if v then _G.RapzhangConfig.AutoParachute = true; if _G.RapzhangAutoParachute and _G.RapzhangAutoParachute.Set then pcall(_G.RapzhangAutoParachute.Set, true) end end; return true end },
         { Key = "ModMenu_AutoJumpRadius", UI = AliasMap.Slider, Text = T("      Auto Jump Radius (m)", "      Auto Jump Radius (m)"), ExpandHandle = "ModMenu_AutoParachute", MinValue = 50, MaxValue = 1500, min = 50, max = 1500, Min = 50, Max = 1500, GetFunc = function() return math.max(50, math.min(1500, math.floor((tonumber(_G.RapzhangConfig.AutoJumpRadius) or 300) + 0.5))) end, SetFunc = function(_, v) _G.RapzhangConfig.AutoJumpRadius = math.max(50, math.min(1500, math.floor((tonumber(v) or 300) + 0.5))); return true end },
+        { Key = "ModMenu_Sup_FastLoot", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Fast Auto Pickup", "   ▶ Fast Auto Pickup"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Sup_FastLoot == true end, SetFunc = function(_, v) local on = v and true or false; _G.RapzhangConfig.Sup_FastLoot = on; if on then pcall(function() if _G.ESP and _G.ESP.Support then _G.ESP.Support.Reset() end end); if _G.ESP and _G.ESP.Start then pcall(_G.ESP.Start) end end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
+        { Key = "ModMenu_Sup_FastLootDist", UI = AliasMap.Slider, Text = T("      Pickup Radius (m)", "      Pickup Radius (m)"), ExpandHandle = "ModMenu_Sup_FastLoot", MinValue = 1, MaxValue = 15, min = 1, max = 15, Min = 1, Max = 15, GetFunc = function() return math.max(1, math.min(15, math.floor((tonumber(_G.RapzhangConfig.Sup_FastLootDist) or 4) + 0.5))) end, SetFunc = function(_, v) _G.RapzhangConfig.Sup_FastLootDist = math.max(1, math.min(15, math.floor((tonumber(v) or 4) + 0.5))); pcall(function() if _G.ESP and _G.ESP.Support then _G.ESP.Support.Reset() end end); if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
+        { Key = "ModMenu_Sup_AutoRescue", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Auto Rescue Team", "   ▶ Auto Rescue Team"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Sup_AutoRescue == true end, SetFunc = function(_, v) local on = v and true or false; _G.RapzhangConfig.Sup_AutoRescue = on; if on then pcall(function() if _G.ESP and _G.ESP.Support then _G.ESP.Support.Reset() end end); if _G.ESP and _G.ESP.Start then pcall(_G.ESP.Start) end end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
+        { Key = "ModMenu_Sup_AutoRescueDist", UI = AliasMap.Slider, Text = T("      Rescue Radius (m)", "      Rescue Radius (m)"), ExpandHandle = "ModMenu_Sup_AutoRescue", MinValue = 1, MaxValue = 10, min = 1, max = 10, Min = 1, Max = 10, GetFunc = function() return math.max(1, math.min(10, math.floor((tonumber(_G.RapzhangConfig.Sup_AutoRescueDist) or 3) + 0.5))) end, SetFunc = function(_, v) _G.RapzhangConfig.Sup_AutoRescueDist = math.max(1, math.min(10, math.floor((tonumber(v) or 3) + 0.5))); pcall(function() if _G.ESP and _G.ESP.Support then _G.ESP.Support.Reset() end end); if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
     }
 
     -- STEP 10: Stack ESP LOOT (tab sendiri di samping ESP)
@@ -2840,6 +2870,7 @@ local C_GREEN  = ESPMKC(0.12, 1.0, 0.25, 1.0)   -- snap line + "Open"
 local C_RED    = ESPMKC(1.0, 0.15, 0.15, 1.0)   -- low health + "Close"
 local C_YELLOW = ESPMKC(1.0, 0.90, 0.30, 1.0)   -- double chevron
 local C_BLUE   = ESPMKC(0.38, 0.72, 1.0, 1.0)   -- "Bot" name
+local C_ORANGE = ESPMKC(1.0, 0.55, 0.18, 1.0)   -- aim line / self-rescue badge
 
 local function RND(v)
   if v ~= v then return 0 end
@@ -2876,6 +2907,7 @@ end
 local ESP = {}
 ESP.Canvas = nil
 ESP.Lines = {}      -- snap lines : key -> {Widget, Slot}
+ESP.AimLines = {}   -- enemy aim lines: key -> {Widget, Slot}
 ESP.Corners = {}    -- corner boxes: key -> {w1..w8 Widget/Slot}
 ESP.HealthBg = {}   -- health bg (dark) : key -> {Widget, Slot}
 ESP.HealthFill = {} -- health fill (pct + color) : key -> {Widget, Slot}
@@ -3066,6 +3098,17 @@ function ESP.IsKnocked(Character)
     if Character.IsNearDeath and Character:IsNearDeath() then k = true end
   end) end
   return k
+end
+
+-- Apakah pawn masih bisa self-rescue (item/feature tersedia). Hanya dipanggil
+-- saat target knocked; cache-nya ada di ESP.UpdateInfo (0,5 detik).
+function ESP.CanSelfRescue(Character)
+  if not ESPValid(Character) then return false end
+  local v = nil
+  pcall(function() if Character.CanSelfRescue then v = Character:CanSelfRescue() end end)
+  if type(v) == "boolean" then return v end
+  pcall(function() v = Character.bCanSelfRescue end)
+  return v == true
 end
 
 function ESP.IsBot(Character)
@@ -3330,6 +3373,77 @@ function ESP.GetHeadFeet(Character)
   local head = { X = center.X, Y = center.Y, Z = center.Z + half }
   local feet = { X = center.X, Y = center.Y, Z = center.Z - half }
   return head, feet
+end
+
+-- Arah bidik pawn dalam world space. GetViewRotation adalah sumber utama
+-- (replikasi aim remote pawn), fallback ke base aim/actor rotation.
+function ESP.GetAimDir(Character)
+  if not ESPValid(Character) then return nil end
+  local rot = nil
+  pcall(function() if Character.GetViewRotation then rot = Character:GetViewRotation() end end)
+  if rot == nil then
+    pcall(function() if Character.GetBaseAimRotation then rot = Character:GetBaseAimRotation() end end)
+  end
+  if rot == nil then
+    pcall(function() if Character.K2_GetActorRotation then rot = Character:K2_GetActorRotation() end end)
+  end
+  if rot == nil then
+    pcall(function() if Character.GetActorRotation then rot = Character:GetActorRotation() end end)
+  end
+  if rot == nil then return nil end
+  local pitch, yaw = nil, nil
+  pcall(function() pitch = tonumber(rot.Pitch) end)
+  pcall(function() yaw = tonumber(rot.Yaw) end)
+  if pitch == nil or yaw == nil then return nil end
+  local p = math.rad(pitch)
+  local y = math.rad(yaw)
+  local cp = math.cos(p)
+  return { X = cp * math.cos(y), Y = cp * math.sin(y), Z = math.sin(p) }
+end
+
+-- Garis pendek dari kepala target mengikuti arah bidiknya. Merah bila sudut
+-- bidik mengarah ke kepala pemain lokal (< ~10 derajat) dalam 150 m.
+function ESP.DrawAimLine(key, pc, Character, headWorld, headS, meHead)
+  local data = ESP.AimLines[key]
+  if not (ESP.Menu and ESP.Menu.ShowAimLine) or not headWorld or not headS then
+    if data then ESP.Hide(data) end
+    return
+  end
+  local dir = ESP.GetAimDir(Character)
+  if not dir then
+    if data then ESP.Hide(data) end
+    return
+  end
+  local len = 900.0
+  local endS = ESP.Project(pc, {
+    X = headWorld.X + dir.X * len,
+    Y = headWorld.Y + dir.Y * len,
+    Z = headWorld.Z + dir.Z * len,
+  })
+  if not endS then
+    if data then ESP.Hide(data) end
+    return
+  end
+  local color = C_ORANGE
+  if meHead then
+    local dx = meHead.X - headWorld.X
+    local dy = meHead.Y - headWorld.Y
+    local dz = meHead.Z - headWorld.Z
+    local d2 = dx * dx + dy * dy + dz * dz
+    local distM = math.sqrt(d2) / 100.0
+    if distM > 0.1 and distM <= 150.0 then
+      local dot = (dx * dir.X + dy * dir.Y + dz * dir.Z) / math.sqrt(d2)
+      if dot >= 0.985 then color = C_RED end
+    end
+  end
+  data = data or ESP.NewLine(C_ORANGE, 34)
+  if not data then return end
+  ESP.AimLines[key] = data
+  if data.aimColor ~= color then
+    data.aimColor = color
+    pcall(function() data.Widget:SetBrushColor(color) end)
+  end
+  ESP.DrawLine(data, headS.X, headS.Y, endS.X, endS.Y, 1.6)
 end
 
 function ESP.Now()
@@ -3712,8 +3826,14 @@ function ESP.SyncMenuConfig()
   ESP.Menu.ShowTeamNumber = cfg.Esp9_TeamNumber == true
   ESP.Menu.ShowLine = cfg.Esp9_Line == true
   ESP.Menu.ShowVisibility = cfg.Esp9_Visibility == true
+  ESP.Menu.ShowAimLine = cfg.Esp9_AimLine == true
+  -- Badge self-rescue memakai baris status yang sudah ada; baris itu tetap
+  -- tampil walau "Visibility" OFF saat badge aktif.
+  ESP.Menu.ShowSelfRescue = cfg.Esp9_SelfRescue == true
   -- esp new.lua has no weapon-icon or skeleton renderer.
   ESP.Menu.ShowWeapon = cfg.Esp9_Weapon == true
+  -- Reload countdown adalah bagian dari teks ammo; ON-kan teks ammo juga.
+  if cfg.Esp9_ReloadTimer == true then cfg.Esp9_Ammo = true end
   ESP.Menu.ShowAmmo = cfg.Esp9_Ammo == true
   ESP.Menu.Adv = cfg.Esp9_Adv == true
   ESP.Menu.Loot = cfg.Esp9_Loot == true
@@ -4048,8 +4168,20 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
     ammoText = ESP.Extra.GetAmmoText(Character, isBot) or ""
   end
   -- Visibility: Open (green) / Close (red)
+  local sr = false
+  if menu.ShowSelfRescue then
+    if (now - (d.SRT or -999.0)) >= 0.50 then
+      d.SRT = now
+      d.SR = ESP.IsKnocked(Character) and ESP.CanSelfRescue(Character)
+    end
+    sr = d.SR == true
+  else
+    d.SR, d.SRT = false, nil
+  end
   local st = bVisible and "Open" or "Close"
+  if sr then st = st .. " SR" end
   local stKey = bVisible and "open" or "close"
+  if sr then stKey = stKey .. "_sr" end
   pcall(function()
     if d.LastN ~= name then
       d.Name:SetText(name) d.LastN = name
@@ -4061,7 +4193,8 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
     if d.LastD ~= dl then d.Dist:SetText(dl) d.LastD = dl end
     if d.LastS ~= st then
       d.State:SetText(st) d.LastS = st
-      if bVisible then ESP.SetTextColor(d.State, C_GREEN)
+      if sr then ESP.SetTextColor(d.State, C_ORANGE)
+      elseif bVisible then ESP.SetTextColor(d.State, C_GREEN)
       else ESP.SetTextColor(d.State, C_RED) end
     end
     if d.LastW ~= weapon then d.LastW = weapon end
@@ -4100,7 +4233,7 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       local hidden = UEnums.ESlateVisibility.Collapsed
       d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
       d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
-      d.State:SetWidgetVisibility(menu.ShowVisibility and visible or hidden)
+      d.State:SetWidgetVisibility((menu.ShowVisibility or sr) and visible or hidden)
       d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
       d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
       d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
@@ -4112,7 +4245,7 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       local hidden = UEnums.ESlateVisibility.Collapsed
       d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
       d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
-      d.State:SetWidgetVisibility(menu.ShowVisibility and visible or hidden)
+      d.State:SetWidgetVisibility((menu.ShowVisibility or sr) and visible or hidden)
       d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
       d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
       d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
@@ -4187,6 +4320,7 @@ function ESP.HideTarget(key)
   ESP.Hide(ESP.HealthBg[key])
   ESP.Hide(ESP.HealthFill[key])
   ESP.Hide(ESP.Lines[key])
+  ESP.Hide(ESP.AimLines[key])
   local inf = ESP.Infos[key]
   if inf and ESPValid(inf.Container) then
     pcall(function() inf.Container:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
@@ -4203,6 +4337,8 @@ function ESP.ReleaseTarget(key)
   ESP.HealthFill[key] = nil
   ESP.Destroy(ESP.Lines[key])
   ESP.Lines[key] = nil
+  ESP.Destroy(ESP.AimLines[key])
+  ESP.AimLines[key] = nil
   ESP.DestroyInfo(ESP.Infos[key])
   ESP.Infos[key] = nil
   ESP.VisCache[key] = nil
@@ -4213,11 +4349,13 @@ function ESP.ResetWidgets()
   ESP.ClearRadarMarks()
   if ESP.Extra and ESP.Extra.Reset then pcall(ESP.Extra.Reset) end
   for _, d in pairs(ESP.Lines) do ESP.Destroy(d) end
+  for _, d in pairs(ESP.AimLines) do ESP.Destroy(d) end
   for _, t in pairs(ESP.Corners) do for _, d in pairs(t) do ESP.Destroy(d) end end
   for _, d in pairs(ESP.HealthBg) do ESP.Destroy(d) end
   for _, d in pairs(ESP.HealthFill) do ESP.Destroy(d) end
   for _, d in pairs(ESP.Infos) do ESP.DestroyInfo(d) end
   ESP.Lines = {}
+  ESP.AimLines = {}
   ESP.Corners = {}
   ESP.HealthBg = {}
   ESP.HealthFill = {}
@@ -4312,6 +4450,7 @@ do
   EX.ClassCache = EX.ClassCache or {}
   EX.GrenadeTypeCache = EX.GrenadeTypeCache or {}
   EX.BounceCache = EX.BounceCache or {}
+  EX.FuseGuess = EX.FuseGuess or {}
   EX.LastSeen = EX.LastSeen or {}
   EX.LastAirdropScan = -999.0
   EX.LastGrenadeScan = -999.0
@@ -4635,6 +4774,7 @@ do
     EX.PlayerCache, EX.PredictCache = {}, {}
     EX.GrenadeTypeCache = {}
     EX.BounceCache = {}
+    EX.FuseGuess = {}
     EX.LastSeen = {}
     EX._PSMap, EX._PSMapT = nil, nil
     EX._PSCharMap, EX._PSIdentMiss = nil, nil
@@ -5685,7 +5825,7 @@ do
     local key = ESP.GetPlayerKey(Character)
     local now = ESP.Now()
     local c = playerCache(key)
-    if c.ammoT and (now - c.ammoT) < 0.25 then return c.ammo or "" end
+    if c.ammoT and (now - c.ammoT) < (c.reloading and 0.12 or 0.25) then return c.ammo or "" end
     c.ammoT = now
     c.t = now
     local weapon = nil
@@ -5726,7 +5866,41 @@ do
     else
       text = string.format("AMMO %d", cur)
     end
-    if reloading then text = text .. "  RELOAD" end
+    -- Countdown reload: GetCurReloadTime() memberi durasi total saat reload
+    -- dimulai; sisa waktu dihitung lokal supaya label bergerak tiap 0,12 dtk.
+    local reloadTimer = _G.RapzhangConfig and _G.RapzhangConfig.Esp9_ReloadTimer == true
+    if reloading then
+      if not c.wasReloading then
+        local total = nil
+        pcall(function() if weapon.GetCurReloadTime then total = weapon:GetCurReloadTime() end end)
+        if type(total) ~= "number" then pcall(function() total = weapon.CurReloadTime end) end
+        if type(total) ~= "number" or total <= 0.0 then total = nil end
+        c.reloadStart = now
+        c.reloadDur = total
+      end
+      c.wasReloading = true
+    else
+      c.wasReloading = false
+      c.reloadStart, c.reloadDur = nil, nil
+    end
+    c.reloading = reloading
+    if reloading then
+      if reloadTimer then
+        local remain = nil
+        if c.reloadStart and c.reloadDur then
+          remain = c.reloadDur - (now - c.reloadStart)
+          if remain < 0.0 then remain = 0.0 end
+          if remain > c.reloadDur then remain = c.reloadDur end
+        end
+        if remain then
+          text = text .. string.format("  RL %.1fs", remain)
+        else
+          text = text .. "  RELOAD"
+        end
+      else
+        text = text .. "  RELOAD"
+      end
+    end
     c.ammo = text
     return text
   end
@@ -6066,6 +6240,24 @@ do
     return math.max(0.0, t)
   end
 
+  -- Fallback countdown saat build tidak mengekspos sisa fuse: catat waktu
+  -- pertama grenade terlihat lalu hitung mundur dari asumsi fuse 3,5 dtk.
+  -- Nilai ini hanya tampilan; prediksi pantulan tetap memakai fuse asli.
+  function EX.EstimateGrenadeFuse(a, now)
+    if not ESPValid(a) then return nil end
+    now = tonumber(now) or ESP.Now()
+    local key = tostring(a)
+    local g = EX.FuseGuess[key]
+    if not g then
+      g = { t = now, dur = 3.5 }
+      EX.FuseGuess[key] = g
+    end
+    local remain = g.dur - (now - g.t)
+    if remain < 0.0 then remain = 0.0 end
+    if remain > g.dur then remain = g.dur end
+    return remain
+  end
+
   -- ============================================================
   -- GRENADE BOUNCE PREDICTION
   -- Simulasi ringan untuk menggambar arah pantul grenade. Bukan
@@ -6396,6 +6588,7 @@ do
     local showMark = cfg.Esp9_GrenadeMark == true
     local showRadius = cfg.Esp9_GrenadeRadius == true
     local showBounce = cfg.Esp9_GrenadeBounce == true
+    local showFuse = cfg.Esp9_GrenadeFuse ~= false
     local seen = {}
     local me = ESP.GetLocalCharacter()
     local shown = 0
@@ -6438,7 +6631,11 @@ do
               if showMark then
                 EX.DrawBox(key, s.X, s.Y, 12.0, 12.0, color, ckey, 1.6)
                 local gtype = EX.GetGrenadeType(a)
-                local remain = EX.GetGrenadeRemain(a, gtype)
+                local remain = nil
+                if showFuse then
+                  remain = EX.GetGrenadeRemain(a, gtype)
+                  if not remain then remain = EX.EstimateGrenadeFuse(a, now) end
+                end
                 local label = string.format("%s %dm", gtype, math.floor((radius / 100.0) + 0.5))
                 if remain then label = label .. string.format("  %.1fs", remain) end
                 EX.DrawLabel(key, s.X, s.Y + 10.0, label, color)
@@ -6474,6 +6671,15 @@ do
     end
     for key in pairs(EX.Extras) do
       if key:sub(1, 3) == "gr_" and not seen[key] then EX.HideMark(key) end
+    end
+    if showFuse then
+      local alive = {}
+      for _, item in ipairs(EX.Grenades) do
+        if ESPValid(item.Actor) then alive[tostring(item.Actor)] = true end
+      end
+      for key in pairs(EX.FuseGuess) do
+        if not alive[key] then EX.FuseGuess[key] = nil end
+      end
     end
   end
 
@@ -7057,7 +7263,12 @@ do
           local cnt = tonumber(e.Count)
           if not cnt or cnt < 1 then cnt = 1 end
           if id and id > 0 then
-            out[#out + 1] = { id = id, typ = typ, count = cnt }
+            out[#out + 1] = {
+              id = id, typ = typ, count = cnt,
+              -- InstanceID dipakai PickupManager:PickUpTarget (pickup per
+              -- entri, bukan per wrapper) untuk fast auto pickup.
+              iid = tonumber(e.InstanceID),
+            }
           end
         end
       end
@@ -8234,6 +8445,301 @@ do
       hidePrefix("vh_")
     end
   end
+
+  -- ============================================================
+  -- SUPPORT AUTOMATION — fast auto pickup + auto rescue teammate
+  -- ------------------------------------------------------------
+  -- Tidak menggambar widget dan tidak butuh canvas, jadi driver tetap
+  -- hidup lewat ESP.Tick walau ESP 2 dan ESP LOOT sama-sama OFF.
+  -- Pickup memakai jalur tanpa animasi game:
+  -- PickupManager:PickUpTarget(wrapper, InstanceID, count, 0).
+  -- ============================================================
+  local SUPPORT = {}
+  ESP.Support = SUPPORT
+  SUPPORT.Version = 1
+  SUPPORT.Pickups = {}
+  SUPPORT.Cooldown = {}
+  SUPPORT.Attempts = {}
+  SUPPORT.ScanAt = -999.0
+  SUPPORT._pickAt = -999.0
+  SUPPORT._rescueAt = -999.0
+  SUPPORT._pruneAt = -999.0
+
+  local SUPPORT_PICK_BUDGET = 2
+  local SUPPORT_PICK_WINDOW = 0.10
+  local SUPPORT_PICK_CD = 0.60
+  local SUPPORT_PICK_FAIL_CD = 8.0
+  local SUPPORT_SCAN_INTERVAL = 0.40
+  local SUPPORT_RESCUE_INTERVAL = 0.60
+
+  local function supportDistance(key, def)
+    local v = tonumber(cfg()[key]) or def
+    return math.max(1.0, math.min(15.0, v))
+  end
+
+  -- Urutan ambil: meds -> ammo -> attachment -> gear -> weapon -> throw/misc.
+  -- Kapasitas backpack tetap divalidasi server; urutan ini hanya memastikan
+  -- item penting masuk lebih dulu saat banyak item dalam radius.
+  local function supportPriority(typ, id)
+    typ = tonumber(typ)
+    if typ == 6 then
+      if id and id >= 602000 and id < 603000 then return 4 end
+      return 0
+    end
+    if typ == 3 then return 1 end
+    if typ == 2 then return 2 end
+    if typ == 5 then return 3 end
+    if typ == 1 then return 5 end
+    return 6
+  end
+
+  function SUPPORT.Reset()
+    SUPPORT.Pickups = {}
+    SUPPORT.Cooldown = {}
+    SUPPORT.Attempts = {}
+    SUPPORT.ScanAt = -999.0
+    SUPPORT._pickAt = -999.0
+    SUPPORT._rescueAt = -999.0
+    SUPPORT._pruneAt = -999.0
+    SUPPORT._panel = nil
+    SUPPORT._panelAt = -999.0
+  end
+
+  function SUPPORT.Prune(now)
+    for k, t in pairs(SUPPORT.Cooldown) do
+      if (tonumber(t) or 0) <= now then SUPPORT.Cooldown[k] = nil end
+    end
+    for k, a in pairs(SUPPORT.Attempts) do
+      if not a or (now - (tonumber(a.t) or 0)) > 20.0 then SUPPORT.Attempts[k] = nil end
+    end
+  end
+
+  function SUPPORT.CanOperate(me)
+    if not ESPValid(me) then return false end
+    if ESP.IsKnocked(me) then return false end
+    local alive = true
+    pcall(function() if me.IsAlive then alive = me:IsAlive() ~= false end end)
+    if not alive then return false end
+    local flying = false
+    pcall(function() if me.IsInPlane then flying = me:IsInPlane() == true end end)
+    if not flying then
+      pcall(function() if me.IsInParachute then flying = me:IsInParachute() == true end end)
+    end
+    if flying then return false end
+    local EPawnState = nil
+    pcall(function() EPawnState = import("EPawnState") end)
+    if EPawnState and EPawnState.Pick and me.AllowState then
+      local allowed = nil
+      pcall(function() allowed = me:AllowState(EPawnState.Pick, false) end)
+      if allowed == false then return false end
+    end
+    return true
+  end
+
+  function SUPPORT.Scan(me, now)
+    local radius = supportDistance("Sup_FastLootDist", 4.0)
+    local meLoc = ESP.ActorLocation(me)
+    if not meLoc then SUPPORT.Pickups = {} return end
+    local out, seenKey = {}, {}
+    local pool = queryOrScan("fastloot",
+      function(g) return g:QueryPickUpWrappers(meLoc, radius * 100.0, nil, false, 40) end,
+      function() return actorsOfClass(class("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor")) end,
+      function() return staticObjectsInRegion("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor", 0, meLoc) end)
+    for _, a in ipairs(pool) do
+      local loc = ESP.ActorLocation(a)
+      if loc then
+        local dist = ESP.DistMeters(meLoc, loc)
+        if dist <= radius then
+          local removed = false
+          pcall(function()
+            removed = a.bItemRemoved == true or a.bPickedUp == true
+              or a.bIsPickedUp == true or a.bTaken == true
+          end)
+          if not removed then
+            local entries = listItems(a)
+            for _, e in ipairs(entries) do
+              local iid = e.iid or 0
+              local ek = tostring(a) .. "|" .. tostring(iid) .. "|" .. tostring(e.id)
+              if not seenKey[ek] then
+                seenKey[ek] = true
+                out[#out + 1] = {
+                  wrapper = a, iid = iid, count = e.count or 1,
+                  id = e.id, typ = e.typ, dist = dist,
+                  prio = supportPriority(e.typ, e.id),
+                  key = ek,
+                }
+              end
+            end
+          end
+        end
+      end
+    end
+    table.sort(out, function(x, y)
+      if x.prio ~= y.prio then return x.prio < y.prio end
+      if x.dist ~= y.dist then return x.dist < y.dist end
+      return tostring(x.key) < tostring(y.key)
+    end)
+    if #out > 40 then
+      local trimmed = {}
+      for i = 1, 40 do trimmed[i] = out[i] end
+      out = trimmed
+    end
+    SUPPORT.Pickups = out
+  end
+
+  function SUPPORT.NoteAttempt(key, now)
+    SUPPORT.Cooldown[key] = now + SUPPORT_PICK_CD
+    local a = SUPPORT.Attempts[key]
+    if not a or (now - (tonumber(a.t) or now)) > 4.0 then
+      a = { n = 0, t = now }
+    end
+    a.n = (a.n or 0) + 1
+    a.t = now
+    if a.n >= 4 then
+      -- Server menolak (kapasitas/limit/jarak) atau data wrapper basi:
+      -- berhenti mencoba entri ini sebentar agar RPC tidak spam.
+      SUPPORT.Cooldown[key] = now + SUPPORT_PICK_FAIL_CD
+      a.n = 0
+    end
+    SUPPORT.Attempts[key] = a
+  end
+
+  function SUPPORT.FastLoot(me, now)
+    if cfg().Sup_FastLoot ~= true then return end
+    if not SUPPORT.CanOperate(me) then return end
+    if (now - (SUPPORT.ScanAt or -999.0)) >= SUPPORT_SCAN_INTERVAL then
+      SUPPORT.ScanAt = now
+      pcall(SUPPORT.Scan, me, now)
+    end
+    if (now - (SUPPORT._pickAt or -999.0)) < SUPPORT_PICK_WINDOW then return end
+    SUPPORT._pickAt = now
+    local pm = nil
+    pcall(function() if me.GetPickupManager then pm = me:GetPickupManager() end end)
+    if not ESPValid(pm) then pm = nil end
+    local panel = nil
+    if not pm then
+      if (now - (SUPPORT._panelAt or -999.0)) >= 2.0 then
+        SUPPORT._panelAt = now
+        SUPPORT._panel = findPickupPanel()
+      end
+      panel = SUPPORT._panel
+    end
+    if not pm and not (panel and panel.PickUpWrapperActorWithoutAnim) then return end
+    local radius = supportDistance("Sup_FastLootDist", 4.0)
+    local meLoc = ESP.ActorLocation(me)
+    if not meLoc then return end
+    local budget = SUPPORT_PICK_BUDGET
+    for _, it in ipairs(SUPPORT.Pickups) do
+      if budget <= 0 then break end
+      if (SUPPORT.Cooldown[it.key] or 0) <= now then
+        local loc = ESP.ActorLocation(it.wrapper)
+        if loc and ESPValid(it.wrapper) then
+          local d = ESP.DistMeters(meLoc, loc)
+          if d <= radius then
+            local count = math.max(1, math.floor(tonumber(it.count) or 1))
+            local ok = false
+            if pm then
+              ok = pcall(function() pm:PickUpTarget(it.wrapper, it.iid, count, 0) end)
+            end
+            if not ok and panel and panel.PickUpWrapperActorWithoutAnim then
+              ok = pcall(function()
+                panel:PickUpWrapperActorWithoutAnim(me, {
+                  Wrapper = it.wrapper,
+                  MainItemData = { InstanceID = it.iid, Count = count },
+                }, count)
+              end)
+            end
+            if ok then
+              budget = budget - 1
+              SUPPORT.NoteAttempt(it.key, now)
+            end
+          end
+        end
+      end
+    end
+    if budget < SUPPORT_PICK_BUDGET then
+      SUPPORT.ScanAt = now - (SUPPORT_SCAN_INTERVAL - 0.08)
+    end
+  end
+
+  function SUPPORT.FindDownedTeammate(me)
+    local radius = supportDistance("Sup_AutoRescueDist", 3.0)
+    local meLoc = ESP.ActorLocation(me)
+    local myTeam = ESP.GetTeamID(me)
+    if not meLoc or myTeam == nil then return nil end
+    local pawns = nil
+    pcall(function() if Game and Game.GetAllPlayerPawns then pawns = Game:GetAllPlayerPawns() end end)
+    if not pawns then return nil end
+    local best, bestD = nil, radius
+    for _, ch in pairs(pawns) do
+      if ESPValid(ch) and ch ~= me then
+        local team = ESP.GetTeamID(ch)
+        if team ~= nil and tostring(team) == tostring(myTeam) and ESP.IsKnocked(ch) then
+          local loc = ESP.ActorLocation(ch)
+          if loc then
+            local d = ESP.DistMeters(meLoc, loc)
+            if d <= bestD then best, bestD = ch, d end
+          end
+        end
+      end
+    end
+    return best
+  end
+
+  function SUPPORT.AutoRescue(me, now)
+    if cfg().Sup_AutoRescue ~= true then return end
+    if not ESPValid(me) or ESP.IsKnocked(me) then return end
+    if (now - (SUPPORT._rescueAt or -999.0)) < SUPPORT_RESCUE_INTERVAL then return end
+    SUPPORT._rescueAt = now
+    local rc = nil
+    pcall(function() rc = me.RescueOtherComponent end)
+    if ESPValid(rc) then
+      local who = nil
+      pcall(function() who = rc.RescueWho end)
+      if ESPValid(who) then return end
+    end
+    local target = SUPPORT.FindDownedTeammate(me)
+    if not target then return end
+    -- Segarkan hasil search agar kandidat rescue terbaru dikenal komponen.
+    pcall(function()
+      local ECharacterSearchEnum = import("ECharacterSearchEnum")
+      local EExecutionCondition = import("EExecutionCondition")
+      local sc = me.SearchOtherComponent
+      if sc and ECharacterSearchEnum and EExecutionCondition then
+        if sc.ResetSearchResult then
+          sc:ResetSearchResult(ECharacterSearchEnum.CanRescueTeammate, EExecutionCondition.Client)
+        end
+        if sc.ResetTickCheckTime then
+          sc:ResetTickCheckTime(ECharacterSearchEnum.CanRescueTeammate, 0.0, EExecutionCondition.Client, false)
+        end
+      end
+    end)
+    pcall(function() me:PlayerConfirmToRescue() end)
+  end
+
+  function SUPPORT.Update(now)
+    now = tonumber(now) or ESP.Now()
+    local c = _G.RapzhangConfig
+    if c == nil then return end
+    local lootOn = c.Sup_FastLoot == true
+    local rescueOn = c.Sup_AutoRescue == true
+    if not lootOn and not rescueOn then
+      if SUPPORT._active then
+        SUPPORT._active = false
+        pcall(SUPPORT.Reset)
+      end
+      return
+    end
+    SUPPORT._active = true
+    local me = ESP.GetLocalCharacter()
+    if not ESPValid(me) then return end
+    if (now - (SUPPORT._pruneAt or -999.0)) >= 5.0 then
+      SUPPORT._pruneAt = now
+      pcall(SUPPORT.Prune, now)
+    end
+    if lootOn then pcall(SUPPORT.FastLoot, me, now) end
+    if rescueOn then pcall(SUPPORT.AutoRescue, me, now) end
+  end
 end
 
 --// SRC HUB
@@ -8308,6 +8814,12 @@ function ESP.Update()
   if not origin then return end
   local camLoc = ESP.GetCamLoc(pc)
 
+  local meChar = ESP.GetLocalCharacter()
+  local meHead = nil
+  if (ESP.Menu or {}).ShowAimLine and ESPValid(meChar) then
+    meHead = ESP.GetHeadFeet(meChar)
+  end
+
   local active = {}
   for _, item in ipairs(ESP.EnemyCache) do
     local c = item.Character
@@ -8328,6 +8840,11 @@ function ESP.Update()
             -- sanity: ulti box / bahut badi box = garbage projection, hide
             if H >= (CFG.BoxMinHeight or 14) and H <= vh * 1.5 then
               active[key] = true
+              if (ESP.Menu or {}).ShowAimLine then
+                ESP.DrawAimLine(key, pc, c, head, headS, meHead)
+              else
+                ESP.Hide(ESP.AimLines[key])
+              end
               local W = H * (CFG.BoxWidthFactor or 0.62)
               W = math.max(CFG.BoxMinWidth or 22, math.min(CFG.BoxMaxWidth or 320, W))
               local padT = H * (CFG.HeadExtra or 0)
@@ -8434,6 +8951,9 @@ end
 -- Single driver: sirf ek repeating timer (lag/flicker fix).
 -- Purana triple-driver (Tick loop + 2x AddGameTimer) hata diya.
 function ESP.Tick()
+  -- SUPPORT automation tidak butuh canvas dan harus tetap jalan saat ESP 2
+  -- maupun ESP LOOT OFF.
+  if ESP.Support and ESP.Support.Update then pcall(ESP.Support.Update, ESP.Now()) end
   if ESP.LowEnd then
     local now = ESP.Now()
     if (now - (ESP._LowTick or -999.0)) < (ESP.LowTickInterval or 0.120) then return end
@@ -8513,8 +9033,10 @@ local function ESPRequestedEnabled()
   local c = _G.RapzhangConfig
   -- ESP LOOT punya gerbang sendiri: driver harus tetap hidup walau
   -- ESP V2 (EspLoai9) OFF, supaya label loot tetap dirender.
+  -- SUPPORT automation juga menghidupkan driver tanpa canvas/ESP apa pun.
   return c ~= nil
-    and (c.EspLoai9 == true or c.Esp9_Loot == true)
+    and (c.EspLoai9 == true or c.Esp9_Loot == true
+      or c.Sup_FastLoot == true or c.Sup_AutoRescue == true)
     and ESP_Enabled == true
 end
 local function ESPStartAll()
@@ -12404,7 +12926,8 @@ local function MainLoop()
         ESPStartAll()
     end)
 
-    if _G.RapzhangConfig.EspLoai9 or _G.RapzhangConfig.Esp9_Loot then
+    if _G.RapzhangConfig.EspLoai9 or _G.RapzhangConfig.Esp9_Loot
+        or _G.RapzhangConfig.Sup_FastLoot or _G.RapzhangConfig.Sup_AutoRescue then
         if _G.PlayerMapMarker and not _G.PlayerMapMarker.bActive then
             pcall(_G.PlayerMapMarker.Start)
         end
