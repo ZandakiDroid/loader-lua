@@ -237,6 +237,7 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     BulletTrackBowHipfire = false,
     BTAllSmartHead = false,
     CustomMagicBullet = false,
+    Headshot = false,
     SmartAutoHead = false,
     Accuracy = false,
 
@@ -309,6 +310,7 @@ _G.RapzhangConfig.Esp9_TeamNumber = _G.RapzhangConfig.Esp9_TeamNumber == true
 _G.RapzhangConfig.Esp9_Adv = _G.RapzhangConfig.Esp9_Adv == true
 _G.RapzhangConfig.Esp9_LootDist = math.max(20, math.min(300, tonumber(_G.RapzhangConfig.Esp9_LootDist) or 120))
 _G.RapzhangConfig.Esp9_OptLow = _G.RapzhangConfig.Esp9_OptLow == true
+_G.RapzhangConfig.Headshot = _G.RapzhangConfig.Headshot == true
 _G.RapzhangConfig.AutoJumpRadius = math.max(50, math.min(1500, tonumber(_G.RapzhangConfig.AutoJumpRadius) or 300))
 
 _G.RapzhangState = _G.RapzhangState or { 
@@ -1929,10 +1931,11 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_BT_All_Part", UI = AliasMap.Slider, Text = T("      Body Part (0:Head 1:Neck 2:Chest)", "      Body Part (0:Head 1:Neck 2:Chest)"), ExpandHandle = "ModMenu_BT_All", MinValue = 0, MaxValue = 2, min = 0, max = 2, Min = 0, Max = 2, GetFunc = function() return _G.RapzhangState.CustomTextData.BTAllPart or 0 end, SetFunc = function(_,v) _G.RapzhangState.CustomTextData.BTAllPart = math.max(0, math.min(2, math.floor(v + 0.5))); return true end },
             { Key = "ModMenu_BT_All_Prob", UI = AliasMap.Slider, Text = T("      Track Chance", "      Track Chance"), ExpandHandle = "ModMenu_BT_All", MinValue = 0, MaxValue = 100, min = 0, max = 100, Min = 0, Max = 100, GetFunc = function() return _G.RapzhangState.CustomTextData.BTAllProb or 100 end, SetFunc = function(_,v) _G.RapzhangState.CustomTextData.BTAllProb = math.max(0, math.min(100, math.floor(v + 0.5))); return true end },
             { Key = "ModMenu_BT_All_SmartHead", UI = AliasMap.Switcher, Text = T("      Smart Auto Aim Head", "      Smart Auto Aim Head"), ExpandHandle = "ModMenu_BT_All", GetFunc = function() return _G.RapzhangConfig.BTAllSmartHead == true end, SetFunc = function(_,v) _G.RapzhangConfig.BTAllSmartHead = v and true or false; return true end },
-            { Key = "ModMenu_Magic_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ DỄ BỊ BAN MẠNG Magic Bullet Tùy Chỉnh", "▶ (RISK BAN) Custom Magic Bullet"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.CustomMagicBullet == true end, SetFunc = function(c,v) _G.RapzhangConfig.CustomMagicBullet = v return true end },
-            { Key = "ModMenu_Magic_Head", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Đầu (1.0x - 5.0x)", "   Head Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicHead) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicHead = 1.0 + (n / 100.0) * 4.0; return true end },
-            { Key = "ModMenu_Magic_Body", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Thân (1.0x - 5.0x)", "   Body Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicBody) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicBody = 1.0 + (n / 100.0) * 4.0; return true end },
-            { Key = "ModMenu_Magic_Legs", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Chân (1.0x - 5.0x)", "   Legs Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicLegs) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicLegs = 1.0 + (n / 100.0) * 4.0; return true end },
+            { Key = "ModMenu_Magic_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ DỄ BỊ BAN MẠNG Magic Bullet Tùy Chỉnh", "▶ (RISK BAN) Custom Magic Bullet"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.CustomMagicBullet == true end, SetFunc = function(c,v) _G.RapzhangConfig.CustomMagicBullet = v == true; if _G.RapzhangHitboxConfigChanged then pcall(_G.RapzhangHitboxConfigChanged, true) end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
+            { Key = "ModMenu_Magic_Head", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Đầu (1.0x - 5.0x)", "   Head Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicHead) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicHead = 1.0 + (n / 100.0) * 4.0; if _G.RapzhangHitboxConfigChanged then pcall(_G.RapzhangHitboxConfigChanged, false) end; return true end },
+            { Key = "ModMenu_Magic_Body", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Thân (1.0x - 5.0x)", "   Body Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicBody) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicBody = 1.0 + (n / 100.0) * 4.0; if _G.RapzhangHitboxConfigChanged then pcall(_G.RapzhangHitboxConfigChanged, false) end; return true end },
+            { Key = "ModMenu_Magic_Legs", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Chân (1.0x - 5.0x)", "   Legs Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicLegs) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicLegs = 1.0 + (n / 100.0) * 4.0; if _G.RapzhangHitboxConfigChanged then pcall(_G.RapzhangHitboxConfigChanged, false) end; return true end },
+            { Key = "ModMenu_Headshot", UI = AliasMap.Switcher, Text = T("Headshot (10x Kepala / 5x Hitbox)", "Headshot (10x Head / 5x Hitbox)"), GetFunc = function() return _G.RapzhangConfig.Headshot == true end, SetFunc = function(_, v) _G.RapzhangConfig.Headshot = v == true; if _G.RapzhangHeadshotRefresh then pcall(_G.RapzhangHeadshotRefresh) end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
 
             { Key = "ModMenu_HRecoil_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ Less Horizontal Recoil (Drop/Put Weapon)", "▶ Less Horizontal Recoil (Drop/Put Weapon)"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.CustomHRecoil == true end, SetFunc = function(_,v) _G.RapzhangConfig.CustomHRecoil = v and true or false; if _G.RapzhangState.RefreshActiveWeaponStats then _G.RapzhangState.RefreshActiveWeaponStats() end; return true end },
             { Key = "ModMenu_HRecoil_Val", UI = AliasMap.Slider, Text = T("   Horizontal Recoil Value", "   Horizontal Recoil Value"), ExpandHandle = "ModMenu_HRecoil_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() return math.floor((((_G.RapzhangState.CustomTextData.HRecoil or 0.3) - 0.3) / 4.7) * 100 + 0.5) end, SetFunc = function(_,v) _G.RapzhangState.CustomTextData.HRecoil = 0.3 + (v / 100.0) * 4.7; return true end },
@@ -12475,6 +12478,7 @@ _G.RapzhangAutoTextFeedback = (function()
     add("Bullet Track", anyPrefix("BulletTrack"))
     add("Aim Assist", anyPrefix("AimTouch"))
     add("Magic Bullet", cfg.CustomMagicBullet == true)
+    add("Headshot", cfg.Headshot == true)
     add("Smart Head", cfg.SmartAutoHead == true or cfg.BTAllSmartHead == true)
     add("Accuracy", cfg.Accuracy == true)
     add("Less Recoil", cfg.LessRecoil == true)
@@ -13594,66 +13598,283 @@ local function ClearIndependentWallhackState()
 end
 
 -- ============================================================================
--- [MAGIC BULLET CACHE CLEARER]
--- Mengembalikan PhysicsAsset ke bentuk asli & menghapus semua jejak cache.
+-- [HITBOX ENGINE] Magic Bullet + Headshot (logic ported from premium.lua)
+-- Menyimpan geometri collision asli per PhysicsAsset (per bone), lalu
+-- mengaplikasikan skala penuh ke elemen pertama Box/Sphere/Sphyl.
+-- Magic & Headshot memakai satu hash/state supaya toggle salah satu tidak
+-- membatalkan skala fitur lainnya.
+-- ============================================================================
+_G.RapzhangHitboxBoneMap = function(headScale, bodyScale, legsScale)
+    return {
+        ["head"] = headScale, ["neck_01"] = headScale,
+        ["pelvis"] = bodyScale, ["spine_01"] = bodyScale,
+        ["spine_02"] = bodyScale, ["spine_03"] = bodyScale,
+        ["thigh_l"] = legsScale, ["thigh_r"] = legsScale,
+        ["calf_l"] = legsScale, ["calf_r"] = legsScale,
+        ["foot_l"] = legsScale, ["foot_r"] = legsScale,
+    }
+end
+
+-- forTicker=true: dipakai ticker Headshot yang berjalan walau ESP OFF.
+-- Saat ESP OFF, skala Magic diabaikan agar dua fitur tidak saling menimpa.
+_G.RapzhangGetHitboxScale = function(forTicker)
+    local cfg = _G.RapzhangConfig or {}
+    local data = (_G.RapzhangState and _G.RapzhangState.CustomTextData) or {}
+    local magicOn = cfg.CustomMagicBullet == true
+    local headshotOn = cfg.Headshot == true
+    if forTicker and magicOn and cfg.EspLoai9 ~= true then
+        magicOn = false
+    end
+    if not magicOn and not headshotOn then
+        return "OFF", 1.0, 1.0, 1.0
+    end
+    local head, body, legs = 1.0, 1.0, 1.0
+    if magicOn then
+        head = math.max(1.0, math.min(5.0, tonumber(data.MagicHead) or 1.0))
+        body = math.max(1.0, math.min(5.0, tonumber(data.MagicBody) or 1.0))
+        legs = math.max(1.0, math.min(5.0, tonumber(data.MagicLegs) or 1.0))
+    end
+    if headshotOn then
+        head = head * 5.0
+    end
+    return string.format("MB_%.2f_%.2f_%.2f", head, body, legs), head, body, legs
+end
+
+_G.RapzhangInvalidateHitboxMarks = function()
+    local marks = _G.RapzhangState and _G.RapzhangState.EnemyMarks
+    if not marks then return end
+    for _, markData in pairs(marks) do
+        if markData then
+            markData.MagicBulletHash = nil
+            markData.MagicTargetID = nil
+        end
+    end
+end
+
+-- forceRestore=true saat toggle berubah: cache dibersihkan supaya skala lama
+-- tidak tertinggal ketika fitur lain (atau semuanya) dimatikan.
+_G.RapzhangHitboxConfigChanged = function(forceRestore)
+    pcall(_G.RapzhangInvalidateHitboxMarks)
+    local cfg = _G.RapzhangConfig or {}
+    if forceRestore or (cfg.CustomMagicBullet ~= true and cfg.Headshot ~= true) then
+        if _G.AK_ClearMagicBulletCache then
+            pcall(_G.AK_ClearMagicBulletCache)
+        end
+        -- Clear() also restores weapon multipliers; put Headshot back at once
+        -- so toggling Magic never leaves a 1s damage gap.
+        if cfg.Headshot == true and _G.RapzhangApplyHeadshotWeapon then
+            pcall(_G.RapzhangApplyHeadshotWeapon)
+        end
+    end
+end
+
+_G.RapzhangApplyHitbox = function(mesh, hash, headScale, bodyScale, legsScale, stateKey)
+    if hash == nil or hash == "OFF" then return false end
+    if not mesh or not slua or not slua.isValid(mesh) then return false end
+
+    local overrideValid = slua.isValid(mesh.PhysicsAssetOverride)
+    local phys = mesh.PhysicsAssetOverride
+    if not overrideValid and mesh.SkeletalMesh then
+        phys = mesh.SkeletalMesh.PhysicsAsset
+    end
+    if not slua.isValid(phys) or not phys.SkeletalBodySetups then return false end
+
+    local physName = "DefaultPhys"
+    pcall(function()
+        if type(phys.GetName) == "function" then physName = phys:GetName() end
+    end)
+    physName = tostring(physName)
+
+    _G.AK_ModdedPhysAssets = _G.AK_ModdedPhysAssets or {}
+    _G.AK_OrigHitboxes = _G.AK_OrigHitboxes or {}
+    local orig = _G.AK_OrigHitboxes[physName]
+    if not orig then
+        orig = {}
+        _G.AK_OrigHitboxes[physName] = orig
+    end
+
+    local changed = false
+    if _G.AK_ModdedPhysAssets[physName] ~= hash then
+        local scales = _G.RapzhangHitboxBoneMap(
+            math.max(1.0, math.min(25.0, tonumber(headScale) or 1.0)),
+            math.max(1.0, math.min(5.0, tonumber(bodyScale) or 1.0)),
+            math.max(1.0, math.min(5.0, tonumber(legsScale) or 1.0))
+        )
+
+        local setups = phys.SkeletalBodySetups
+        local count = 0
+        if type(setups.Num) == "function" then count = setups:Num() else count = #setups end
+        local limit = math.min(count, 50)
+
+        for i = 1, limit do
+            local bodySetup = nil
+            pcall(function()
+                if type(setups.Get) == "function" then bodySetup = setups:Get(i - 1) else bodySetup = setups[i] end
+            end)
+            if bodySetup and slua.isValid(bodySetup) then
+                local lowerBone = string.lower(tostring(bodySetup.BoneName))
+                local boneKey = nil
+                for key in pairs(scales) do
+                    if string.find(lowerBone, key, 1, true) then boneKey = key break end
+                end
+
+                if boneKey then
+                    local scale = scales[boneKey]
+                    local agg = bodySetup.AggGeom
+                    local arrays = {
+                        Box = (agg and agg.BoxElems) or bodySetup.BoxElems,
+                        Sphere = (agg and agg.SphereElems) or bodySetup.SphereElems,
+                        Sphyl = (agg and agg.SphylElems) or bodySetup.SphylElems,
+                    }
+
+                    local cache = orig[boneKey]
+                    if not cache then
+                        cache = { Arrays = {} }
+                        orig[boneKey] = cache
+                    end
+                    cache.Setup = bodySetup
+
+                    for kind, arr in pairs(arrays) do
+                        local elem = nil
+                        pcall(function()
+                            if arr and type(arr.Num) == "function" and arr:Num() > 0 then
+                                elem = type(arr.Get) == "function" and arr:Get(0) or arr[1]
+                            elseif arr and type(arr) == "table" and #arr > 0 then
+                                elem = arr[1]
+                            end
+                        end)
+
+                        if elem then
+                            cache.Arrays[kind] = arr
+                            if kind == "Box" then
+                                if not cache.Box then cache.Box = { X = elem.X, Y = elem.Y, Z = elem.Z } end
+                                elem.X = cache.Box.X * scale
+                                elem.Y = cache.Box.Y * scale
+                                elem.Z = cache.Box.Z * scale
+                            elseif kind == "Sphere" then
+                                if not cache.Sphere then cache.Sphere = { Radius = elem.Radius } end
+                                elem.Radius = cache.Sphere.Radius * scale
+                            else
+                                if not cache.Sphyl then cache.Sphyl = { Radius = elem.Radius, Length = elem.Length } end
+                                elem.Radius = cache.Sphyl.Radius * scale
+                                elem.Length = cache.Sphyl.Length * scale
+                            end
+
+                            if type(arr.Set) == "function" then arr:Set(0, elem) else arr[1] = elem end
+                            if agg then
+                                agg[kind .. "Elems"] = arr
+                                bodySetup.AggGeom = agg
+                            else
+                                bodySetup[kind .. "Elems"] = arr
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        _G.AK_ModdedPhysAssets[physName] = hash
+        changed = true
+    end
+
+    -- Refresh physics state for every mesh that has not seen this hash yet
+    -- (new enemy or config change), not just the first mesh sharing the asset.
+    _G.RapzhangMeshHitboxState = _G.RapzhangMeshHitboxState or {}
+    local meshState = stateKey and _G.RapzhangMeshHitboxState[stateKey] or nil
+    local meshHash = meshState and meshState.hash or nil
+    local needRefresh = changed or not overrideValid or (stateKey ~= nil and meshHash ~= hash)
+
+    if needRefresh then
+        pcall(function()
+            if type(mesh.SetPhysicsAsset) == "function" then mesh:SetPhysicsAsset(phys) end
+            mesh.PhysicsAssetOverride = phys
+            if type(mesh.RecreatePhysicsState) == "function" then
+                mesh:RecreatePhysicsState()
+            end
+        end)
+        if stateKey ~= nil then
+            _G.RapzhangMeshHitboxState[stateKey] = { hash = hash, mesh = mesh }
+        end
+    end
+
+    return true, physName
+end
+
+-- ============================================================================
+-- [HITBOX CACHE CLEARER]
+-- Mengembalikan PhysicsAsset ke geometri asli & menghapus semua jejak cache.
 -- Dipanggil saat: keluar match, mati, kembali ke lobby, atau toggle OFF.
 -- ============================================================================
 _G.AK_ClearMagicBulletCache = function()
     pcall(function()
         local orig = _G.AK_OrigHitboxes
-        if not orig then
-            _G.AK_ModdedPhysAssets = {}
-            return
-        end
-
-        -- 1) Restore setiap PhysAsset yang tercatat
-        for physName, assetCache in pairs(orig) do
-            if assetCache and assetCache.Bodies then
-                for _, body in pairs(assetCache.Bodies) do
-                    local setup = body.Setup
-                    if setup and slua.isValid(setup) then
-                        -- Kembalikan nilai asli ke setiap elemen
-                        for kind, values in pairs(body.Elements or {}) do
-                            local arr = body.Arrays and body.Arrays[kind]
-                            if arr then
-                                for index, original in pairs(values) do
-                                    local elem = nil
-                                    if type(arr.Get) == "function" then
-                                        elem = arr:Get(index)
-                                    else
-                                        elem = arr[index + 1]
+        if orig then
+            for physName, bones in pairs(orig) do
+                for _, cache in pairs(bones) do
+                    local bodySetup = cache.Setup
+                    if bodySetup and slua.isValid(bodySetup) then
+                        local agg = bodySetup.AggGeom
+                        for kind, arr in pairs(cache.Arrays or {}) do
+                            local data = cache[kind]
+                            if arr and data then
+                                local elem = nil
+                                pcall(function()
+                                    if type(arr.Num) == "function" and arr:Num() > 0 then
+                                        elem = type(arr.Get) == "function" and arr:Get(0) or arr[1]
+                                    elseif type(arr) == "table" and #arr > 0 then
+                                        elem = arr[1]
                                     end
-                                    if elem then
-                                        for field, value in pairs(original) do
-                                            elem[field] = value
-                                        end
-                                        if type(arr.Set) == "function" then
-                                            arr:Set(index, elem)
-                                        else
-                                            arr[index + 1] = elem
-                                        end
+                                end)
+                                if elem then
+                                    if kind == "Box" then
+                                        elem.X, elem.Y, elem.Z = data.X, data.Y, data.Z
+                                    elseif kind == "Sphere" then
+                                        elem.Radius = data.Radius
+                                    else
+                                        elem.Radius, elem.Length = data.Radius, data.Length
+                                    end
+                                    if type(arr.Set) == "function" then arr:Set(0, elem) else arr[1] = elem end
+                                    if agg then
+                                        agg[kind .. "Elems"] = arr
+                                        bodySetup.AggGeom = agg
+                                    else
+                                        bodySetup[kind .. "Elems"] = arr
                                     end
                                 end
                             end
                         end
-                        -- Lepas referensi agar tidak menahan objek
-                        body.Setup = nil
-                        body.Arrays = nil
-                        body.Elements = nil
                     end
                 end
-                -- Lepas referensi assetCache
-                assetCache.Bodies = nil
-                assetCache.AppliedHash = nil
+                orig[physName] = nil
             end
-            orig[physName] = nil
+        end
+        -- Rebuild physics state agar geometri asli langsung terpakai di
+        -- semua mesh yang pernah diskalakan (toggle OFF / match selesai).
+        local meshStates = _G.RapzhangMeshHitboxState
+        if meshStates then
+            for _, state in pairs(meshStates) do
+                local mesh = state and state.mesh
+                if mesh and slua.isValid(mesh) then
+                    pcall(function()
+                        local phys = mesh.PhysicsAssetOverride
+                        if not slua.isValid(phys) and mesh.SkeletalMesh then
+                            phys = mesh.SkeletalMesh.PhysicsAsset
+                        end
+                        if slua.isValid(phys) then
+                            if type(mesh.SetPhysicsAsset) == "function" then mesh:SetPhysicsAsset(phys) end
+                            if type(mesh.RecreatePhysicsState) == "function" then mesh:RecreatePhysicsState() end
+                        end
+                    end)
+                end
+            end
         end
 
         _G.AK_OrigHitboxes = {}
         _G.AK_ModdedPhysAssets = {}
+        _G.RapzhangMeshHitboxState = {}
     end)
 
-    -- 2) Clear flag per-enemy mark (kalau EnemyMarks masih ada)
+    -- Clear flag per-enemy mark
     pcall(function()
         local marks = _G.RapzhangState and _G.RapzhangState.EnemyMarks
         if marks then
@@ -13667,7 +13888,11 @@ _G.AK_ClearMagicBulletCache = function()
         end
     end)
 
-    -- 3) Flag global untuk mencegah re-apply di frame berikutnya
+    -- Kembalikan multiplier senjata Headshot (jika ada).
+    if _G.RapzhangRestoreHeadshotWeapons then
+        pcall(_G.RapzhangRestoreHeadshotWeapons)
+    end
+
     _G.AK_MagicBulletCleared = true
 end
 
@@ -14161,7 +14386,10 @@ local function MainLoop()
         local allCharacters = {}
         if GameplayData.GetAllPlayerCharacters then allCharacters = GameplayData.GetAllPlayerCharacters()
         elseif GameplayData.GameCharacters then for _, char in pairs(GameplayData.GameCharacters) do table.insert(allCharacters, char) end end
-        
+
+        -- State gabungan Magic Bullet + Headshot (dipakai di loop di bawah).
+        local mbHash, mbHead, mbBody, mbLegs = _G.RapzhangGetHitboxScale(false)
+
         local currentValidKeys = {}
         for _, enemy in pairs(allCharacters) do
             if Valid(enemy) and enemy ~= localPlayer then
@@ -14199,6 +14427,7 @@ local function MainLoop()
                 data.enemy = nil
                 data.CachedMeshes = nil
                 _G.RapzhangState.EnemyMarks[key] = nil
+                if _G.RapzhangMeshHitboxState then _G.RapzhangMeshHitboxState[key] = nil end
             end
         end
 
@@ -14238,185 +14467,28 @@ local function MainLoop()
                     local isBot = markData.AK_IS_BOT or false
                     -- Wallhack is handled by UpdateIndependentWallhack; ESP only handles markers/widgets.
                                         -- ============================================================================
-                    -- [MAGIC BULLET V2 — PhysicsAsset Scale (dari magicoptimal.lua)]
-                    -- Scale collision capsule per-bone (head/body/legs), BUKAN visual mesh.
+                    -- [MAGIC BULLET + HEADSHOT — premium.lua logic]
+                    -- Cache asli per-PhysicsAsset, skala penuh, elemen geometri pertama.
+                    -- Hash gabungan: toggle salah satu fitur tidak membatalkan yang lain.
                     -- ============================================================================
                     pcall(function()
                         local EnemyMesh = eMesh
                         if not slua.isValid(EnemyMesh) then return end
+                        if mbHash == "OFF" then return end
 
                         local uniqueID = type(enemy.GetUniqueID) == "function" and enemy:GetUniqueID() or tostring(enemy.PlayerKey or enemy)
-                        local PhysicsAsset = EnemyMesh.PhysicsAssetOverride
-                        if not slua.isValid(PhysicsAsset) and EnemyMesh.SkeletalMesh then
-                            PhysicsAsset = EnemyMesh.SkeletalMesh.PhysicsAsset
-                        end
-                        if not slua.isValid(PhysicsAsset) or not PhysicsAsset.SkeletalBodySetups then return end
-
-                        _G.AK_ModdedPhysAssets = _G.AK_ModdedPhysAssets or {}
-                        _G.AK_OrigHitboxes = _G.AK_OrigHitboxes or {}
-                        local PhysAssetName = "DefaultPhys"
-                        pcall(function() PhysAssetName = PhysicsAsset:GetName() end)
-                        local assetCache = _G.AK_OrigHitboxes[PhysAssetName]
-                        if not assetCache then
-                            assetCache = { Bodies = {}, AppliedHash = "" }
-                            _G.AK_OrigHitboxes[PhysAssetName] = assetCache
-                        end
-
-                        local function ArrayCount(arr)
-                            if not arr then return 0 end
-                            if type(arr.Num) == "function" then return arr:Num() end
-                            return #arr
-                        end
-                        local function ArrayGet(arr, index)
-                            if type(arr.Get) == "function" then return arr:Get(index) end
-                            return arr[index + 1]
-                        end
-                        local function ArraySet(arr, index, value)
-                            if type(arr.Set) == "function" then arr:Set(index, value) else arr[index + 1] = value end
-                        end
-                        local function MatchBone(name)
-                            local lower = string.lower(tostring(name))
-                            local ordered = { "head", "neck_01", "spine_03", "spine_02", "spine_01", "pelvis", "thigh_l", "thigh_r", "calf_l", "calf_r", "foot_l", "foot_r" }
-                            for _, key in ipairs(ordered) do
-                                if lower == key or string.find(lower, key, 1, true) then return key end
-                            end
-                            return nil
-                        end
-                                                local function RestoreAsset()
-                            for _, body in pairs(assetCache.Bodies) do
-                                local setup = body.Setup
-                                if slua.isValid(setup) then
-                                    for kind, values in pairs(body.Elements or {}) do
-                                        local arr = body.Arrays and body.Arrays[kind]
-                                        if arr then
-                                            for index, original in pairs(values) do
-                                                local elem = ArrayGet(arr, index)
-                                                if elem then
-                                                    for field, value in pairs(original) do elem[field] = value end
-                                                    ArraySet(arr, index, elem)
-                                                end
-                                            end
-                                        end
-                                    end
-                                end
-                                -- [CACHE CLEAR] Lepas referensi supaya tidak ada jejak.
-                                body.Setup = nil
-                                body.Arrays = nil
-                                body.Elements = nil
-                            end
-                            assetCache.Bodies = {}
-                            assetCache.AppliedHash = "OFF"
-                            _G.AK_ModdedPhysAssets[PhysAssetName] = "OFF"
-                        end
-
-                                                -- [MAGIC BULLET] Guard: hanya aktif saat in-match.
-                        -- Jika keluar match / lobby, paksa restore & clear.
-                        local inMatchNow = _G.RapzhangState and _G.RapzhangState.GameplayActive == true
-                        local runInject_Global = (_G.RapzhangConfig.CustomMagicBullet == true) and inMatchNow
-
-                        if not inMatchNow then
-                            -- Paksa restore & hapus cache saat tidak di match.
-                            if assetCache.AppliedHash ~= "OFF" then
-                                RestoreAsset()
-                            end
-                            if _G.AK_ClearMagicBulletCache then
-                                pcall(_G.AK_ClearMagicBulletCache)
-                            end
+                        if markData.MagicBulletHash == mbHash and markData.MagicTargetID == uniqueID then
                             return
                         end
 
-                        local mHead_Global = tonumber(_G.RapzhangState.CustomTextData.MagicHead) or 1.0
-                        local mBody_Global = tonumber(_G.RapzhangState.CustomTextData.MagicBody) or 1.0
-                        local mLegs_Global = tonumber(_G.RapzhangState.CustomTextData.MagicLegs) or 1.0
-
-                        if not runInject_Global then
-                            if assetCache.AppliedHash ~= "OFF" then
-                                RestoreAsset()
-                            end
-                            if EnemyMesh.SetPhysicsAsset then EnemyMesh:SetPhysicsAsset(PhysicsAsset) end
-                            EnemyMesh.PhysicsAssetOverride = PhysicsAsset
-                            markData.MagicBulletHash = "OFF"
+                        local ok = _G.RapzhangApplyHitbox(EnemyMesh, mbHash, mbHead, mbBody, mbLegs, eKey)
+                        if ok then
+                            markData.MagicBulletHash = mbHash
                             markData.MagicTargetID = uniqueID
-                            return
                         end
-
-                        local BoneScaleMap = {
-                            ["head"] = mHead_Global, ["neck_01"] = mHead_Global,
-                            ["pelvis"] = mBody_Global, ["spine_01"] = mBody_Global, ["spine_02"] = mBody_Global, ["spine_03"] = mBody_Global,
-                            ["thigh_l"] = mLegs_Global, ["thigh_r"] = mLegs_Global, 
-                            ["calf_l"] = mLegs_Global, ["calf_r"] = mLegs_Global,   
-                            ["foot_l"] = mLegs_Global, ["foot_r"] = mLegs_Global    
-                        }
-
-                        local wantedHash = string.format("M_%.2f_%.2f_%.2f", mHead_Global, mBody_Global, mLegs_Global)
-                        if assetCache.AppliedHash ~= wantedHash then
-                            local setups = PhysicsAsset.SkeletalBodySetups
-                            local setupCount = math.min(ArrayCount(setups), 50)
-                            for setupIndex = 0, setupCount - 1 do
-                                local bodySetup = ArrayGet(setups, setupIndex)
-                                if slua.isValid(bodySetup) then
-                                    local boneKey = MatchBone(bodySetup.BoneName)
-                                    local requestedScale = boneKey and tonumber(BoneScaleMap[boneKey]) or nil
-                                    if requestedScale then
-                                        requestedScale = math.max(1.0, math.min(5.0, requestedScale))
-                                        local scale = 1.0 + ((requestedScale - 1.0) * 0.35)
-                                        local bodyKey = tostring(setupIndex)
-                                        local bodyCache = assetCache.Bodies[bodyKey]
-                                        if not bodyCache then
-                                            bodyCache = { Setup = bodySetup, Arrays = {}, Elements = {} }
-                                            assetCache.Bodies[bodyKey] = bodyCache
-                                        end
-                                        local geom = bodySetup.AggGeom
-                                        local arrays = {
-                                            Box = geom and geom.BoxElems or bodySetup.BoxElems,
-                                            Sphere = geom and geom.SphereElems or bodySetup.SphereElems,
-                                            Sphyl = geom and geom.SphylElems or bodySetup.SphylElems
-                                        }
-                                        for kind, arr in pairs(arrays) do
-                                            if arr then
-                                                bodyCache.Arrays[kind] = arr
-                                                bodyCache.Elements[kind] = bodyCache.Elements[kind] or {}
-                                                for elemIndex = 0, ArrayCount(arr) - 1 do
-                                                    local elem = ArrayGet(arr, elemIndex)
-                                                    if elem then
-                                                        local original = bodyCache.Elements[kind][elemIndex]
-                                                        if not original then
-                                                            original = {}
-                                                            if kind == "Box" then original = { X = elem.X, Y = elem.Y, Z = elem.Z }
-                                                            elseif kind == "Sphere" then original = { Radius = elem.Radius }
-                                                            else original = { Radius = elem.Radius, Length = elem.Length } end
-                                                            bodyCache.Elements[kind][elemIndex] = original
-                                                        end
-                                                        if kind == "Box" then
-                                                            elem.X = original.X * scale
-                                                            elem.Y = original.Y * scale
-                                                            elem.Z = original.Z * scale
-                                                        elseif kind == "Sphere" then
-                                                            elem.Radius = original.Radius * scale
-                                                        else
-                                                            elem.Radius = original.Radius * scale
-                                                            elem.Length = original.Length * scale
-                                                        end
-                                                        ArraySet(arr, elemIndex, elem)
-                                                    end
-                                                end
-                                                if geom then bodySetup.AggGeom = geom end
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                            assetCache.AppliedHash = wantedHash
-                            _G.AK_ModdedPhysAssets[PhysAssetName] = wantedHash
-                        end
-
-                        if EnemyMesh.SetPhysicsAsset then EnemyMesh:SetPhysicsAsset(PhysicsAsset) end
-                        EnemyMesh.PhysicsAssetOverride = PhysicsAsset
-                        markData.MagicBulletHash = wantedHash
-                        markData.MagicTargetID = uniqueID
                     end)
                     -- ============================================================================
-                    -- [END MAGIC BULLET V2]
+                    -- [END MAGIC BULLET + HEADSHOT]
                     -- ============================================================================
 
                     if false and _G.RapzhangConfig.Esp9_Radar360 == true then
@@ -16421,537 +16493,193 @@ end
 
 pcall(_G.RapzhangFakeFriendApply)
 
+-- Hot-reload safety: sesi lama mungkin masih memasang wrapper MBCT pada
+-- FastTick. Netralkan agar tidak menimpa cache hitbox yang baru.
+if _G.RapzhangMBCrosshair then
+  pcall(function()
+    _G.RapzhangMBCrosshair.Tick = function() end
+    _G.RapzhangMBCrosshair.ForceRestore = function() end
+  end)
+end
+
 -- ============================================================================
--- [MAGIC BULLET ENHANCEMENT PACK] — ZanLUAMaker
--- 1. Ignore Knock toggle untuk Magic Bullet
--- 2. Jitter Scale (scale acak ±15%)
--- 3. Crosshair-Triggered (aktif hanya saat crosshair on target)
--- 4. Auto cleanup saat target mati & keluar match
--- TIDAK menyentuh Bullet Track
+-- [HEADSHOT FEATURE] — ported from premium.lua
+-- 10x head damage, 0.1x body damage, 5x head/neck hitbox.
+-- Runs on its own 1s ticker so it works even when ESP is OFF.
 -- ============================================================================
 do
-
-  _G.RapzhangConfig = _G.RapzhangConfig or {}
-  if _G.RapzhangConfig.MagicIgnoreKnock == nil then
-    _G.RapzhangConfig.MagicIgnoreKnock = false
-  end
-
-  _G.AK_JitterPercent = _G.AK_JitterPercent or 15
-
-  _G.AK_GetJitteredScale = function(baseScale)
-    local jitterRange = (_G.AK_JitterPercent or 15) / 100.0
-    local jitter = 1.0 + (math.random() * 2 - 1) * jitterRange
-    local result = baseScale * jitter
-    if result < 1.0 then result = 1.0 end
-    return result
-  end
-
-  local MBCT = _G.RapzhangMBCrosshair or {}
-  _G.RapzhangMBCrosshair = MBCT
-
-  MBCT.Config = {
-    CrosshairRadiusPx  = 80,
-    MaxDistance        = 30000,
-    RequireLineOfSight = true,
-    MinActiveDuration  = 0.3,
-    MaxActiveDuration  = 2.0,
-    ReapplyCooldown    = 0.15,
-    JitterPercent      = 15,
+  local HEADSHOT = {
+    HeadScale = 5.0,
+    HeadMultiplier = 10,
+    BodyMultiplier = 0.1,
+    Interval = 1.0,
+    InitialDelay = 2.0,
+    MaxWeaponRefs = 24,
   }
+  _G.RapzhangHeadshotConfig = HEADSHOT
+  _G.RapzhangHeadshotWeaponRefs = _G.RapzhangHeadshotWeaponRefs or {}
 
-  MBCT._activeTarget  = nil
-  MBCT._activeMeshKey = nil
-  MBCT._appliedAt     = 0
-  MBCT._lastReapplyAt = 0
-  MBCT._origCache     = {}
-
-  local function mbct_getViewport()
-    local vw, vh = 1920, 1080
-    pcall(function()
-      local ui = require("client.common.ui_util")
-      if ui and ui.GetViewportSize then
-        local size = ui.GetViewportSize()
-        if size and size.X and size.Y then vw, vh = size.X, size.Y end
-      end
-    end)
-    return vw, vh
+  local function HeadshotGameplayData()
+    local ok, gd = pcall(require, "GameLua.GameCore.Data.GameplayData")
+    if ok and gd then return gd end
+    return nil
   end
 
-  local function mbct_getCamLoc(pc)
-    local loc = nil
+  function _G.RapzhangApplyHeadshotWeapon()
+    local gd = HeadshotGameplayData()
+    if not gd or type(gd.GetPlayerCharacter) ~= "function" then return end
+
+    local player = nil
+    pcall(function() player = gd.GetPlayerCharacter() end)
+    if not slua.isValid(player) then return end
+
+    local weaponMgr = player.WeaponManagerComponent
+    if not slua.isValid(weaponMgr) then return end
+
+    local weapon = weaponMgr.CurrentWeaponReplicated
+    if not slua.isValid(weapon) then return end
+
+    local shoot = weapon.ShootWeaponEntityComp
+    if not slua.isValid(shoot) then return end
+
+    local refs = _G.RapzhangHeadshotWeaponRefs
+    local id = tostring(shoot)
+    local entry = nil
+    for i = 1, #refs do
+      if refs[i].id == id then entry = refs[i] break end
+    end
+
+    if not entry then
+      local origHead, origBody = 1.0, 1.0
+      pcall(function() origHead = tonumber(shoot.HeadDamageMultiplier) or 1.0 end)
+      pcall(function() origBody = tonumber(shoot.BodyDamageMultiplier) or 1.0 end)
+      if origHead <= 0 or origHead == HEADSHOT.HeadMultiplier then origHead = 1.0 end
+      if origBody <= 0 or origBody == HEADSHOT.BodyMultiplier then origBody = 1.0 end
+      entry = { id = id, comp = shoot, head = origHead, body = origBody }
+      refs[#refs + 1] = entry
+      if #refs > HEADSHOT.MaxWeaponRefs then table.remove(refs, 1) end
+    end
+    entry.comp = shoot
+
     pcall(function()
-      local gs = import("GameplayStatics")
-      if gs and gs.GetPlayerCameraManager then
-        local cm = gs.GetPlayerCameraManager(pc, 0)
-        if cm and slua.isValid(cm) then loc = cm:GetCameraLocation() end
+      if type(shoot.SetHeadDamageMultiplier) == "function" then
+        shoot:SetHeadDamageMultiplier(HEADSHOT.HeadMultiplier)
+      end
+      if shoot.HeadDamageMultiplier ~= nil then
+        shoot.HeadDamageMultiplier = HEADSHOT.HeadMultiplier
+      end
+      if type(shoot.SetBodyDamageMultiplier) == "function" then
+        shoot:SetBodyDamageMultiplier(HEADSHOT.BodyMultiplier)
+      end
+      if shoot.BodyDamageMultiplier ~= nil then
+        shoot.BodyDamageMultiplier = HEADSHOT.BodyMultiplier
       end
     end)
-    return loc
   end
 
-  local function mbct_getBonePos(target, boneName)
-    local pos = nil
-    pcall(function()
-      if type(target.GetBonePos) == "function" then
-        pos = target:GetBonePos(boneName, {X=0, Y=0, Z=0})
+  function _G.RapzhangRestoreHeadshotWeapons()
+    local refs = _G.RapzhangHeadshotWeaponRefs or {}
+    for i = #refs, 1, -1 do
+      local entry = refs[i]
+      refs[i] = nil
+      if entry and entry.comp and slua.isValid(entry.comp) then
+        pcall(function()
+          local c = entry.comp
+          if type(c.SetHeadDamageMultiplier) == "function" then c:SetHeadDamageMultiplier(entry.head) end
+          if c.HeadDamageMultiplier ~= nil then c.HeadDamageMultiplier = entry.head end
+          if type(c.SetBodyDamageMultiplier) == "function" then c:SetBodyDamageMultiplier(entry.body) end
+          if c.BodyDamageMultiplier ~= nil then c.BodyDamageMultiplier = entry.body end
+        end)
       end
-      if not pos and type(target.GetSocketLocation) == "function" then
-        pos = target:GetSocketLocation(boneName)
-      end
-    end)
-    return pos
+    end
   end
 
-  local function mbct_isKnocked(target)
-    if not target then return false end
-    local knocked = false
-    pcall(function()
-      if target.HealthStatus == 1 then knocked = true end
-      if not knocked and type(target.IsNearDeath) == "function" then
-        knocked = target:IsNearDeath() == true
-      end
-      if not knocked and type(target.IsKnocked) == "function" then
-        knocked = target:IsKnocked() == true
-      end
-    end)
-    return knocked
-  end
+  local function ApplyHeadshotHitbox()
+    local hash, head, body, legs = _G.RapzhangGetHitboxScale(true)
+    if hash == "OFF" or not _G.RapzhangApplyHitbox then return end
 
-  local function mbct_isCrosshairOnTarget(pc, target, vw, vh)
-    if not slua.isValid(target) or not slua.isValid(pc) then return false end
+    local gd = HeadshotGameplayData()
+    if not gd then return end
 
     local localPlayer = nil
-    pcall(function()
-      local GDP = require("GameLua.GameCore.Data.GameplayData")
-      localPlayer = GDP and GDP.GetPlayerCharacter()
-    end)
-    if slua.isValid(localPlayer) and localPlayer.GetDistanceTo then
-      local dist = localPlayer:GetDistanceTo(target) or 0
-      if dist > MBCT.Config.MaxDistance then return false end
-    end
+    pcall(function() localPlayer = gd.GetPlayerCharacter() end)
+    if not slua.isValid(localPlayer) then return end
 
-    local headPos  = mbct_getBonePos(target, "head")
-    local chestPos = mbct_getBonePos(target, "spine_03")
-    local aimPos   = headPos or chestPos
-    if not aimPos then
+    local allCharacters = {}
+    pcall(function()
+      if type(gd.GetAllPlayerCharacters) == "function" then
+        allCharacters = gd.GetAllPlayerCharacters() or {}
+      end
+    end)
+    if #allCharacters == 0 then
       pcall(function()
-        if type(target.K2_GetActorLocation) == "function" then
-          aimPos = target:K2_GetActorLocation()
-          if aimPos then aimPos.Z = aimPos.Z + 50 end
+        if Game and type(Game.GetAllPlayerPawns) == "function" then
+          allCharacters = Game:GetAllPlayerPawns() or {}
         end
       end)
     end
-    if not aimPos then return false end
 
-    local screen = nil
-    pcall(function()
-      local V = import("Vector2D")
-      if V then screen = V() end
-    end)
-    if not screen then return false end
-
-    local ok = false
-    pcall(function()
-      ok = pc:ProjectWorldLocationToScreen(aimPos, screen, false)
-    end)
-    if not ok then return false end
-
-    local dx = screen.X - vw * 0.5
-    local dy = screen.Y - vh * 0.5
-    local dist = math.sqrt(dx*dx + dy*dy)
-    if dist > MBCT.Config.CrosshairRadiusPx then return false end
-
-    if MBCT.Config.RequireLineOfSight then
-      local camLoc = mbct_getCamLoc(pc)
-      if camLoc then
-        local bVisible = false
+    for _, character in pairs(allCharacters) do
+      if slua.isValid(character) and character ~= localPlayer and character.TeamID ~= localPlayer.TeamID then
+        local mesh = nil
         pcall(function()
-          local ksl = import("KismetSystemLibrary")
-          if ksl and ksl.LineTraceSingle then
-            local hr = nil
-            pcall(function()
-              local HR = import("HitResult")
-              hr = HR and HR() or {}
-            end)
-            local bHit = ksl.LineTraceSingle(pc, camLoc, aimPos, 0, false, nil, 0, hr, true)
-            if not bHit then
-              bVisible = true
-            else
-              local hitActor = nil
-              if type(hr.GetActor) == "function" then hitActor = hr:GetActor() end
-              if hitActor == target then bVisible = true end
-            end
-          else
-            bVisible = true
-          end
+          mesh = character.Mesh or (type(character.getAvatarComponent2) == "function" and character:getAvatarComponent2() or nil)
         end)
-        if not bVisible then return false end
+        if slua.isValid(mesh) then
+          local stateKey = nil
+          pcall(function() stateKey = GetSafeEnemyKey(character) end)
+          pcall(_G.RapzhangApplyHitbox, mesh, hash, head, body, legs, stateKey)
+        end
       end
     end
-
-    return true
   end
 
-  local function mbct_findCrosshairTarget(pc, vw, vh)
-    local GDP = require("GameLua.GameCore.Data.GameplayData")
-    if not GDP then return nil end
-    local localPlayer = GDP.GetPlayerCharacter()
-    if not slua.isValid(localPlayer) then return nil end
-
-    local allChars = {}
-    pcall(function()
-      if GDP.GetAllPlayerCharacters then
-        allChars = GDP.GetAllPlayerCharacters() or {}
-      end
-    end)
-
-    local best     = nil
-    local bestDist = MBCT.Config.CrosshairRadiusPx
-
-    for _, enemy in pairs(allChars) do
-      if slua.isValid(enemy) and enemy ~= localPlayer then
-        local isEnemy = false
-        pcall(function() isEnemy = enemy.TeamID ~= localPlayer.TeamID end)
-
-        if isEnemy then
-          local alive = true
-          pcall(function()
-            if type(enemy.IsAlive) == "function" then
-              alive = enemy:IsAlive()
-            elseif enemy.Health then
-              alive = enemy.Health > 0
-            end
-          end)
-
-          if alive then
-            local skipKnocked = false
-            if _G.RapzhangConfig.MagicIgnoreKnock == true then
-              skipKnocked = mbct_isKnocked(enemy)
-            end
-
-            if not skipKnocked then
-              if mbct_isCrosshairOnTarget(pc, enemy, vw, vh) then
-                local headPos = mbct_getBonePos(enemy, "head")
-                if headPos then
-                  local screen = nil
-                  pcall(function()
-                    local V = import("Vector2D")
-                    if V then screen = V() end
-                  end)
-                  if screen then
-                    local ok = false
-                    pcall(function()
-                      ok = pc:ProjectWorldLocationToScreen(headPos, screen, false)
-                    end)
-                    if ok then
-                      local dx = screen.X - vw * 0.5
-                      local dy = screen.Y - vh * 0.5
-                      local d = math.sqrt(dx*dx + dy*dy)
-                      if d < bestDist then
-                        bestDist = d
-                        best = enemy
-                      end
-                    end
-                  end
-                end
-              end
-            end
-          end
-        end
-      end
+  -- ON  : clear stale cache, apply hitbox + weapon multipliers immediately.
+  -- OFF : clear cache/restore hitboxes and restore weapon multipliers.
+  function _G.RapzhangHeadshotRefresh()
+    local on = _G.RapzhangConfig and _G.RapzhangConfig.Headshot == true
+    if _G.RapzhangHitboxConfigChanged then
+      pcall(_G.RapzhangHitboxConfigChanged, true)
     end
-
-    return best
+    if on then
+      pcall(ApplyHeadshotHitbox)
+      pcall(_G.RapzhangApplyHeadshotWeapon)
+    else
+      pcall(_G.RapzhangRestoreHeadshotWeapons)
+    end
+    _G.RapzhangHeadshotActive = on
   end
 
-  local function mbct_applyToTarget(enemy)
-    if not slua.isValid(enemy) then return false end
-
-    local data = _G.RapzhangState and _G.RapzhangState.CustomTextData or {}
-    local cfgH = tonumber(data.MagicHead) or 1.0
-    local cfgB = tonumber(data.MagicBody) or 1.0
-    local cfgL = tonumber(data.MagicLegs) or 1.0
-
-    local mesh = nil
-    pcall(function()
-      mesh = enemy.Mesh
-      if not mesh and type(enemy.getAvatarComponent2) == "function" then
-        mesh = enemy:getAvatarComponent2()
+  local function HeadshotTick()
+    if _G.RapzhangConfig and _G.RapzhangConfig.Headshot == true then
+      local gd = HeadshotGameplayData()
+      local inMatch = false
+      if gd and IsGameplayMatchActive then
+        pcall(function() inMatch = IsGameplayMatchActive(gd) end)
       end
-    end)
-    if not slua.isValid(mesh) then return false end
-
-    local pa = mesh.PhysicsAssetOverride
-    if not slua.isValid(pa) and mesh.SkeletalMesh then
-      pa = mesh.SkeletalMesh.PhysicsAsset
-    end
-    if not slua.isValid(pa) or not pa.SkeletalBodySetups then return false end
-
-    local meshKey = tostring(mesh)
-    if MBCT._activeMeshKey == meshKey then return true end
-
-    MBCT._origCache[meshKey] = MBCT._origCache[meshKey] or {}
-
-    local setups = pa.SkeletalBodySetups
-    local count  = math.min(setups:Num() or 0, 50)
-
-    for i = 0, count - 1 do
-      local setup = setups:Get(i)
-      if slua.isValid(setup) then
-        local boneName = string.lower(tostring(setup.BoneName or ""))
-        local requested = nil
-
-        if boneName:find("head", 1, true) or boneName:find("neck", 1, true) then
-          requested = cfgH
-        elseif boneName:find("spine", 1, true) or boneName:find("pelvis", 1, true) then
-          requested = cfgB
-        elseif boneName:find("thigh", 1, true) or boneName:find("calf", 1, true) or boneName:find("foot", 1, true) then
-          requested = cfgL
-        end
-
-        if requested and requested > 1.0 then
-          local baseScale = 1.0 + ((requested - 1.0) * 0.35)
-          local scale
-          if _G.AK_GetJitteredScale then
-            scale = _G.AK_GetJitteredScale(baseScale)
-          else
-            local jr = (MBCT.Config.JitterPercent or 15) / 100.0
-            local j  = 1.0 + (math.random() * 2 - 1) * jr
-            scale = baseScale * j
-            if scale < 1.0 then scale = 1.0 end
-          end
-
-          local geom = setup.AggGeom
-          if geom and not MBCT._origCache[meshKey][i] then
-            MBCT._origCache[meshKey][i] = {
-              BoxElems    = geom.BoxElems,
-              SphereElems = geom.SphereElems,
-              SphylElems  = geom.SphylElems,
-            }
-          end
-
-          pcall(function()
-            if geom.BoxElems then
-              for j = 0, (geom.BoxElems:Num() or 0) - 1 do
-                local e = geom.BoxElems:Get(j)
-                if e then
-                  e.X = e.X * scale
-                  e.Y = e.Y * scale
-                  e.Z = e.Z * scale
-                end
-              end
-            end
-            if geom.SphereElems then
-              for j = 0, (geom.SphereElems:Num() or 0) - 1 do
-                local e = geom.SphereElems:Get(j)
-                if e then e.Radius = e.Radius * scale end
-              end
-            end
-            if geom.SphylElems then
-              for j = 0, (geom.SphylElems:Num() or 0) - 1 do
-                local e = geom.SphylElems:Get(j)
-                if e then
-                  e.Radius = e.Radius * scale
-                  e.Length = e.Length * scale
-                end
-              end
-            end
-          end)
-        end
-      end
-    end
-
-    pcall(function()
-      if mesh.SetPhysicsAsset then mesh:SetPhysicsAsset(pa) end
-      mesh.PhysicsAssetOverride = pa
-    end)
-
-    MBCT._activeTarget  = enemy
-    MBCT._activeMeshKey = meshKey
-    MBCT._appliedAt     = os.clock()
-    return true
-  end
-
-  local function mbct_restoreTarget()
-    if not MBCT._activeTarget then return end
-
-    local enemy   = MBCT._activeTarget
-    local meshKey = MBCT._activeMeshKey
-
-    if slua.isValid(enemy) then
-      local mesh = nil
-      pcall(function()
-        mesh = enemy.Mesh
-        if not mesh and type(enemy.getAvatarComponent2) == "function" then
-          mesh = enemy:getAvatarComponent2()
-        end
-      end)
-      if slua.isValid(mesh) then
-        local pa = mesh.PhysicsAssetOverride
-        if not slua.isValid(pa) and mesh.SkeletalMesh then
-          pa = mesh.SkeletalMesh.PhysicsAsset
-        end
-        if slua.isValid(pa) then
-          local setups = pa.SkeletalBodySetups
-          local count  = math.min(setups:Num() or 0, 50)
-          local cache  = MBCT._origCache[meshKey] or {}
-          for i = 0, count - 1 do
-            local setup = setups:Get(i)
-            local orig  = cache[i]
-            if slua.isValid(setup) and orig then
-              local geom = setup.AggGeom
-              if geom then
-                if orig.BoxElems    then geom.BoxElems    = orig.BoxElems end
-                if orig.SphereElems then geom.SphereElems = orig.SphereElems end
-                if orig.SphylElems  then geom.SphylElems  = orig.SphylElems end
-              end
-            end
-          end
-          pcall(function()
-            if mesh.SetPhysicsAsset then mesh:SetPhysicsAsset(pa) end
-          end)
-        end
-      end
-    end
-
-    MBCT._origCache[meshKey] = nil
-    MBCT._activeTarget  = nil
-    MBCT._activeMeshKey = nil
-    MBCT._appliedAt     = 0
-  end
-
-  function MBCT.Tick()
-    local cfg = _G.RapzhangConfig or {}
-    if cfg.CustomMagicBullet ~= true then
-      if MBCT._activeTarget then pcall(mbct_restoreTarget) end
-      return
-    end
-
-    local pc = nil
-    pcall(function()
-      local GDP = require("GameLua.GameCore.Data.GameplayData")
-      pc = GDP and GDP.GetPlayerController()
-    end)
-    if not slua.isValid(pc) then return end
-
-    local vw, vh = mbct_getViewport()
-    local crosshairTarget = mbct_findCrosshairTarget(pc, vw, vh)
-
-    if crosshairTarget ~= MBCT._activeTarget then
-      if MBCT._activeTarget then pcall(mbct_restoreTarget) end
-      if crosshairTarget then
-        local now = os.clock()
-        if now - MBCT._lastReapplyAt >= MBCT.Config.ReapplyCooldown then
-          MBCT._lastReapplyAt = now
-          pcall(mbct_applyToTarget, crosshairTarget)
-        end
+      if inMatch then
+        pcall(ApplyHeadshotHitbox)
+        pcall(_G.RapzhangApplyHeadshotWeapon)
+      else
+        pcall(_G.RapzhangRestoreHeadshotWeapons)
       end
     else
-      if MBCT._activeTarget then
-        local elapsed = os.clock() - MBCT._appliedAt
-        if elapsed > MBCT.Config.MaxActiveDuration then
-          pcall(mbct_restoreTarget)
-        end
-      end
+      pcall(_G.RapzhangRestoreHeadshotWeapons)
+    end
+
+    local okTicker, ticker = pcall(require, "common.time_ticker")
+    if okTicker and ticker and type(ticker.AddTimerOnce) == "function" then
+      pcall(ticker.AddTimerOnce, HEADSHOT.Interval, HeadshotTick)
     end
   end
+  _G.RapzhangHeadshotTick = HeadshotTick
 
-  function MBCT.ForceRestore()
-    pcall(mbct_restoreTarget)
+  -- Delay the first run so GameplayData/player pawns are ready.
+  local okTicker, ticker = pcall(require, "common.time_ticker")
+  if okTicker and ticker and type(ticker.AddTimerOnce) == "function" then
+    pcall(ticker.AddTimerOnce, HEADSHOT.InitialDelay, HeadshotTick)
   end
-
-  function MBCT.GetActiveTarget()
-    return MBCT._activeTarget
-  end
-
-  local function mbct_injectMenu()
-    pcall(function()
-      local SettingPageDefine = require("client.logic.NewSetting.SettingPageDefine")
-      if not SettingPageDefine or not SettingPageDefine.ModMenu then return end
-
-      local AliasMap = require("client.slua.umg.NewSetting.Item.AliasMap")
-      if not AliasMap then return end
-
-      for _, cat in ipairs(SettingPageDefine.ModMenu.Category or {}) do
-        if cat.Key == "Cat_Bullet" and cat.Stack then
-          local exists = false
-          for _, item in ipairs(cat.Stack) do
-            if item.Key == "ModMenu_Magic_IgnoreKnock" then exists = true break end
-          end
-          if exists then return end
-
-          local insertAt = #cat.Stack + 1
-          for i, item in ipairs(cat.Stack) do
-            if item.Key == "ModMenu_Magic_Ex" then
-              insertAt = i + 1
-              break
-            end
-          end
-
-          table.insert(cat.Stack, insertAt, {
-            Key = "ModMenu_Magic_IgnoreKnock",
-            UI = AliasMap.Switcher,
-            Text = "   Ignore Knocked",
-            ExpandHandle = "ModMenu_Magic_Ex",
-            GetFunc = function() return _G.RapzhangConfig.MagicIgnoreKnock == true end,
-            SetFunc = function(_, v) _G.RapzhangConfig.MagicIgnoreKnock = (v == true); return true end,
-          })
-          print("[MB PACK] Menu item IgnoreKnock injected")
-        end
-      end
-    end)
-  end
-
-  pcall(mbct_injectMenu)
-
-  if not _G.__mbctMenuRetryScheduled then
-    _G.__mbctMenuRetryScheduled = true
-    local function retryLoop()
-      pcall(mbct_injectMenu)
-      pcall(function()
-        local ticker = require("common.time_ticker")
-        if ticker and ticker.AddTimerOnce then
-          ticker.AddTimerOnce(2.0, retryLoop)
-        end
-      end)
-    end
-    pcall(function()
-      local ticker = require("common.time_ticker")
-      if ticker and ticker.AddTimerOnce then
-        ticker.AddTimerOnce(2.0, retryLoop)
-      end
-    end)
-  end
-
-  if not _G.__mbctFastTickHooked then
-    _G.__mbctFastTickHooked = true
-    local _origFastTick = _G.FastTick
-    if type(_origFastTick) == "function" then
-      local _wrapped = function(...)
-        if _origFastTick then _origFastTick(...) end
-        pcall(function()
-          if MBCT and MBCT.Tick then MBCT.Tick() end
-        end)
-      end
-      _G.FastTick = _wrapped
-    end
-  end
-
-  if not _G.__mbctCleanupHooked then
-    _G.__mbctCleanupHooked = true
-    local _origClear = _G.AK_ClearMagicBulletCache
-    _G.AK_ClearMagicBulletCache = function()
-      pcall(function()
-        if MBCT and MBCT.ForceRestore then MBCT.ForceRestore() end
-      end)
-      if _origClear then pcall(_origClear) end
-    end
-  end
-
-  print("[MB PACK] Magic Bullet Enhancement Pack loaded")
 end
--- ============================================================================
--- [END MAGIC BULLET ENHANCEMENT PACK]
 
 -- NO-BRPLAYER MODE: payload dijalankan sebagai external module.
 -- Tidak membuat atau mendaftarkan CBRPlayerCharacterBase.
