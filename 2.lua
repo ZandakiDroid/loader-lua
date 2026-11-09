@@ -11721,15 +11721,39 @@ _G.RapzhangAutoTextFeedback = (function()
     return clip(plain, 3800)
   end
 
+  -- Beberapa host memuat mod lewat environment proxy (__index). Global game
+  -- seperti DataMgr/LocUtil terlihat dari chunk, tetapi rawget(_G, ...) bisa
+  -- nil. Cek rawget, indeks _G, lalu global chunk supaya season_id tidak
+  -- jatuh ke SeasonNumber battle result.
+  local function hostValue(name)
+    local value = rawget(_G, name)
+    if value ~= nil then return value end
+    local ok, exposed = pcall(function() return _G[name] end)
+    if ok and exposed ~= nil then return exposed end
+    if name == "DataMgr" then
+      ok, exposed = pcall(function() return DataMgr end)
+    elseif name == "LocUtil" then
+      ok, exposed = pcall(function() return LocUtil end)
+    elseif name == "FuncUtil" then
+      ok, exposed = pcall(function() return FuncUtil end)
+    elseif name == "CDataTable" then
+      ok, exposed = pcall(function() return CDataTable end)
+    end
+    if ok then return exposed end
+    return nil
+  end
+
   local function tableData(name, id)
     if id == nil then return nil end
+    local dt = hostValue("CDataTable")
+    if not (dt and type(dt.GetTableData) == "function") then return nil end
     local ok, value = pcall(function()
-      return CDataTable and CDataTable.GetTableData and CDataTable.GetTableData(name, id)
+      return dt.GetTableData(name, id)
     end)
     if ok and value then return value end
     if type(id) == "number" then
       ok, value = pcall(function()
-        return CDataTable and CDataTable.GetTableData and CDataTable.GetTableData(name, tostring(id))
+        return dt.GetTableData(name, tostring(id))
       end)
       if ok and value then return value end
     end
@@ -11738,7 +11762,11 @@ _G.RapzhangAutoTextFeedback = (function()
 
   local function locStr(id)
     if id == nil or id == "" then return nil end
-    local loc = rawget(_G, "LocUtil") or mod("common.loc_util")
+    local loc = hostValue("LocUtil")
+    if not loc then
+      local ok, lib = pcall(mod, "common.loc_util")
+      if ok then loc = lib end
+    end
     if loc and type(loc.GetLocalizeResStr) == "function" then
       local ok, value = pcall(loc.GetLocalizeResStr, tonumber(id) or id)
       if ok and value ~= nil and tostring(value) ~= "" then
@@ -11749,71 +11777,85 @@ _G.RapzhangAutoTextFeedback = (function()
   end
 
   local function rankSeason()
-    local season = tonumber(_G.DataMgr and _G.DataMgr.season_id)
+    local dm = hostValue("DataMgr")
+    local season = tonumber(dm and dm.season_id)
     if season and season > 0 then return season end
     return nil
   end
 
-  -- CycleName adalah label season yang dipakai UI rank in-game (mis. "32"),
-  -- SeasonName dipakai kartu profil, SeasonNameNew dipakai banner rank baru.
-  -- Semuanya dikumpulkan; CycleName menang karena paling dekat dengan teks
-  -- "Season 32" yang dilihat pemain. Kalau tidak ada, kandidat yang memuat
-  -- angka season aktif dipilih supaya field lama/baru tidak saling menimpa.
-  local SEASON_NAME_FIELDS = { "CycleName", "SeasonName", "SeasonNameNew", "ShowName", "Name" }
+  -- SeasonInfo memakai beberapa field dengan arti berbeda:
+  --   CycleName     -> identitas season yang dipakai UI rank ("32", "S32",
+  --                    "C10S32"); angka setelah S adalah nomor season.
+  --   SeasonNameNew -> banner rank baru.
+  --   SeasonName    -> kartu profil / teks season lama.
+  -- Field lama dan baru bisa membawa nomor internal yang berbeda. Karena
+  -- bullet sudah berlabel "Season", yang dibutuhkan hanya nomor season yang
+  -- tampil di game. Ekstrak dari CycleName lebih dulu, lalu field nama.
+  local SEASON_TEXT_FIELDS = { "SeasonNameNew", "SeasonName", "ShowName", "Name" }
+
+  local function cleanSeasonText(value)
+    if value == nil then return nil end
+    local ok, text = pcall(tostring, value)
+    if not ok or text == nil then return nil end
+    text = text:match("^%s*(.-)%s*$") or text
+    if text == "" or text == "None" or text == "nil" or text == "NULL" then return nil end
+    return text
+  end
+
+  local function seasonNumberFromText(text)
+    if not text then return nil end
+    text = tostring(text):match("^%s*(.-)%s*$") or tostring(text)
+    if text == "" then return nil end
+    -- "C10S32" / "C9 S27": angka setelah S adalah nomor season.
+    local cycle = text:match("[Cc]%s*%d+%s*[Ss]%s*(%d+)")
+    if cycle then return tonumber(cycle) end
+    -- "S32", "SS32", "Season 32", "Musim 32".
+    local prefixed = text:match("^%s*[Ss]%s*(%d+)%s*$")
+      or text:match("^%s*[Ss][Ss]%s*(%d+)%s*$")
+      or text:match("^%s*[Ss][Ee][Aa][Ss][Oo][Nn]%s*[:#%-–—]?%s*(%d+)")
+      or text:match("^%s*[Mm][Uu][Ss][Ii][Mm]%s*[:#%-–—]?%s*(%d+)")
+    if prefixed then return tonumber(prefixed) end
+    -- "32" polos.
+    local plain = text:match("^%s*(%d+)%s*$")
+    if plain then return tonumber(plain) end
+    -- "第32赛季".
+    local zh = text:match("%f[%d](%d+)%s*赛季")
+    if zh then return tonumber(zh) end
+    return nil
+  end
+
+  local function seasonFieldText(cfg, key)
+    local text = cleanSeasonText(cfg[key])
+    if not text then return nil end
+    -- Angka 4+ digit adalah localization id, bukan nomor season.
+    if text:match("^%d+$") and #text >= 4 then
+      return cleanSeasonText(locStr(text))
+    end
+    return text
+  end
 
   local function seasonNameFromCfg(cfg, season)
     if type(cfg) ~= "table" then return nil end
-    local names = {}
-    for _, key in ipairs(SEASON_NAME_FIELDS) do
-      local value = cfg[key]
-      if value ~= nil then
-        local text = tostring(value):match("^%s*(.-)%s*$")
-        if text == "" then
-          -- kosong: lewati
-        elseif text:match("^%d+$") then
-          if #text >= 4 then
-            -- Field numerik panjang adalah localization id, bukan nama.
-            local localized = locStr(text)
-            if localized then
-              localized = tostring(localized):match("^%s*(.-)%s*$")
-              if localized ~= "" then names[#names + 1] = { key = key, text = localized } end
-            end
-          else
-            -- Angka pendek adalah nomor season/cycle, bukan localization id.
-            names[#names + 1] = { key = key, text = text }
-          end
-        else
-          names[#names + 1] = { key = key, text = text }
-        end
-      end
-    end
-    if #names == 0 then return nil end
 
-    -- CycleName hanya dipakai kalau bentuknya nomor season ("32", "S32",
-    -- "Season 32"). Kalau isinya label cycle panjang ("C9S27"), biarkan
-    -- kandidat nama season yang dipakai.
-    local function looksSeasonNumber(text)
-      return text:match("^%s*[Ss]?%s*%d+%s*$") ~= nil
-        or text:match("^%s*[Ss][Ee][Aa][Ss][Oo][Nn]%s*%d+%s*$") ~= nil
-    end
-    local chosen = nil
-    for _, item in ipairs(names) do
-      if item.key == "CycleName" and looksSeasonNumber(item.text) then
-        chosen = item.text
-        break
-      end
-    end
-    local id = tonumber(season)
-    if not chosen and id and id > 0 then
-      local pattern = "%f[%d]" .. tostring(id) .. "%f[%D]"
-      for _, item in ipairs(names) do
-        if item.text:find(pattern) then chosen = item.text break end
-      end
-    end
-    chosen = chosen or names[1].text
+    local cycleText = seasonFieldText(cfg, "CycleName")
+    local cycleNumber = seasonNumberFromText(cycleText)
+    if cycleNumber then return tostring(cycleNumber) end
 
-    -- Label bullet sudah "Season"; buang prefix "Season"/"S" dari nilainya
-    -- agar tidak menjadi "Season: Season 51".
+    for _, key in ipairs(SEASON_TEXT_FIELDS) do
+      local number = seasonNumberFromText(seasonFieldText(cfg, key))
+      if number then return tostring(number) end
+    end
+
+    -- Tidak ada angka season: pakai label apa adanya, tetapi buang prefix
+    -- "Season"/"S" agar bullet tidak menjadi "Season: Season <nama>".
+    local chosen = cycleText
+    if not chosen then
+      for _, key in ipairs(SEASON_TEXT_FIELDS) do
+        chosen = seasonFieldText(cfg, key)
+        if chosen then break end
+      end
+    end
+    if not chosen then return nil end
     local stripped = chosen:gsub("^[Ss][Ee][Aa][Ss][Oo][Nn]%s*[:%-–—]?%s*", "")
     stripped = stripped:match("^%s*(.-)%s*$") or stripped
     stripped = stripped:gsub("^[Ss]%s*(%d+)$", "%1")
@@ -11821,8 +11863,8 @@ _G.RapzhangAutoTextFeedback = (function()
     return chosen
   end
 
-  -- Nama season untuk laporan. Fallback hanya angka id karena bullet sudah
-  -- memberi label "Season"; tidak pernah menghasilkan "Season: Season <id>".
+  -- Nama season untuk laporan. fallback terakhir hanya angka id karena
+  -- bullet sudah memberi label "Season".
   local function seasonLabel(season)
     local n = tonumber(season)
     if n == nil or n <= 0 then return nil end
@@ -11834,7 +11876,11 @@ _G.RapzhangAutoTextFeedback = (function()
   local function rankCfg(segment, season)
     local n = tonumber(segment)
     if n == nil or n <= 0 then return nil end
-    local util = rawget(_G, "FuncUtil") or mod("common.func_util")
+    local util = hostValue("FuncUtil")
+    if not util then
+      local ok, lib = pcall(mod, "common.func_util")
+      if ok then util = lib end
+    end
     if util and type(util.GetRankTableData) == "function" then
       local wanted, current = tonumber(season), rankSeason()
       local tries, seen = {}, {}
