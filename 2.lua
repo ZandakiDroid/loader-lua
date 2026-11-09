@@ -11751,40 +11751,81 @@ _G.RapzhangAutoTextFeedback = (function()
     return nil
   end
 
-  local SEASON_NAME_FIELDS = { "SeasonNameNew", "SeasonName", "ShowName", "Name" }
+  -- CycleName adalah label season yang dipakai UI rank in-game (mis. "32"),
+  -- SeasonName dipakai kartu profil, SeasonNameNew dipakai banner rank baru.
+  -- Semuanya dikumpulkan; CycleName menang karena paling dekat dengan teks
+  -- "Season 32" yang dilihat pemain. Kalau tidak ada, kandidat yang memuat
+  -- angka season aktif dipilih supaya field lama/baru tidak saling menimpa.
+  local SEASON_NAME_FIELDS = { "CycleName", "SeasonName", "SeasonNameNew", "ShowName", "Name" }
 
-  local function seasonNameFromCfg(cfg)
+  local function seasonNameFromCfg(cfg, season)
     if type(cfg) ~= "table" then return nil end
+    local names = {}
     for _, key in ipairs(SEASON_NAME_FIELDS) do
       local value = cfg[key]
-      if value ~= nil and tostring(value) ~= "" then
+      if value ~= nil then
         local text = tostring(value):match("^%s*(.-)%s*$")
-        if text ~= "" then
-          if text:match("^%d+$") then
+        if text == "" then
+          -- kosong: lewati
+        elseif text:match("^%d+$") then
+          if #text >= 4 then
             -- Field numerik panjang adalah localization id, bukan nama.
-            if #text >= 4 then
-              local localized = locStr(text)
-              if localized and localized ~= "" then return localized end
+            local localized = locStr(text)
+            if localized then
+              localized = tostring(localized):match("^%s*(.-)%s*$")
+              if localized ~= "" then names[#names + 1] = { key = key, text = localized } end
             end
           else
-            return text
+            -- Angka pendek adalah nomor season/cycle, bukan localization id.
+            names[#names + 1] = { key = key, text = text }
           end
+        else
+          names[#names + 1] = { key = key, text = text }
         end
       end
     end
-    return nil
+    if #names == 0 then return nil end
+
+    -- CycleName hanya dipakai kalau bentuknya nomor season ("32", "S32",
+    -- "Season 32"). Kalau isinya label cycle panjang ("C9S27"), biarkan
+    -- kandidat nama season yang dipakai.
+    local function looksSeasonNumber(text)
+      return text:match("^%s*[Ss]?%s*%d+%s*$") ~= nil
+        or text:match("^%s*[Ss][Ee][Aa][Ss][Oo][Nn]%s*%d+%s*$") ~= nil
+    end
+    local chosen = nil
+    for _, item in ipairs(names) do
+      if item.key == "CycleName" and looksSeasonNumber(item.text) then
+        chosen = item.text
+        break
+      end
+    end
+    local id = tonumber(season)
+    if not chosen and id and id > 0 then
+      local pattern = "%f[%d]" .. tostring(id) .. "%f[%D]"
+      for _, item in ipairs(names) do
+        if item.text:find(pattern) then chosen = item.text break end
+      end
+    end
+    chosen = chosen or names[1].text
+
+    -- Label bullet sudah "Season"; buang prefix "Season"/"S" dari nilainya
+    -- agar tidak menjadi "Season: Season 51".
+    local stripped = chosen:gsub("^[Ss][Ee][Aa][Ss][Oo][Nn]%s*[:%-–—]?%s*", "")
+    stripped = stripped:match("^%s*(.-)%s*$") or stripped
+    stripped = stripped:gsub("^[Ss]%s*(%d+)$", "%1")
+    if stripped ~= "" then return stripped end
+    return chosen
   end
 
-  -- Nama season saat ini dari tabel SeasonInfo. UI season baru memakai
-  -- SeasonNameNew, kartu profil memakai SeasonName. Laporan tidak pernah
-  -- menampilkan angka mentah; fallback hanya "Season <id>" bila nama tidak
-  -- tersedia di build tersebut.
+  -- Nama season untuk laporan. Fallback hanya angka id karena bullet sudah
+  -- memberi label "Season"; tidak pernah menghasilkan "Season: Season <id>".
   local function seasonLabel(season)
     local n = tonumber(season)
     if n == nil or n <= 0 then return nil end
-    local name = seasonNameFromCfg(tableData("SeasonInfo", n))
+    local name = seasonNameFromCfg(tableData("SeasonInfo", n), n)
     if name then return name end
-    return "Season " .. tostring(n)
+    return tostring(n)
   end
 
   local function rankCfg(segment, season)
@@ -13065,9 +13106,13 @@ _G.RapzhangAutoTextFeedback = (function()
     end
     rating = rating or {}
 
+    -- DataMgr.season_id adalah season yang sedang dipakai client (sumber
+    -- yang sama dengan kartu profil/rank). Field SeasonNumber dari battle
+    -- result bisa membawa nomor lain (internal/server), jadi jangan
+    -- diprioritaskan di atas season client.
     d.season = firstNumber(
-      g(result, "SeasonNumber"), g(result, "seasonNumber"),
-      _G.DataMgr and _G.DataMgr.season_id
+      rankSeason(),
+      g(result, "SeasonNumber"), g(result, "seasonNumber")
     )
     d.seasonName = seasonLabel(d.season)
 
@@ -14581,6 +14626,8 @@ function X3ExtraRuntimeInit()
         "r.DetailMode 2",
     }
     -- Extra resource reduction layered on top of the native VERYSMOOTH Lua path.
+    -- Termasuk bias mip tekstur (Streaming.MipBias/MipMapLODBias), anisotropic
+    -- off, dan streaming boost rendah supaya tekstur ikut benar-benar low.
     -- Deliberately excludes FPS, frame-rate limit, and view-distance variables.
     local SuperDuper_ON = {
         "r.Fog 0",
@@ -14611,6 +14658,13 @@ function X3ExtraRuntimeInit()
         "r.StaticMeshForceLODMaterialBias 2",
         "s.EnableOverrideVerySmoothMaterial 1",
         "r.DisableLensFlareWhenBeginPlay 1",
+        -- Tekstur benar-benar low: mip dipaksa turun, anisotropic dimatikan,
+        -- dan jarak streaming dikurangi. Efeknya tekstur jauh lebih blur
+        -- (hemat bandwidth/RAM) tetapi geometri dan jarak pandang tetap.
+        "r.Streaming.MipBias 2",
+        "r.MipMapLODBias 1",
+        "r.MaxAnisotropy 0",
+        "r.Streaming.Boost 0.5",
     }
     local SuperDuper_OFF = {
         "r.Fog 1",
@@ -14641,6 +14695,10 @@ function X3ExtraRuntimeInit()
         "r.StaticMeshForceLODMaterialBias 0",
         "s.EnableOverrideVerySmoothMaterial 0",
         "r.DisableLensFlareWhenBeginPlay 0",
+        "r.Streaming.MipBias 0",
+        "r.MipMapLODBias 0",
+        "r.MaxAnisotropy 4",
+        "r.Streaming.Boost 1",
     }
     local function ApplySuperDuperCommands(gameInstance, commands)
         if not gameInstance or type(gameInstance.ExecuteCMD) ~= "function" then return end
