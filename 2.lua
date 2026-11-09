@@ -2938,25 +2938,36 @@ ESP.LootCap = 70
 ESP.SweepTTL = 3.0
 ESP.CacheTTL = 30.0
 ESP.LowTickInterval = 0.080
+ESP.AirdropInterval = 0.80
+ESP.GrenadeInterval = 0.45
+ESP.ZoneRingSegments = 20
+ESP.GrenadeRingSegments = 18
 
 function ESP.SetLowEnd(on)
   on = on == true
   ESP.LowEnd = on
-  CFG.MaxTracked = on and 16 or 24
-  CFG.VisInterval = on and 1.00 or 0.50
-  ESP.ScanInterval = on and 0.72 or 0.50
-  ESP.TransformInterval = on and 1.00 or 0.75
-  ESP.LootInterval = on and 0.90 or 0.55
-  ESP.VehInterval = on and 0.90 or 0.45
-  ESP.SquadInterval = on and 1.20 or 0.80
-  ESP.LootCap = on and 40 or 70
-  ESP.SweepTTL = on and 1.25 or 3.0
-  ESP.CacheTTL = on and 10.0 or 30.0
-  ESP.LowTickInterval = on and 0.120 or 0.080
+  -- Profil low-end lebih agresif: target, scan, dan widget dikurangi lagi
+  -- supaya HP kelas bawah tidak memproses puluhan label/garis tiap tick.
+  CFG.MaxTracked = on and 12 or 24
+  CFG.VisInterval = on and 2.00 or 0.50
+  ESP.ScanInterval = on and 0.90 or 0.50
+  ESP.TransformInterval = on and 1.20 or 0.75
+  ESP.LootInterval = on and 1.10 or 0.55
+  ESP.VehInterval = on and 1.10 or 0.45
+  ESP.SquadInterval = on and 1.50 or 0.80
+  ESP.LootCap = on and 24 or 70
+  ESP.SweepTTL = on and 0.90 or 3.0
+  ESP.CacheTTL = on and 8.0 or 30.0
+  ESP.LowTickInterval = on and 0.150 or 0.080
+  ESP.AirdropInterval = on and 1.20 or 0.80
+  ESP.GrenadeInterval = on and 0.70 or 0.45
+  ESP.ZoneRingSegments = on and 12 or 20
+  ESP.GrenadeRingSegments = on and 12 or 18
   if on then
     -- Buang label/cache basi saat mode diaktifkan supaya penghematan
-    -- langsung terasa, bukan menunggu TTL 3 detik.
+    -- langsung terasa, bukan menunggu TTL/scan berikutnya.
     pcall(function()
+      if ESP.Adv and ESP.Adv.TrimLootCache then ESP.Adv.TrimLootCache(ESP.LootCap) end
       if ESP.Adv and ESP.Adv.SyncLootLabels then ESP.Adv.SyncLootLabels() end
       if ESP.Extra and ESP.Extra.Sweep then ESP.Extra.Sweep(ESP.Now(), ESP.SweepTTL) end
     end)
@@ -3645,11 +3656,17 @@ function ESP.DrawLine(data, x1, y1, x2, y2, thickness)
     end
     return true
   end
+  local wasHidden = data.hidden == true
   local ok = pcall(function()
     data.Slot:SetPosition(ESPV2(x1, y1 - thickness * 0.5))
     data.Slot:SetSize(ESPV2(len, thickness))
     data.Widget:SetRenderAngle(angle)
-    data.Widget:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
+    -- Jangan panggil SetWidgetVisibility tiap tick untuk garis yang sudah
+    -- terlihat; SetPosition/SetSize sudah cukup. Ini menghemat ribuan call
+    -- UMG per detik saat banyak target/label bergerak.
+    if wasHidden then
+      data.Widget:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
+    end
   end)
   if ok then
     data.lx1, data.ly1, data.lx2, data.ly2, data.th = x1, y1, x2, y2, thickness
@@ -3676,11 +3693,14 @@ function ESP.DrawVBar(data, x, top, h, thickness)
     end
     return true
   end
+  local wasHidden = data.hidden == true
   local ok = pcall(function()
     data.Slot:SetPosition(ESPV2(x, top))
     data.Slot:SetSize(ESPV2(thickness, h))
     data.Widget:SetRenderAngle(0)
-    data.Widget:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
+    if wasHidden then
+      data.Widget:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
+    end
   end)
   if ok then data.bx, data.bt, data.bh = x, top, h data.hidden = false end
   return true
@@ -3903,51 +3923,19 @@ function ESP.UpdateCounter(nPlayers, nBots, pc, viewW)
       pcall(function()
         -- alignment (0.5,0) hai, isliye seedha center X do (cx-150 wala purana math hata diya)
         d.Slot:SetPosition(ESPV2(cx, CFG.TopTextY))
-        d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
       end)
-    else
+    end
+    if d.shown ~= true then
       pcall(function()
         d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
       end)
+      d.shown = true
     end
   end
   return ESPV2(cx, (CFG.SnapOriginY or 0.0))
 end
 
 -- bottom info: Bot / 16m / Open
-function ESP.GetWeaponText(Character)
-  if not ESPValid(Character) then return "" end
-  local value = nil
-  pcall(function()
-    local methods = { "GetCurrentWeaponName", "GetWeaponName", "GetCurrentWeaponDisplayName", "GetCurrentWeaponLabel" }
-    for _, method in ipairs(methods) do
-      if type(Character[method]) == "function" then
-        value = Character[method](Character)
-        if value and tostring(value) ~= "" and tostring(value) ~= "None" then break end
-      end
-    end
-  end)
-  if not value then
-    pcall(function()
-      local weapon = nil
-      if type(Character.GetCurrentWeapon) == "function" then weapon = Character:GetCurrentWeapon() end
-      if not weapon then weapon = Character.CurrentWeapon or Character.CurrentWeaponReplicated end
-      if weapon then
-        for _, method in ipairs({ "GetWeaponName", "GetItemName", "GetName" }) do
-          if type(weapon[method]) == "function" then
-            value = weapon[method](weapon)
-            if value and tostring(value) ~= "" and tostring(value) ~= "None" then break end
-          end
-        end
-        if not value then value = weapon.WeaponName or weapon.ItemName or weapon.Name end
-      end
-    end)
-  end
-  value = value and tostring(value) or ""
-  if value == "" or value == "None" or value == "Unknown" then return "" end
-  return value
-end
-
 function ESP.GetWeaponInfo(Character)
   if not ESPValid(Character) then return nil end
   local id, name, path, texture, weapon = nil, nil, nil, nil, nil
@@ -4122,6 +4110,18 @@ function ESP.CreateInfo()
     s5:SetAutoSize(false) s5:SetAlignment(ESPV2(0.5, 0.5)) s5:SetPosition(ESPV2(60.0, 74.0)) s5:SetSize(ESPV2(72.0, 36.0)) s5:SetZOrder(36)
     s6:SetAutoSize(true) s6:SetAlignment(ESPV2(0.5, 0.5)) s6:SetZOrder(36)
     ms:SetAutoSize(false) ms:SetZOrder(35)
+    -- Posisi anak relatif container selalu sama. Dulu semuanya di-set ulang
+    -- tiap target bergerak (6 call UMG per tick per target). Sekarang hanya
+    -- root container dan ikon senjata (yang ikut tinggi kepala) yang update.
+    local w = 120.0
+    local h1, h2, h3, h4 = 20.0, 17.0, 17.0, 15.0
+    local panelH = h1 + h2 + h3 + h4 + 30.0
+    ms:SetSize(ESPV2(w, panelH))
+    s1:SetPosition(ESPV2(w * 0.5, h1 * 0.5))
+    s2:SetPosition(ESPV2(w * 0.5, h1 + h2 * 0.5 + CFG.TextGap))
+    s3:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 * 0.5 + CFG.TextGap * 2.0))
+    s6:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + h4 * 0.5 + CFG.TextGap * 3.0))
+    s4:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + CFG.TextGap * 3.0 + 8.0))
   end)
   return { Container = container, Name = tName, Dist = tDist, State = tState, Weapon = tWeapon, WeaponIcon = tWeaponIcon,
            Ammo = tAmmo,
@@ -4158,10 +4158,10 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
   local now = ESP.Now()
   local weaponCache = d.WeaponCache
   if not weaponCache or (now - (weaponCache.t or 0)) >= 0.50 then
-    weaponCache = { t = now, text = ESP.GetWeaponText(Character), info = ESP.GetWeaponInfo(Character) }
+    -- Widget teks senjata selalu collapsed; cukup ikonnya yang perlu info.
+    weaponCache = { t = now, info = ESP.GetWeaponInfo(Character) }
     d.WeaponCache = weaponCache
   end
-  local weapon = weaponCache.text or ""
   local weaponInfo = weaponCache.info
   local ammoText = ""
   if ESP.Extra and menu.ShowAmmo then
@@ -4180,8 +4180,6 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
   end
   local st = bVisible and "Open" or "Close"
   if sr then st = st .. " SR" end
-  local stKey = bVisible and "open" or "close"
-  if sr then stKey = stKey .. "_sr" end
   pcall(function()
     if d.LastN ~= name then
       d.Name:SetText(name) d.LastN = name
@@ -4197,9 +4195,7 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
       elseif bVisible then ESP.SetTextColor(d.State, C_GREEN)
       else ESP.SetTextColor(d.State, C_RED) end
     end
-    if d.LastW ~= weapon then d.LastW = weapon end
     if d.LastAmmo ~= ammoText then d.Ammo:SetText(ammoText) d.LastAmmo = ammoText end
-    pcall(function() d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
     if menu.ShowWeapon and weaponInfo and weaponInfo.WeaponID then
       if d.LastWeaponID ~= weaponInfo.WeaponID then
         d.LastWeaponID = weaponInfo.WeaponID
@@ -4208,49 +4204,43 @@ function ESP.UpdateInfo(key, Character, isBot, distM, bVisible, footX, footY, to
     else
       d.LastWeaponID = nil
     end
-    if d.LastK ~= stKey then d.LastK = stKey end
   end)
   -- 4 baris teks (nama, jarak, status, ammo), centered under feet.
-  local w = 120.0
-  local h1, h2, h3, h4 = 20.0, 17.0, 17.0, 15.0
-  local panelH = h1 + h2 + h3 + h4 + 30.0
-  local x = RND(footX - w * 0.5)
+  -- Visibility anak hanya di-set saat kombinasi toggle/status berubah; panel
+  -- yang sama tidak perlu 6 call UMG tiap tick.
+  local visName = menu.ShowName == true
+  local visDist = menu.ShowDistance == true
+  local visState = (menu.ShowVisibility or sr) == true
+  local visAmmo = menu.ShowAmmo == true and ammoText ~= ""
+  local visWeapon = menu.ShowWeapon == true and d.LastWeaponID ~= nil
+  local visKey = (visName and "1" or "0") .. (visDist and "1" or "0")
+    .. (visState and "1" or "0") .. (visAmmo and "1" or "0")
+    .. (visWeapon and "1" or "0")
+  if d.LastVisKey ~= visKey then
+    d.LastVisKey = visKey
+    pcall(function()
+      local visible = UEnums.ESlateVisibility.SelfHitTestInvisible
+      local hidden = UEnums.ESlateVisibility.Collapsed
+      d.Name:SetWidgetVisibility(visName and visible or hidden)
+      d.Dist:SetWidgetVisibility(visDist and visible or hidden)
+      d.State:SetWidgetVisibility(visState and visible or hidden)
+      d.Ammo:SetWidgetVisibility(visAmmo and visible or hidden)
+      d.Weapon:SetWidgetVisibility(hidden)
+      d.WeaponIcon:SetWidgetVisibility(visWeapon and visible or hidden)
+      d.Container:SetWidgetVisibility(visible)
+    end)
+  end
+  local x = RND(footX - 120.0 * 0.5)
   local y = RND(footY + 4.0)
   if d.ix == nil or math.abs(d.ix - x) >= 1.0 or math.abs((d.iy or 0) - y) >= 1.0 then
     d.ix, d.iy = x, y
-    pcall(function()
-      d.Slot:SetPosition(ESPV2(x, y))
-      d.Slot:SetSize(ESPV2(w, panelH))
-      d.S1:SetPosition(ESPV2(w * 0.5, h1 * 0.5))
-      d.S2:SetPosition(ESPV2(w * 0.5, h1 + h2 * 0.5 + CFG.TextGap))
-      d.S3:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 * 0.5 + CFG.TextGap * 2.0))
-      d.S6:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + h4 * 0.5 + CFG.TextGap * 3.0))
-      -- Weapon icon: above the target box/head, not in the bottom text panel.
-      local iconY = ((tonumber(topY) or (footY - 50.0)) - footY) - 18.0
-      d.S5:SetPosition(ESPV2(w * 0.5, iconY))
-      d.S4:SetPosition(ESPV2(w * 0.5, h1 + h2 + h3 + CFG.TextGap * 3.0 + 8.0))
-      local visible = UEnums.ESlateVisibility.SelfHitTestInvisible
-      local hidden = UEnums.ESlateVisibility.Collapsed
-      d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
-      d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
-      d.State:SetWidgetVisibility((menu.ShowVisibility or sr) and visible or hidden)
-      d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
-      d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
-      d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
-      d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
-    end)
-  else
-    pcall(function()
-      local visible = UEnums.ESlateVisibility.SelfHitTestInvisible
-      local hidden = UEnums.ESlateVisibility.Collapsed
-      d.Name:SetWidgetVisibility(menu.ShowName and visible or hidden)
-      d.Dist:SetWidgetVisibility(menu.ShowDistance and visible or hidden)
-      d.State:SetWidgetVisibility((menu.ShowVisibility or sr) and visible or hidden)
-      d.Ammo:SetWidgetVisibility((menu.ShowAmmo and ammoText ~= "") and visible or hidden)
-      d.Weapon:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
-      d.WeaponIcon:SetWidgetVisibility(menu.ShowWeapon and d.LastWeaponID and visible or hidden)
-      d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
-    end)
+    pcall(function() d.Slot:SetPosition(ESPV2(x, y)) end)
+  end
+  -- Weapon icon: above the target box/head, not in the bottom text panel.
+  local iconY = ((tonumber(topY) or (footY - 50.0)) - footY) - 18.0
+  if d.LastIconY == nil or math.abs(d.LastIconY - iconY) >= 1.0 then
+    d.LastIconY = iconY
+    pcall(function() d.S5:SetPosition(ESPV2(60.0, iconY)) end)
   end
 end
 
@@ -4323,6 +4313,9 @@ function ESP.HideTarget(key)
   ESP.Hide(ESP.AimLines[key])
   local inf = ESP.Infos[key]
   if inf and ESPValid(inf.Container) then
+    -- Paksa UpdateInfo menerapkan ulang visibility saat target kembali
+    -- terlihat; container baru saja di-collapse di sini.
+    inf.LastVisKey = nil
     pcall(function() inf.Container:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
   end
 end
@@ -4599,13 +4592,17 @@ do
       pcall(function() d.Slot:SetPosition(ESPV2(px, py)) end)
       d.px, d.py = px, py
     end
-    pcall(function() d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible) end)
+    if d.shown ~= true then
+      pcall(function() d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible) end)
+      d.shown = true
+    end
   end
 
   function EX.HideLabel(key)
     local d = EX.Labels[key]
-    if d and ESPValid(d.Container) then
+    if d and ESPValid(d.Container) and d.shown ~= false then
       pcall(function() d.Container:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
+      d.shown = false
     end
   end
 
@@ -6621,7 +6618,8 @@ do
                   ry = math.sqrt(dx * dx + dy * dy)
                 end
                 if rx and ry and rx > 2.0 and ry > 2.0 then
-                  EX.DrawRing(key, s.X, s.Y, rx, ry, color, ckey, 1.5, 18)
+                  EX.DrawRing(key, s.X, s.Y, rx, ry, color, ckey, 1.5,
+                    ESP.GrenadeRingSegments or 18)
                 else
                   EX.HideRing(key)
                 end
@@ -6805,7 +6803,8 @@ do
           ry = math.sqrt(dx * dx + dy * dy)
         end
         if rx and ry and rx > 4 and ry > 4 and rx < 20000 and ry < 20000 then
-          EX.DrawRing("zone_ring", cs.X, cs.Y, rx, ry, C_EX_CYAN, "zone", 1.4, 20)
+          EX.DrawRing("zone_ring", cs.X, cs.Y, rx, ry, C_EX_CYAN, "zone", 1.4,
+            ESP.ZoneRingSegments or 20)
         else
           EX.HideRing("zone_ring")
         end
@@ -6828,7 +6827,7 @@ do
       EX.HideMark("zone_ring")
     end
     if cfg.Esp9_Airdrop == true then
-      if (now - (EX.LastAirdropScan or -999)) >= 0.80 then
+      if (now - (EX.LastAirdropScan or -999)) >= (ESP.AirdropInterval or 0.80) then
         EX.LastAirdropScan = now
         pcall(EX.ScanAirdrops)
       end
@@ -6838,7 +6837,7 @@ do
       EX.HidePrefix("ad_")
     end
     if cfg.Esp9_Grenade == true then
-      if (now - (EX.LastGrenadeScan or -999)) >= 0.45 then
+      if (now - (EX.LastGrenadeScan or -999)) >= (ESP.GrenadeInterval or 0.45) then
         EX.LastGrenadeScan = now
         pcall(EX.ScanGrenades)
       end
@@ -7692,8 +7691,20 @@ do
     end
   end
 
+  -- Potong cache loot ke cap baru tanpa menunggu scan berikutnya. Dipakai
+  -- saat Optimasi ESP Low dinyalakan supaya label/widget di luar cap langsung
+  -- dilepas, bukan tetap menunggu 1,1 detik sampai scan low-end berikutnya.
+  function ADV.TrimLootCache(cap)
+    local list = ADV.LootCache or {}
+    cap = tonumber(cap)
+    if cap == nil or cap < 1 or #list <= cap then return end
+    local keep = {}
+    for i = 1, cap do keep[i] = list[i] end
+    ADV.LootCache = keep
+  end
+
   -- Buang cache loot yang sudah di luar radius scan saat ini. Dipanggil tiap
-  -- frame draw supaya label tidak menunggu scan berikutnya (0,55 dtk; 0,90 dtk
+  -- frame draw supaya label tidak menunggu scan berikutnya (0,55 dtk; 1,10 dtk
   -- saat Optimasi ESP Low) ketika pemain bergerak keluar radius atau slider
   -- radius diperkecil. Actor yang sudah tidak valid juga langsung dibuang.
   function ADV.PruneLootRange()
@@ -9655,11 +9666,17 @@ function ESP.Update()
   end
   local origin = ESP.UpdateCounter(ESP.RealCount or 0, ESP.BotCount or 0, pc, vw)
   if not origin then return end
-  local camLoc = ESP.GetCamLoc(pc)
+  local menu = ESP.Menu or {}
+  -- Visibility trace memakai 3 line trace per target. Kalau baris Open/Close
+  -- dan badge self-rescue sama-sama OFF, hasilnya tidak pernah tampil, jadi
+  -- lewati trace dan GetCamLoc sepenuhnya.
+  local needVis = menu.ShowVisibility == true or menu.ShowSelfRescue == true
+  local camLoc = nil
+  if needVis then camLoc = ESP.GetCamLoc(pc) end
 
   local meChar = ESP.GetLocalCharacter()
   local meHead = nil
-  if (ESP.Menu or {}).ShowAimLine and ESPValid(meChar) then
+  if menu.ShowAimLine and ESPValid(meChar) then
     meHead = ESP.GetHeadFeet(meChar)
   end
 
@@ -9735,7 +9752,8 @@ function ESP.Update()
               end
 
               -- 5) bottom info: name / distance / Open-Close(visibility)
-              local bVis = ESP.IsVisible(key, pc, camLoc, c)
+              local bVis = false
+              if needVis then bVis = ESP.IsVisible(key, pc, camLoc, c) end
               ESP.UpdateInfo(key, c, item.IsBot, item.Distance, bVis, cx, B, T)
             else
               ESP.HideTarget(key)
@@ -11733,6 +11751,42 @@ _G.RapzhangAutoTextFeedback = (function()
     return nil
   end
 
+  local SEASON_NAME_FIELDS = { "SeasonNameNew", "SeasonName", "ShowName", "Name" }
+
+  local function seasonNameFromCfg(cfg)
+    if type(cfg) ~= "table" then return nil end
+    for _, key in ipairs(SEASON_NAME_FIELDS) do
+      local value = cfg[key]
+      if value ~= nil and tostring(value) ~= "" then
+        local text = tostring(value):match("^%s*(.-)%s*$")
+        if text ~= "" then
+          if text:match("^%d+$") then
+            -- Field numerik panjang adalah localization id, bukan nama.
+            if #text >= 4 then
+              local localized = locStr(text)
+              if localized and localized ~= "" then return localized end
+            end
+          else
+            return text
+          end
+        end
+      end
+    end
+    return nil
+  end
+
+  -- Nama season saat ini dari tabel SeasonInfo. UI season baru memakai
+  -- SeasonNameNew, kartu profil memakai SeasonName. Laporan tidak pernah
+  -- menampilkan angka mentah; fallback hanya "Season <id>" bila nama tidak
+  -- tersedia di build tersebut.
+  local function seasonLabel(season)
+    local n = tonumber(season)
+    if n == nil or n <= 0 then return nil end
+    local name = seasonNameFromCfg(tableData("SeasonInfo", n))
+    if name then return name end
+    return "Season " .. tostring(n)
+  end
+
   local function rankCfg(segment, season)
     local n = tonumber(segment)
     if n == nil or n <= 0 then return nil end
@@ -13015,6 +13069,7 @@ _G.RapzhangAutoTextFeedback = (function()
       g(result, "SeasonNumber"), g(result, "seasonNumber"),
       _G.DataMgr and _G.DataMgr.season_id
     )
+    d.seasonName = seasonLabel(d.season)
 
     local urTables = collectURTables(sources, result, rating)
     local urMode = modeLooksUR(d.mode, sources, d.subMode)
@@ -13228,7 +13283,7 @@ _G.RapzhangAutoTextFeedback = (function()
       if #ratingParts > 0 then bullet("Rating", esc(table.concat(ratingParts, " · "))) end
       if hasRank then
         bullet("Protection", esc(d.protection))
-        bullet("Season", fmtInt(d.season))
+        bullet("Season", esc(d.seasonName))
       elseif d.urMatch then
         add("• Ultimate Royale data unavailable")
       else
@@ -13253,7 +13308,7 @@ _G.RapzhangAutoTextFeedback = (function()
         bullet("Points", points)
       end
       bullet("Protection", esc(d.protection))
-      bullet("Season", fmtInt(d.season))
+      bullet("Season", esc(d.seasonName))
     end
 
     if d.teamList and #d.teamList > 1 then
