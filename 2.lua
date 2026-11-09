@@ -1702,7 +1702,7 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_ESP9_AirdropPredict", UI = AliasMap.Switcher, Text = T("      Landing Prediction", "      Landing Prediction"), ExpandHandle = "ModMenu_ESP9_Airdrop", GetFunc = function() return _G.RapzhangConfig.Esp9_AirdropPredict == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_AirdropPredict = v and true or false; if v then _G.RapzhangConfig.Esp9_Airdrop = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Zone", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Zone + Circle Info", "   ▶ Zone + Circle Info"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Zone == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Zone = on; if on then _G.RapzhangConfig.Esp9_ZoneTimer = true; _G.RapzhangConfig.Esp9_ZoneNext = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_ZoneTimer", UI = AliasMap.Switcher, Text = T("      Zone Timer", "      Zone Timer"), ExpandHandle = "ModMenu_ESP9_Zone", GetFunc = function() return _G.RapzhangConfig.Esp9_ZoneTimer == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_ZoneTimer = v and true or false; if v then _G.RapzhangConfig.Esp9_Zone = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ESP9_ZoneNext", UI = AliasMap.Switcher, Text = T("      Next Circle", "      Next Circle"), ExpandHandle = "ModMenu_ESP9_Zone", GetFunc = function() return _G.RapzhangConfig.Esp9_ZoneNext == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_ZoneNext = v and true or false; if v then _G.RapzhangConfig.Esp9_Zone = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_ZoneNext", UI = AliasMap.Switcher, Text = T("      Next Circle (Map)", "      Next Circle (Map)"), ExpandHandle = "ModMenu_ESP9_Zone", GetFunc = function() return _G.RapzhangConfig.Esp9_ZoneNext == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_ZoneNext = v and true or false; if v then _G.RapzhangConfig.Esp9_Zone = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Grenade", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Grenade ESP", "   ▶ Grenade ESP"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Grenade == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Grenade = on; if on then _G.RapzhangConfig.Esp9_GrenadeMark = true; _G.RapzhangConfig.Esp9_GrenadeRadius = true; _G.RapzhangConfig.Esp9_GrenadeBounce = true; _G.RapzhangConfig.Esp9_GrenadeFuse = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_GrenadeMark", UI = AliasMap.Switcher, Text = T("      Grenade Marker + Type", "      Grenade Marker + Type"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeMark == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeMark = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_GrenadeRadius", UI = AliasMap.Switcher, Text = T("      Blast Radius", "      Blast Radius"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeRadius == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeRadius = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
@@ -1932,10 +1932,10 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_BT_All_Prob", UI = AliasMap.Slider, Text = T("      Track Chance", "      Track Chance"), ExpandHandle = "ModMenu_BT_All", MinValue = 0, MaxValue = 100, min = 0, max = 100, Min = 0, Max = 100, GetFunc = function() return _G.RapzhangState.CustomTextData.BTAllProb or 100 end, SetFunc = function(_,v) _G.RapzhangState.CustomTextData.BTAllProb = math.max(0, math.min(100, math.floor(v + 0.5))); return true end },
             { Key = "ModMenu_BT_All_SmartHead", UI = AliasMap.Switcher, Text = T("      Smart Auto Aim Head", "      Smart Auto Aim Head"), ExpandHandle = "ModMenu_BT_All", GetFunc = function() return _G.RapzhangConfig.BTAllSmartHead == true end, SetFunc = function(_,v) _G.RapzhangConfig.BTAllSmartHead = v and true or false; return true end },
             { Key = "ModMenu_Magic_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ DỄ BỊ BAN MẠNG Magic Bullet Tùy Chỉnh", "▶ (RISK BAN) Custom Magic Bullet"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.CustomMagicBullet == true end, SetFunc = function(c,v) _G.RapzhangConfig.CustomMagicBullet = v == true; if _G.RapzhangHitboxConfigChanged then pcall(_G.RapzhangHitboxConfigChanged, true) end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
-            { Key = "ModMenu_Magic_Head", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Đầu (1.0x - 5.0x)", "   Head Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicHead) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicHead = 1.0 + (n / 100.0) * 4.0; if _G.RapzhangHitboxConfigChanged then pcall(_G.RapzhangHitboxConfigChanged, false) end; return true end },
-            { Key = "ModMenu_Magic_Body", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Thân (1.0x - 5.0x)", "   Body Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicBody) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicBody = 1.0 + (n / 100.0) * 4.0; if _G.RapzhangHitboxConfigChanged then pcall(_G.RapzhangHitboxConfigChanged, false) end; return true end },
-            { Key = "ModMenu_Magic_Legs", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Chân (1.0x - 5.0x)", "   Legs Hitbox Scale (1.0x - 5.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicLegs) or 1.0; return math.floor((math.max(1.0, math.min(5.0, x)) - 1.0) / 4.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicLegs = 1.0 + (n / 100.0) * 4.0; if _G.RapzhangHitboxConfigChanged then pcall(_G.RapzhangHitboxConfigChanged, false) end; return true end },
-            { Key = "ModMenu_Headshot", UI = AliasMap.Switcher, Text = T("Headshot (10x Kepala / 5x Hitbox)", "Headshot (10x Head / 5x Hitbox)"), GetFunc = function() return _G.RapzhangConfig.Headshot == true end, SetFunc = function(_, v) _G.RapzhangConfig.Headshot = v == true; if _G.RapzhangHeadshotRefresh then pcall(_G.RapzhangHeadshotRefresh) end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
+            { Key = "ModMenu_Magic_Head", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Đầu (1.0x - 3.0x)", "   Head Hitbox Scale (1.0x - 3.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicHead) or 1.0; return math.floor((math.max(1.0, math.min(3.0, x)) - 1.0) / 2.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicHead = 1.0 + (n / 100.0) * 2.0; if _G.RapzhangHitboxConfigChanged then pcall(_G.RapzhangHitboxConfigChanged, false) end; return true end },
+            { Key = "ModMenu_Magic_Body", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Thân (1.0x - 3.0x)", "   Body Hitbox Scale (1.0x - 3.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicBody) or 1.0; return math.floor((math.max(1.0, math.min(3.0, x)) - 1.0) / 2.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicBody = 1.0 + (n / 100.0) * 2.0; if _G.RapzhangHitboxConfigChanged then pcall(_G.RapzhangHitboxConfigChanged, false) end; return true end },
+            { Key = "ModMenu_Magic_Legs", UI = AliasMap.Slider, Text = T("   Kích Thước Hitbox Chân (1.0x - 3.0x)", "   Legs Hitbox Scale (1.0x - 3.0x)"), ExpandHandle = "ModMenu_Magic_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() local x = tonumber(_G.RapzhangState.CustomTextData.MagicLegs) or 1.0; return math.floor((math.max(1.0, math.min(3.0, x)) - 1.0) / 2.0 * 100 + 0.5) end, SetFunc = function(c,v) local n = math.max(0, math.min(100, tonumber(v) or 0)); _G.RapzhangState.CustomTextData.MagicLegs = 1.0 + (n / 100.0) * 2.0; if _G.RapzhangHitboxConfigChanged then pcall(_G.RapzhangHitboxConfigChanged, false) end; return true end },
+            { Key = "ModMenu_Headshot", UI = AliasMap.Switcher, Text = T("Headshot (2x Hitbox Kepala)", "Headshot (2x Head Hitbox)"), GetFunc = function() return _G.RapzhangConfig.Headshot == true end, SetFunc = function(_, v) _G.RapzhangConfig.Headshot = v == true; if _G.RapzhangHeadshotRefresh then pcall(_G.RapzhangHeadshotRefresh) end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
 
             { Key = "ModMenu_HRecoil_Ex", UI = AliasMap.TitleSwitcher, Text = T("▶ Less Horizontal Recoil (Drop/Put Weapon)", "▶ Less Horizontal Recoil (Drop/Put Weapon)"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.CustomHRecoil == true end, SetFunc = function(_,v) _G.RapzhangConfig.CustomHRecoil = v and true or false; if _G.RapzhangState.RefreshActiveWeaponStats then _G.RapzhangState.RefreshActiveWeaponStats() end; return true end },
             { Key = "ModMenu_HRecoil_Val", UI = AliasMap.Slider, Text = T("   Horizontal Recoil Value", "   Horizontal Recoil Value"), ExpandHandle = "ModMenu_HRecoil_Ex", MinValue = 0, MaxValue = 100, min = 0, max = 100, GetFunc = function() return math.floor((((_G.RapzhangState.CustomTextData.HRecoil or 0.3) - 0.3) / 4.7) * 100 + 0.5) end, SetFunc = function(_,v) _G.RapzhangState.CustomTextData.HRecoil = 0.3 + (v / 100.0) * 4.7; return true end },
@@ -4452,6 +4452,8 @@ do
   EX.LastGrenadeScan = -999.0
   EX.ZoneRingT = -999.0
   EX.ZoneGroundZ = nil
+  EX.ZoneMapT = -999.0
+  EX.ZoneMapRefs = EX.ZoneMapRefs or {}
   EX.HitResult = nil
 
   function EX.ImportClass(path, alias)
@@ -4783,6 +4785,14 @@ do
     EX.LastAirdropScan, EX.LastGrenadeScan = -999.0, -999.0
     EX.ZoneRingT = -999.0
     EX.ZoneGroundZ = nil
+    pcall(function()
+      for i = 1, #(EX.ZoneMapRefs or {}) do
+        local r = EX.ZoneMapRefs[i]
+        if r and r.W then pcall(function() r.W:UpdateCircle(nil) end) end
+      end
+    end)
+    EX.ZoneMapRefs = {}
+    EX.ZoneMapT = -999.0
   end
 
   -- Baca properti objek slua. Sebagian properti C++ tidak terbaca lewat
@@ -6736,6 +6746,154 @@ do
     return data
   end
 
+  -- ==========================================================
+  -- Next circle di MAP (bukan ring 3D)
+  -- Game sudah menggambar safe zone putih lewat C++ (WhiteCircleColorC).
+  -- Supaya zona berikutnya tetap terlihat sebagai biru, widget map resmi
+  -- `CustomBlueCircle` dipakai: game yang menghitung konversi world->map,
+  -- skala zoom, dan posisi pan, jadi tidak ada proyeksi layar manual.
+  -- ==========================================================
+  local function zoneMapMgr()
+    local um = rawget(_G, "UIManager")
+    if um == nil then
+      local ok, v = pcall(function() return _G.UIManager end)
+      if ok then um = v end
+    end
+    return um
+  end
+
+  local function zoneMapAdd(list, id)
+    if id == nil then return end
+    local um = zoneMapMgr()
+    if not (um and type(um.GetUI) == "function") then return end
+    local win = nil
+    pcall(function() win = um.GetUI(id) end)
+    if win == nil then pcall(function() win = um:GetUI(id) end) end
+    local map = nil
+    pcall(function()
+      local root = win and win.UIRoot
+      map = root and root.CurrentMapUIBP
+    end)
+    if not ESPValid(map) then return end
+    for i = 1, #list do
+      if list[i] == map then return end
+    end
+    list[#list + 1] = map
+  end
+
+  -- Daftar MapUIBase Lua yang aktif: MiniMapWindow selalu ada selama match,
+  -- EntireMapWindow muncul saat map besar dibuka/di-preload game.
+  function EX.GetZoneMapUIs()
+    local list = {}
+    local um = zoneMapMgr()
+    local cfg = um and um.UI_Config_InGame
+    if not cfg then return list end
+    pcall(zoneMapAdd, list, cfg.MiniMapWindow)
+    pcall(zoneMapAdd, list, cfg.EntireMapWindow)
+    return list
+  end
+
+  local function zoneMapCircle(circle)
+    if circle == nil then return nil end
+    local x = tonumber(circle.X)
+    local y = tonumber(circle.Y)
+    local z = tonumber(circle.Z)
+    if x == nil or y == nil or z == nil or z <= 0 then return nil end
+    local v = nil
+    pcall(function() if FVector then v = FVector(x, y, z) end end)
+    if v == nil then v = circle end
+    return v
+  end
+
+  -- Sinkronkan next circle ke widget map. `circle` nil = sembunyikan.
+  -- Throttle 1 detik: DrawZone dipanggil tiap frame, sedangkan posisi/radius
+  -- zona hanya berubah per fase.
+  function EX.SyncZoneMap(now, circle)
+    now = tonumber(now) or 0.0
+    if (now - (EX.ZoneMapT or -999.0)) < 1.0 then return end
+    EX.ZoneMapT = now
+    local maps = EX.GetZoneMapUIs()
+    local want = zoneMapCircle(circle)
+    local old = EX.ZoneMapRefs or {}
+    local refs = {}
+    for i = 1, #maps do
+      local map = maps[i]
+      local ref = nil
+      for j = 1, #old do
+        if old[j].UI == map then ref = old[j] break end
+      end
+      if want ~= nil then
+        local function apply(w)
+          local ok = pcall(function() w:UpdateCircle(want) end)
+          if not ok then return false end
+          local closed = false
+          pcall(function() closed = w.bIsClosed == true end)
+          return not closed
+        end
+        local function isMine(w)
+          local mine = false
+          pcall(function() mine = w._RapzhangZoneMap == true end)
+          return mine
+        end
+        local w = nil
+        if ref ~= nil and ref.W ~= nil then
+          if apply(ref.W) then
+            w = ref.W
+          else
+            -- Widget lama sudah ditutup game / map: lepas lalu buat ulang.
+            pcall(function() ref.W:Close() end)
+            pcall(function()
+              local cw = map.CustomBlueWidget
+              if cw ~= nil and (cw == ref.W or isMine(cw)) then
+                map.CustomBlueWidget = nil
+              end
+            end)
+          end
+        end
+        if w == nil then
+          local cur = nil
+          pcall(function() cur = map.CustomBlueWidget end)
+          if cur ~= nil then
+            -- Slot terisi: adopsi hanya kalau memang widget buatan kita.
+            if isMine(cur) and apply(cur) then w = cur end
+          else
+            -- Slot kosong: buat widget lewat jalur resmi game.
+            -- BlueCircleUI menutup CustomBlueWidget sekali saat blue circle
+            -- asli mulai tampil. Kalau itu terjadi setelah widget kita dibuat,
+            -- event pembuatan widget tidak dipasang lagi dan next circle
+            -- hilang. Tandai BlueWidget sudah pernah menutup custom widget,
+            -- lalu buat lewat event; bila event sudah tidak terpasang, pakai
+            -- factory resmi MapUIBase.
+            local bw = nil
+            pcall(function() bw = map.BlueWidget end)
+            if bw ~= nil and bw.bHasClosedCustomCircle ~= true then
+              pcall(function() bw.bHasClosedCustomCircle = true end)
+            end
+            pcall(function() map:OnReceivedCustomBlueCircle(nil, nil, want, false) end)
+            pcall(function() cur = map.CustomBlueWidget end)
+            if cur == nil then
+              pcall(function() map:OnCreateMapWidget("CustomBlueWidget", "CustomBlueCircleUI") end)
+              pcall(function() cur = map.CustomBlueWidget end)
+            end
+            if cur ~= nil then
+              pcall(function() cur._RapzhangZoneMap = true end)
+              if apply(cur) then w = cur end
+            end
+          end
+        end
+        if w ~= nil then refs[#refs + 1] = { UI = map, W = w } end
+      else
+        -- OFF / belum ada zona: collapse widget milik kita, jangan hancurkan,
+        -- supaya fase berikutnya tinggal UpdateCircle lagi.
+        if ref ~= nil and ref.W ~= nil then
+          pcall(function() ref.W:UpdateCircle(nil) end)
+          refs[#refs + 1] = ref
+        end
+      end
+    end
+    EX.ZoneMapRefs = refs
+  end
+
   function EX.DrawZone(pc, vw, vh, now)
     local cfg = _G.RapzhangConfig or {}
     local showTimer = cfg.Esp9_ZoneTimer == true
@@ -6744,6 +6902,7 @@ do
     if not data or (not showTimer and not showNext) then
       EX.HideLabel("zone_text")
       EX.HideRing("zone_ring")
+      pcall(EX.SyncZoneMap, now, nil)
       return
     end
     local myLoc = nil
@@ -6783,40 +6942,10 @@ do
     else
       EX.HideLabel("zone_text")
     end
-    if showNext and whiteOK and pc then
-      if (now - EX.ZoneRingT) >= 1.0 or EX.ZoneGroundZ == nil then
-        EX.ZoneRingT = now
-        EX.ZoneGroundZ = EX.GroundZ(pc, tonumber(white.X) or 0, tonumber(white.Y) or 0, 20000.0)
-      end
-      local center = {
-        X = tonumber(white.X) or 0,
-        Y = tonumber(white.Y) or 0,
-        Z = (EX.ZoneGroundZ or 0) + 30.0,
-      }
-      local cs = ESP.Project(pc, center)
-      if cs and cs.X > -200 and cs.X < vw + 200 and cs.Y > -200 and cs.Y < vh + 200 then
-        local r = tonumber(white.Z) or 0
-        local px = ESP.Project(pc, { X = center.X + r, Y = center.Y, Z = center.Z })
-        local py = ESP.Project(pc, { X = center.X, Y = center.Y + r, Z = center.Z })
-        local rx, ry = nil, nil
-        if px and py then
-          local dx, dy = px.X - cs.X, px.Y - cs.Y
-          rx = math.sqrt(dx * dx + dy * dy)
-          dx, dy = py.X - cs.X, py.Y - cs.Y
-          ry = math.sqrt(dx * dx + dy * dy)
-        end
-        if rx and ry and rx > 4 and ry > 4 and rx < 20000 and ry < 20000 then
-          EX.DrawRing("zone_ring", cs.X, cs.Y, rx, ry, C_EX_CYAN, "zone", 1.4,
-            ESP.ZoneRingSegments or 20)
-        else
-          EX.HideRing("zone_ring")
-        end
-      else
-        EX.HideRing("zone_ring")
-      end
-    else
-      EX.HideRing("zone_ring")
-    end
+    -- Ring next circle sekarang digambar di map (mini + entire map) dengan
+    -- widget CustomBlueCircle milik game; tidak ada lagi ring proyeksi 3D.
+    EX.HideRing("zone_ring")
+    pcall(EX.SyncZoneMap, now, showNext and whiteOK and white or nil)
   end
 
   function EX.Update(pc, vw, vh, camLoc, now)
@@ -6828,6 +6957,7 @@ do
     else
       EX.HideLabel("zone_text")
       EX.HideMark("zone_ring")
+      pcall(EX.SyncZoneMap, now, nil)
     end
     if cfg.Esp9_Airdrop == true then
       if (now - (EX.LastAirdropScan or -999)) >= (ESP.AirdropInterval or 0.80) then
@@ -13649,6 +13779,21 @@ end
 -- mengaplikasikan skala penuh ke elemen pertama Box/Sphere/Sphyl.
 -- Magic & Headshot memakai satu hash/state supaya toggle salah satu tidak
 -- membatalkan skala fitur lainnya.
+--
+-- [BATAS SERVER-SIDE]
+-- Server tidak pernah menerima PhysicsAsset/geometri hitbox. Yang dikirim
+-- client saat menembak hanyalah hasil trace: actor, BoneName, impact point,
+-- dan trace start/end. Jadi scale hitbox bekerja karena server menerima
+-- BoneName "head"/"neck_01" yang valid, bukan karena server membaca ukuran
+-- hitbox. Sebaliknya, HeadDamageMultiplier/BodyDamageMultiplier hanya nilai
+-- prediksi lokal: server tetap memakai damage table miliknya, dan selisih
+-- prediksi vs hasil server justru menjadi sinyal deteksi. Karena itu fitur
+-- Headshot di bawah sengaja TIDAK menyentuh multiplier senjata.
+--
+-- Catatan: FeatureDynamicVertifyHitBoxScale dan AddIgnoreVerifyShootBigHead
+-- adalah mekanisme server untuk skill yang memang membesarkan kepala. Keduanya
+-- server-authoritative; client Lua tidak bisa menulisnya ke server. Yang bisa
+-- dilakukan client hanya menjaga skala tetap di dalam toleransi BlockBoxScale.
 -- ============================================================================
 _G.RapzhangHitboxBoneMap = function(headScale, bodyScale, legsScale)
     return {
@@ -13660,6 +13805,16 @@ _G.RapzhangHitboxBoneMap = function(headScale, bodyScale, legsScale)
         ["foot_l"] = legsScale, ["foot_r"] = legsScale,
     }
 end
+
+-- Skala kepala Headshot. 2x aman sampai ping ~500ms; 3x hanya aman di
+-- ping 100-200ms (lihat toleransi BlockBoxScale di komentar bawah).
+_G.RapzhangHeadshotHeadScale = 2.0
+-- Batas atas skala semua hitbox (head/body/legs). DS LagCompensationSubSystem
+-- memberi toleransi BlockBoxScale 3x/2.5x/2x/1.5x tergantung ping shooter;
+-- di atas 3x, SwitchHitOutCollisionBox (PunishThresHold=10) mencatat
+-- pelanggaran. 5x/25x hampir pasti kena.
+_G.RapzhangMaxHitboxScale = 3.0
+_G.RapzhangMaxHeadScale = 3.0
 
 -- forTicker=true: dipakai ticker Headshot yang berjalan walau ESP OFF.
 -- Saat ESP OFF, skala Magic diabaikan agar dua fitur tidak saling menimpa.
@@ -13675,14 +13830,20 @@ _G.RapzhangGetHitboxScale = function(forTicker)
         return "OFF", 1.0, 1.0, 1.0
     end
     local head, body, legs = 1.0, 1.0, 1.0
+    local maxScale = tonumber(_G.RapzhangMaxHitboxScale) or 3.0
     if magicOn then
-        head = math.max(1.0, math.min(5.0, tonumber(data.MagicHead) or 1.0))
-        body = math.max(1.0, math.min(5.0, tonumber(data.MagicBody) or 1.0))
-        legs = math.max(1.0, math.min(5.0, tonumber(data.MagicLegs) or 1.0))
+        head = math.max(1.0, math.min(maxScale, tonumber(data.MagicHead) or 1.0))
+        body = math.max(1.0, math.min(maxScale, tonumber(data.MagicBody) or 1.0))
+        legs = math.max(1.0, math.min(maxScale, tonumber(data.MagicLegs) or 1.0))
     end
     if headshotOn then
-        head = head * 5.0
+        -- max(), bukan perkalian: Magic 3x + Headshot 2x tidak boleh menjadi 6x.
+        -- Server hanya melihat BoneName, tetapi hitbox di luar toleransi
+        -- BlockBoxScale membuat SwitchHitOutCollisionBox mencatat pelanggaran.
+        head = math.max(head, tonumber(_G.RapzhangHeadshotHeadScale) or 2.0)
     end
+    local maxHead = tonumber(_G.RapzhangMaxHeadScale) or maxScale
+    head = math.max(1.0, math.min(maxHead, head))
     return string.format("MB_%.2f_%.2f_%.2f", head, body, legs), head, body, legs
 end
 
@@ -13705,11 +13866,6 @@ _G.RapzhangHitboxConfigChanged = function(forceRestore)
     if forceRestore or (cfg.CustomMagicBullet ~= true and cfg.Headshot ~= true) then
         if _G.AK_ClearMagicBulletCache then
             pcall(_G.AK_ClearMagicBulletCache)
-        end
-        -- Clear() also restores weapon multipliers; put Headshot back at once
-        -- so toggling Magic never leaves a 1s damage gap.
-        if cfg.Headshot == true and _G.RapzhangApplyHeadshotWeapon then
-            pcall(_G.RapzhangApplyHeadshotWeapon)
         end
     end
 end
@@ -13741,10 +13897,11 @@ _G.RapzhangApplyHitbox = function(mesh, hash, headScale, bodyScale, legsScale, s
 
     local changed = false
     if _G.AK_ModdedPhysAssets[physName] ~= hash then
+        local maxScale = tonumber(_G.RapzhangMaxHitboxScale) or 3.0
         local scales = _G.RapzhangHitboxBoneMap(
-            math.max(1.0, math.min(25.0, tonumber(headScale) or 1.0)),
-            math.max(1.0, math.min(5.0, tonumber(bodyScale) or 1.0)),
-            math.max(1.0, math.min(5.0, tonumber(legsScale) or 1.0))
+            math.max(1.0, math.min(tonumber(_G.RapzhangMaxHeadScale) or maxScale, tonumber(headScale) or 1.0)),
+            math.max(1.0, math.min(maxScale, tonumber(bodyScale) or 1.0)),
+            math.max(1.0, math.min(maxScale, tonumber(legsScale) or 1.0))
         )
 
         local setups = phys.SkeletalBodySetups
@@ -13934,11 +14091,8 @@ _G.AK_ClearMagicBulletCache = function()
         end
     end)
 
-    -- Kembalikan multiplier senjata Headshot (jika ada).
-    if _G.RapzhangRestoreHeadshotWeapons then
-        pcall(_G.RapzhangRestoreHeadshotWeapons)
-    end
-
+    -- Kembalikan multiplier senjata Headshot dihapus: nilai itu client-only
+    -- dan tidak pernah dipakai server untuk menghitung damage.
     _G.AK_MagicBulletCleared = true
 end
 
@@ -16549,95 +16703,24 @@ if _G.RapzhangMBCrosshair then
 end
 
 -- ============================================================================
--- [HEADSHOT FEATURE] — ported from premium.lua
--- 10x head damage, 0.1x body damage, 5x head/neck hitbox.
--- Runs on its own 1s ticker so it works even when ESP is OFF.
+-- [HEADSHOT FEATURE] — hitbox-only, server-safe
+-- Headshot TIDAK mengubah HeadDamageMultiplier/BodyDamageMultiplier.
+-- Nilai itu hanya prediksi client; server menghitung damage dari weapon
+-- table miliknya sendiri. Yang benar-benar sampai ke server adalah BoneName
+-- dari trace, jadi fitur ini hanya memperbesar hitbox head/neck (2x) lewat
+-- mesin PhysicsAsset di atas. Ticker berjalan sendiri agar aktif walau ESP OFF.
 -- ============================================================================
 do
   local HEADSHOT = {
-    HeadScale = 5.0,
-    HeadMultiplier = 10,
-    BodyMultiplier = 0.1,
     Interval = 1.0,
     InitialDelay = 2.0,
-    MaxWeaponRefs = 24,
   }
   _G.RapzhangHeadshotConfig = HEADSHOT
-  _G.RapzhangHeadshotWeaponRefs = _G.RapzhangHeadshotWeaponRefs or {}
 
   local function HeadshotGameplayData()
     local ok, gd = pcall(require, "GameLua.GameCore.Data.GameplayData")
     if ok and gd then return gd end
     return nil
-  end
-
-  function _G.RapzhangApplyHeadshotWeapon()
-    local gd = HeadshotGameplayData()
-    if not gd or type(gd.GetPlayerCharacter) ~= "function" then return end
-
-    local player = nil
-    pcall(function() player = gd.GetPlayerCharacter() end)
-    if not slua.isValid(player) then return end
-
-    local weaponMgr = player.WeaponManagerComponent
-    if not slua.isValid(weaponMgr) then return end
-
-    local weapon = weaponMgr.CurrentWeaponReplicated
-    if not slua.isValid(weapon) then return end
-
-    local shoot = weapon.ShootWeaponEntityComp
-    if not slua.isValid(shoot) then return end
-
-    local refs = _G.RapzhangHeadshotWeaponRefs
-    local id = tostring(shoot)
-    local entry = nil
-    for i = 1, #refs do
-      if refs[i].id == id then entry = refs[i] break end
-    end
-
-    if not entry then
-      local origHead, origBody = 1.0, 1.0
-      pcall(function() origHead = tonumber(shoot.HeadDamageMultiplier) or 1.0 end)
-      pcall(function() origBody = tonumber(shoot.BodyDamageMultiplier) or 1.0 end)
-      if origHead <= 0 or origHead == HEADSHOT.HeadMultiplier then origHead = 1.0 end
-      if origBody <= 0 or origBody == HEADSHOT.BodyMultiplier then origBody = 1.0 end
-      entry = { id = id, comp = shoot, head = origHead, body = origBody }
-      refs[#refs + 1] = entry
-      if #refs > HEADSHOT.MaxWeaponRefs then table.remove(refs, 1) end
-    end
-    entry.comp = shoot
-
-    pcall(function()
-      if type(shoot.SetHeadDamageMultiplier) == "function" then
-        shoot:SetHeadDamageMultiplier(HEADSHOT.HeadMultiplier)
-      end
-      if shoot.HeadDamageMultiplier ~= nil then
-        shoot.HeadDamageMultiplier = HEADSHOT.HeadMultiplier
-      end
-      if type(shoot.SetBodyDamageMultiplier) == "function" then
-        shoot:SetBodyDamageMultiplier(HEADSHOT.BodyMultiplier)
-      end
-      if shoot.BodyDamageMultiplier ~= nil then
-        shoot.BodyDamageMultiplier = HEADSHOT.BodyMultiplier
-      end
-    end)
-  end
-
-  function _G.RapzhangRestoreHeadshotWeapons()
-    local refs = _G.RapzhangHeadshotWeaponRefs or {}
-    for i = #refs, 1, -1 do
-      local entry = refs[i]
-      refs[i] = nil
-      if entry and entry.comp and slua.isValid(entry.comp) then
-        pcall(function()
-          local c = entry.comp
-          if type(c.SetHeadDamageMultiplier) == "function" then c:SetHeadDamageMultiplier(entry.head) end
-          if c.HeadDamageMultiplier ~= nil then c.HeadDamageMultiplier = entry.head end
-          if type(c.SetBodyDamageMultiplier) == "function" then c:SetBodyDamageMultiplier(entry.body) end
-          if c.BodyDamageMultiplier ~= nil then c.BodyDamageMultiplier = entry.body end
-        end)
-      end
-    end
   end
 
   local function ApplyHeadshotHitbox()
@@ -16680,8 +16763,8 @@ do
     end
   end
 
-  -- ON  : clear stale cache, apply hitbox + weapon multipliers immediately.
-  -- OFF : clear cache/restore hitboxes and restore weapon multipliers.
+  -- ON  : clear stale cache lalu apply hitbox kepala 5x.
+  -- OFF : clear cache/restore hitbox (tidak ada multiplier yang perlu di-restore).
   function _G.RapzhangHeadshotRefresh()
     local on = _G.RapzhangConfig and _G.RapzhangConfig.Headshot == true
     if _G.RapzhangHitboxConfigChanged then
@@ -16689,9 +16772,6 @@ do
     end
     if on then
       pcall(ApplyHeadshotHitbox)
-      pcall(_G.RapzhangApplyHeadshotWeapon)
-    else
-      pcall(_G.RapzhangRestoreHeadshotWeapons)
     end
     _G.RapzhangHeadshotActive = on
   end
@@ -16705,12 +16785,7 @@ do
       end
       if inMatch then
         pcall(ApplyHeadshotHitbox)
-        pcall(_G.RapzhangApplyHeadshotWeapon)
-      else
-        pcall(_G.RapzhangRestoreHeadshotWeapons)
       end
-    else
-      pcall(_G.RapzhangRestoreHeadshotWeapons)
     end
 
     local okTicker, ticker = pcall(require, "common.time_ticker")
