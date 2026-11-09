@@ -8795,6 +8795,49 @@ do
     return wm
   end
 
+  -- Game menunda auto-pick saat memakai consumable (heal) dan saat state
+  -- Pick tidak diizinkan; reload juga membuat pickup paksa berhenti di
+  -- tengah aksi. Fast loot mengikuti gate yang sama supaya heal/reload
+  -- tidak macet.
+  local function supportActionBusy(me)
+    local busy = false
+    pcall(function()
+      local E = import("EPawnState")
+      if E == nil then return end
+      if E.UseConsumables ~= nil and me and type(me.HasState) == "function" then
+        if me:HasState(E.UseConsumables) then busy = true end
+      end
+      if E.Pick ~= nil and me and type(me.AllowState) == "function" then
+        if me:AllowState(E.Pick, false) == false then busy = true end
+      end
+    end)
+    if busy then return true end
+    pcall(function()
+      local wm = supportWeaponManager(me, nil)
+      if wm == nil then return end
+      local w = nil
+      if type(wm.GetCurrentUsingWeapon) == "function" then
+        w = wm:GetCurrentUsingWeapon()
+      end
+      if w == nil and type(wm.GetCurrentWeapon) == "function" then
+        w = wm:GetCurrentWeapon()
+      end
+      if w == nil then return end
+      local E = import("EFreshWeaponStateType")
+      local reloadState = E and tonumber(E.FreshWeaponStateType_Reload) or nil
+      local state = tonumber(supportIndex(w, "CurFreshWeaponState"))
+      if reloadState ~= nil and state == reloadState then busy = true end
+      if supportIndex(w, "bIsReloading") == true then busy = true end
+      if supportIndex(w, "bReloading") == true then busy = true end
+      if type(w.IsReloading) == "function" then
+        local r = nil
+        pcall(function() r = w:IsReloading() end)
+        if r == true then busy = true end
+      end
+    end)
+    return busy
+  end
+
   local function supportSlotEnum(slotName)
     local slot = nil
     pcall(function()
@@ -8913,8 +8956,77 @@ do
     return useful > 0, nil
   end
 
+  -- Slot pakaian dari ItemSubType (sama dengan ClothArmerType2Enum di
+  -- BackPackPanelUI_ArmorSlot/BackpackClothingUI). 401 dan 406 sama-sama
+  -- slot topi, 29 = sarung tangan.
+  local function supportClothingSlot(sub)
+    sub = tonumber(sub)
+    if sub == nil then return nil end
+    if sub == 29 then return "gloves" end
+    if sub == 401 or sub == 406 then return "cap" end
+    if sub == 402 then return "mask" end
+    if sub == 403 then return "jacket" end
+    if sub == 404 then return "trouser" end
+    if sub == 405 then return "shoe" end
+    if sub == 407 then return "glasses" end
+    return nil
+  end
+
   local function supportIsClothing(sub)
-    return sub ~= nil and sub >= 401 and sub <= 407
+    return supportClothingSlot(sub) ~= nil
+  end
+
+  local SUPPORT_CLOTH_GROUP = {
+    gloves = { 29 }, cap = { 401, 406 }, mask = { 402 },
+    jacket = { 403 }, trouser = { 404 }, shoe = { 405 },
+    glasses = { 407 },
+  }
+
+  -- Slot pakaian terisi bila sudah ada item dengan slot yang sama, baik
+  -- sedang dipakai maupun disimpan. Ini mencegah deathbox mengambil
+  -- topi/masker/jaket duplikat.
+  local function supportClothingSlotFilled(comp, slot)
+    if comp == nil or slot == nil then return false end
+    local found = false
+    pcall(function()
+      local u = import("BackpackUtils")
+      if u and type(u.GetClothingAndArmorInBackpack) == "function" then
+        for _, item in ipairs(supportArray(u.GetClothingAndArmorInBackpack(comp))) do
+          local d = supportIndex(item, "DefineID")
+          local tsid = tonumber(supportIndex(d, "TypeSpecificID"))
+          local icfg = supportItemCfg(tsid)
+          local isub = tonumber(supportIndex(icfg, "ItemSubType"))
+          if supportClothingSlot(isub) == slot then found = true break end
+        end
+      end
+    end)
+    if found then return true end
+    -- Fallback build tanpa GetClothingAndArmorInBackpack.
+    for _, sub in ipairs(SUPPORT_CLOTH_GROUP[slot] or {}) do
+      pcall(function()
+        local u = import("BackpackUtils")
+        if u and type(u.GetAllItemsInBackpackWithOneSubType) == "function" then
+          for _, _ in ipairs(supportArray(u.GetAllItemsInBackpackWithOneSubType(comp, sub, 0))) do
+            found = true break
+          end
+        end
+      end)
+      if found then return true end
+    end
+    return found
+  end
+
+  -- Pakaian hanya diambil saat slotnya kosong. Type 4 (Clothing) dan type 5
+  -- yang bersubtype pakaian sama-sama lewat sini; subtype tak dikenal
+  -- dilewati agar tidak menambah pakaian duplikat.
+  local function supportClothingPickAllowed(it, comp)
+    if comp == nil then return false, nil end
+    local cfg = supportItemCfg(it.id)
+    local sub = tonumber(supportIndex(cfg, "ItemSubType"))
+    local slot = supportClothingSlot(sub)
+    if slot == nil then return false, nil end
+    if supportClothingSlotFilled(comp, slot) then return false, nil end
+    return true, nil
   end
 
   -- Backpack (subtype 501): hanya naik level. Backpack lv3 terpasang
@@ -8997,12 +9109,20 @@ do
     if typ == 3 then
       return supportAmmoPickAllowed(it, me, panel), nil
     end
+    -- Pakaian punya ItemType 4 (Clothing). Hanya boleh diambil bila slot
+    -- pakaian yang sama belum terisi; ini yang mencegah deathbox mengambil
+    -- topi/masker/jaket/celana/sepatu/kacamata/sarung tangan duplikat.
+    if typ == 4 then
+      local comp = supportBackpack(me, panel)
+      return supportClothingPickAllowed(it, comp)
+    end
     if typ == 5 then
       local cfg = supportItemCfg(it.id)
       local sub = tonumber(supportIndex(cfg, "ItemSubType"))
-      -- Pakaian (topi/masker/jaket/celana/sepatu/kacamata) tidak pernah
-      -- di-auto-pick; ini juga yang mencegah deathbox mengambil pakaian.
-      if supportIsClothing(sub) then return false, nil end
+      if supportIsClothing(sub) then
+        local comp = supportBackpack(me, panel)
+        return supportClothingPickAllowed(it, comp)
+      end
       if sub == 501 then
         local holdKey = "backpack"
         if (SUPPORT._gearHold[holdKey] or 0) > now then return false, holdKey end
@@ -9292,6 +9412,7 @@ do
     end
     if (now - (SUPPORT._pickAt or -999.0)) < SUPPORT_PICK_WINDOW then return end
     SUPPORT._pickAt = now
+    if supportActionBusy(me) then return end
     local pm = nil
     pcall(function() if me.GetPickupManager then pm = me:GetPickupManager() end end)
     if not ESPValid(pm) then pm = nil end
