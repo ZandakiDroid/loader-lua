@@ -6770,10 +6770,19 @@ do
     pcall(function() win = um.GetUI(id) end)
     if win == nil then pcall(function() win = um:GetUI(id) end) end
     local map = nil
+    -- EntireMapWindow membuat CurrentMapUIBP secara lazy; GetEntireMapUIBP()
+    -- memaksa inisialisasi supaya map besar ikut dapat ring next circle.
     pcall(function()
-      local root = win and win.UIRoot
-      map = root and root.CurrentMapUIBP
+      if win and type(win.GetEntireMapUIBP) == "function" then
+        map = win:GetEntireMapUIBP()
+      end
     end)
+    if not ESPValid(map) then
+      pcall(function()
+        local root = win and win.UIRoot
+        map = root and root.CurrentMapUIBP
+      end)
+    end
     if not ESPValid(map) then return end
     for i = 1, #list do
       if list[i] == map then return end
@@ -6805,6 +6814,85 @@ do
     return v
   end
 
+  -- Zona berikutnya SELALU berada di dalam zona sekarang: server memilih
+  -- circle baru yang seluruhnya termuat di circle lama. Jadi lingkaran "next"
+  -- ditentukan dari geometri, bukan dari nama field. WhiteCircle/BlueCircle
+  -- bisa bertukar arti antar mode, tetapi yang termuat di lingkaran lain
+  -- selalu zona berikutnya.
+  function EX.GetZoneCircles(data)
+    data = data or EX.GetZoneData()
+    if not data then return nil, nil, nil end
+    local w = zoneMapCircle(data.white)
+    local b = zoneMapCircle(data.blue)
+    local outer, inner = nil, nil
+    if w ~= nil and b ~= nil then
+      local dx = w.X - b.X
+      local dy = w.Y - b.Y
+      local d = math.sqrt(dx * dx + dy * dy)
+      if d + w.Z <= b.Z + 1.0 then
+        outer, inner = b, w
+      elseif d + b.Z <= w.Z + 1.0 then
+        outer, inner = w, b
+      elseif w.Z <= b.Z then
+        -- Fase transisi (belum saling termuat): radius kecil = next.
+        outer, inner = b, w
+      else
+        outer, inner = w, b
+      end
+    elseif w ~= nil then
+      outer, inner = w, w
+    elseif b ~= nil then
+      outer, inner = b, b
+    end
+    return outer, inner, data
+  end
+
+  -- Widget CustomBlueCircle dibuat game lewat OnCreateMapWidget. Di beberapa
+  -- build BindMapUIBase menerima objek yang salah sehingga MapUIBase nil dan
+  -- ResetSize selalu error: widget ada tetapi tidak pernah tampil. Perbaiki
+  -- binding sebelum/sesudah UpdateCircle.
+  local function zoneMapRepair(map, w)
+    if w == nil then return end
+    pcall(function()
+      local base = map.CurrentMapUI
+      if base ~= nil then
+        -- BindMapUIBase di beberapa build menerima objek yang salah dan
+        -- meninggalkan MapUIBase nil / bukan widget map. ResetSize butuh
+        -- GetLevelToMapScale, LevelLandScapeCenterC, ImageBlueCircleScale.
+        local bad = w.MapUIBase == nil
+        if not bad then
+          local okScale = false
+          pcall(function() okScale = type(w.MapUIBase.GetLevelToMapScale) == "function" end)
+          local okCenter = false
+          pcall(function() okCenter = w.MapUIBase.LevelLandScapeCenterC ~= nil end)
+          bad = not (okScale and okCenter)
+        end
+        if bad then w.MapUIBase = base end
+      end
+      w.MapUI = map
+      w.bIsMiniMap = map.bIsMiniMap
+    end)
+  end
+
+  local function zoneMapApply(map, w, circle)
+    if w == nil then return false end
+    local ok = pcall(function() w:UpdateCircle(circle) end)
+    if not ok then
+      zoneMapRepair(map, w)
+      ok = pcall(function() w:UpdateCircle(circle) end)
+    end
+    if not ok then
+      -- Map belum siap (CurrentMapUI belum dibuat). Tahan widget; jangan
+      -- hancurkan dan buat ulang tiap detik sampai map siap.
+      local ready = false
+      pcall(function() ready = map.CurrentMapUI ~= nil end)
+      return ready == false
+    end
+    local closed = false
+    pcall(function() closed = w.bIsClosed == true end)
+    return not closed
+  end
+
   -- Sinkronkan next circle ke widget map. `circle` nil = sembunyikan.
   -- Throttle 1 detik: DrawZone dipanggil tiap frame, sedangkan posisi/radius
   -- zona hanya berubah per fase.
@@ -6823,28 +6911,16 @@ do
         if old[j].UI == map then ref = old[j] break end
       end
       if want ~= nil then
-        local function apply(w)
-          local ok = pcall(function() w:UpdateCircle(want) end)
-          if not ok then return false end
-          local closed = false
-          pcall(function() closed = w.bIsClosed == true end)
-          return not closed
-        end
-        local function isMine(w)
-          local mine = false
-          pcall(function() mine = w._RapzhangZoneMap == true end)
-          return mine
-        end
         local w = nil
         if ref ~= nil and ref.W ~= nil then
-          if apply(ref.W) then
+          if zoneMapApply(map, ref.W, want) then
             w = ref.W
           else
             -- Widget lama sudah ditutup game / map: lepas lalu buat ulang.
             pcall(function() ref.W:Close() end)
             pcall(function()
               local cw = map.CustomBlueWidget
-              if cw ~= nil and (cw == ref.W or isMine(cw)) then
+              if cw ~= nil and (cw == ref.W or cw._RapzhangZoneMap == true) then
                 map.CustomBlueWidget = nil
               end
             end)
@@ -6855,9 +6931,14 @@ do
           pcall(function() cur = map.CustomBlueWidget end)
           if cur ~= nil then
             -- Slot terisi: adopsi hanya kalau memang widget buatan kita.
-            if isMine(cur) and apply(cur) then w = cur end
+            local mine = false
+            pcall(function() mine = cur._RapzhangZoneMap == true end)
+            if mine then
+              zoneMapRepair(map, cur)
+              if zoneMapApply(map, cur, want) then w = cur end
+            end
           else
-            -- Slot kosong: buat widget lewat jalur resmi game.
+            -- Slot kosong: buat lewat jalur resmi game.
             -- BlueCircleUI menutup CustomBlueWidget sekali saat blue circle
             -- asli mulai tampil. Kalau itu terjadi setelah widget kita dibuat,
             -- event pembuatan widget tidak dipasang lagi dan next circle
@@ -6877,7 +6958,8 @@ do
             end
             if cur ~= nil then
               pcall(function() cur._RapzhangZoneMap = true end)
-              if apply(cur) then w = cur end
+              zoneMapRepair(map, cur)
+              if zoneMapApply(map, cur, want) then w = cur end
             end
           end
         end
@@ -6907,8 +6989,10 @@ do
     end
     local myLoc = nil
     pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
-    local white = data.white
-    local whiteOK = white and tonumber(white.X) and tonumber(white.Y) and tonumber(white.Z) and tonumber(white.Z) > 0
+    -- Zona berikutnya selalu termuat di dalam zona sekarang, jadi yang
+    -- dipakai untuk NEXT adalah lingkaran dalam (inner), bukan field putih.
+    local outer, inner = EX.GetZoneCircles(data)
+    local innerOK = inner ~= nil
     if showTimer then
       local parts = {}
       if type(data.wave) == "number" and data.wave >= 0 then
@@ -6919,22 +7003,22 @@ do
       if type(data.remain) == "number" then
         parts[#parts + 1] = "SHRINK " .. fmtTime(data.remain)
       end
-      if whiteOK and myLoc then
-        local dx = (tonumber(white.X) or 0) - myLoc.X
-        local dy = (tonumber(white.Y) or 0) - myLoc.Y
-        local dist = math.sqrt(dx * dx + dy * dy) - (tonumber(white.Z) or 0)
+      if innerOK and myLoc then
+        local dx = inner.X - myLoc.X
+        local dy = inner.Y - myLoc.Y
+        local dist = math.sqrt(dx * dx + dy * dy) - inner.Z
         if dist <= 0 then
           parts[#parts + 1] = "NEXT INSIDE"
         else
           parts[#parts + 1] = string.format("NEXT %dm", math.floor(dist / 100.0 + 0.5))
         end
       end
-      local blue = data.blue
-      if blue and tonumber(blue.Z) and tonumber(blue.Z) > 0 and myLoc then
-        local dx = (tonumber(blue.X) or 0) - myLoc.X
-        local dy = (tonumber(blue.Y) or 0) - myLoc.Y
+      -- SAFE = pemain masih di dalam zona aktif (lingkaran luar).
+      if outer ~= nil and myLoc then
+        local dx = outer.X - myLoc.X
+        local dy = outer.Y - myLoc.Y
         local dist = math.sqrt(dx * dx + dy * dy)
-        if dist <= (tonumber(blue.Z) or 0) then
+        if dist <= outer.Z then
           parts[#parts + 1] = "SAFE"
         end
       end
@@ -6945,7 +7029,7 @@ do
     -- Ring next circle sekarang digambar di map (mini + entire map) dengan
     -- widget CustomBlueCircle milik game; tidak ada lagi ring proyeksi 3D.
     EX.HideRing("zone_ring")
-    pcall(EX.SyncZoneMap, now, showNext and whiteOK and white or nil)
+    pcall(EX.SyncZoneMap, now, showNext and inner or nil)
   end
 
   function EX.Update(pc, vw, vh, camLoc, now)
@@ -8597,8 +8681,9 @@ do
   -- ------------------------------------------------------------
   -- Tidak menggambar widget dan tidak butuh canvas, jadi driver tetap
   -- hidup lewat ESP.Tick walau ESP 2 dan ESP LOOT sama-sama OFF.
-  -- Pickup memakai jalur tanpa animasi game:
-  -- PickupManager:PickUpTarget(wrapper, InstanceID, count, 0).
+  -- Pickup memakai jalur resmi panel tanpa animasi:
+  -- PickUpListPanel_BP:PickUpWrapperActorWithoutAnim(me, SearchItemResult, count).
+  -- Jumlah selalu dari panel:GetUseful2, bukan jumlah stack di ground.
   -- ============================================================
   local SUPPORT = {}
   ESP.Support = SUPPORT
@@ -9361,8 +9446,9 @@ do
       end
     end
     -- Build yang punya flag boolean harus mengikuti auto-pick game: hanya
-    -- bHighPriority == true. Build tanpa flag sama sekali menerima semua
-    -- entri panel (perilaku lama).
+    -- bHighPriority == true. Build tanpa flag tetap dikumpulkan untuk
+    -- diagnostik, tetapi FastLoot menolaknya karena tidak bisa memastikan
+    -- item itu memang kandidat auto-pick bawaan.
     local strict = false
     for _, rec in ipairs(items) do
       if type(rec.item.hp) == "boolean" then strict = true break end
@@ -9372,9 +9458,9 @@ do
       if not strict or item.hp == true then
         local loc = nil
         pcall(function() loc = ESP.ActorLocation(item.wrapper) end)
-        -- Kandidat tanpa wrapper pickup yang pasti hanya berguna untuk
-        -- fallback PickUpTarget; simpan exact supaya FastLoot tidak
-        -- memanggil jalur panel dengan struct yang salah.
+        -- Kandidat tanpa wrapper pickup yang pasti tidak bisa dipakai
+        -- PickUpWrapperActorWithoutAnim; simpan exact supaya FastLoot
+        -- melewatinya dan tidak mengirim struct yang salah.
         if loc then
           local dist = ESP.DistMeters(meLoc, loc)
           if dist <= radius then
@@ -9387,7 +9473,7 @@ do
                 count = item.count or 1, id = item.id, typ = item.typ,
                 dist = dist, prio = supportPriority(item.typ, item.id),
                 key = key, result = item.result, define = item.define,
-                exact = item.exact,
+                exact = item.exact, hp = item.hp, panel = true,
               }
             end
           end
@@ -9509,14 +9595,19 @@ do
     local groundRaw = supportCollectPanel(panel, meLoc, radius, out, seenKey)
     -- groundRaw == 0 berarti panel belum punya data ground (UI belum
     -- dibangun, build tanpa panel, atau array ground kosong). Scan world
-    -- tetap dipakai untuk ground supaya pickup tidak mati; kalau panel
-    -- punya data ground, panel yang menentukan filter.
+    -- tetap dijalankan untuk diagnostik, tetapi entri world tidak pernah
+    -- diambil: tanpa GetUseful2 batas pickup game tidak bisa dipastikan.
     if groundRaw <= 0 then
       supportCollectWorld(meLoc, radius, out, seenKey, me, now)
     end
-    -- Terdekat dulu; prioritas lama hanya tie-breaker supaya item penting
-    -- tidak menang hanya karena jenisnya.
+    -- Entri panel (yang bisa diambil lewat GetUseful2) selalu di depan;
+    -- entri world hanya diagnostik dan tidak boleh mendorong kandidat panel
+    -- keluar dari batas 40. Setelah itu terdekat dulu; prioritas lama hanya
+    -- tie-breaker supaya item penting tidak menang hanya karena jenisnya.
     table.sort(out, function(x, y)
+      local xp = x.panel == true and 0 or 1
+      local yp = y.panel == true and 0 or 1
+      if xp ~= yp then return xp < yp end
       if x.dist ~= y.dist then return x.dist < y.dist end
       if x.prio ~= y.prio then return x.prio < y.prio end
       return tostring(x.key) < tostring(y.key)
@@ -9557,9 +9648,6 @@ do
     if (now - (SUPPORT._pickAt or -999.0)) < SUPPORT_PICK_WINDOW then return end
     SUPPORT._pickAt = now
     if supportActionBusy(me) then return end
-    local pm = nil
-    pcall(function() if me.GetPickupManager then pm = me:GetPickupManager() end end)
-    if not ESPValid(pm) then pm = nil end
     local panel = supportPanel(now)
     local panelFn = false
     if panel ~= nil then
@@ -9567,45 +9655,49 @@ do
       pcall(function() fn = panel.PickUpWrapperActorWithoutAnim end)
       panelFn = type(fn) == "function"
     end
-    if not pm and not panelFn then return end
+    -- Fast loot hanya mempercepat auto pickup bawaan. Tanpa panel tidak ada
+    -- GetUseful2, artinya batas pickup game tidak bisa dipastikan: jangan
+    -- menebak dan jangan memakai jumlah stack mentah.
+    if not panelFn then return end
+    local usefulFn = nil
+    pcall(function() usefulFn = panel.GetUseful2 end)
+    if type(usefulFn) ~= "function" then return end
     local radius = supportDistance("Sup_FastLootDist", 4.0)
     local meLoc = ESP.ActorLocation(me)
     if not meLoc then return end
     local budget = SUPPORT_PICK_BUDGET
     for _, it in ipairs(SUPPORT.Pickups) do
       if budget <= 0 then break end
-      if (SUPPORT.Cooldown[it.key] or 0) <= now then
+      -- Hanya entri hasil search panel (punya SearchItemResult) yang ditandai
+      -- bHighPriority, sama seperti AutoPickGroundItem/AutoPickTombBoxItem.
+      -- Entri world scan tidak punya GetUseful2, jadi tidak boleh diambil.
+      if it.panel == true and it.hp == true and it.exact == true
+        and it.result ~= nil and (SUPPORT.Cooldown[it.key] or 0) <= now then
         local loc = ESP.ActorLocation(it.wrapper)
         if loc and ESPValid(it.wrapper) then
           local d = ESP.DistMeters(meLoc, loc)
           if d <= radius then
-            local count = math.max(1, math.floor(tonumber(it.count) or 1))
             local skip = false
-            -- GetUseful2 adalah fungsi yang dipakai game sendiri untuk
-            -- menghitung jumlah yang boleh diambil menurut pickup setting
-            -- utama (limit jenis, kapasitas, status item). 0 = tidak
-            -- berguna menurut setting, jadi jangan diambil.
-            local usefulFn = nil
-            if panel ~= nil then pcall(function() usefulFn = panel.GetUseful2 end) end
-            if type(usefulFn) == "function" and it.result then
-              local useful = nil
-              pcall(function() useful = usefulFn(panel, it.define, it.result) end)
-              if useful ~= nil then
-                useful = tonumber(useful)
-                if not useful or useful <= 0 then
-                  skip = true
-                else
-                  count = math.max(1, math.floor(useful))
-                  if it.count and it.count > 0 then
-                    count = math.min(count, math.floor(it.count))
-                  end
-                end
-              end
+            local count = 0
+            -- GetUseful2 adalah satu-satunya sumber jumlah pickup: nilainya
+            -- sudah memperhitungkan pickup setting, limit jenis, kapasitas
+            -- tas, dan jumlah yang sudah dibawa. 0/nil = jangan ambil.
+            local useful = nil
+            local usefulOK = pcall(function()
+              useful = usefulFn(panel, it.define, it.result)
+            end)
+            useful = tonumber(useful)
+            if not usefulOK or useful == nil or useful <= 0 then
+              skip = true
+            else
+              count = math.floor(useful)
+              local stack = math.floor(tonumber(it.count) or 0)
+              if stack > 0 and count > stack then count = stack end
+              if count < 1 then skip = true end
             end
             -- Guard tambahan di luar GetUseful2: jangan menukar senjata
             -- yang sudah mengisi slot, dan jangan mengganti helmet/vest
-            -- yang masih lebih baik. Ini juga berlaku di world fallback
-            -- yang tidak punya GetUseful2.
+            -- yang masih lebih baik.
             local holdKey = nil
             if not skip then
               local allowed, gearKey = supportItemGate(it, me, panel, now)
@@ -9616,24 +9708,19 @@ do
             if not skip then
               -- Jalur game tanpa animasi memakai struct hasil search asli,
               -- termasuk InstanceID dan MainItemData yang benar.
-              if panelFn and it.result and it.exact == true then
-                ok = pcall(function()
-                  panel:PickUpWrapperActorWithoutAnim(me, it.result, count)
-                end)
-              end
-              if not ok and pm then
-                ok = pcall(function() pm:PickUpTarget(it.wrapper, it.iid, count, 0) end)
-              end
-              if ok then
-                budget = budget - 1
-                SUPPORT.NoteAttempt(it.key, now)
-                if holdKey then
-                  -- Tahan pickup sejenis sebentar: state server belum tentu
-                  -- sudah sinkron, jadi jangan sampai dua armor/senjata
-                  -- diambil beruntun dan saling menukar.
-                  SUPPORT._gearHold[holdKey] = math.max(
-                    SUPPORT._gearHold[holdKey] or 0, now + 1.2)
-                end
+              ok = pcall(function()
+                panel:PickUpWrapperActorWithoutAnim(me, it.result, count)
+              end)
+            end
+            if ok then
+              budget = budget - 1
+              SUPPORT.NoteAttempt(it.key, now)
+              if holdKey then
+                -- Tahan pickup sejenis sebentar: state server belum tentu
+                -- sudah sinkron, jadi jangan sampai dua armor/senjata
+                -- diambil beruntun dan saling menukar.
+                SUPPORT._gearHold[holdKey] = math.max(
+                  SUPPORT._gearHold[holdKey] or 0, now + 1.2)
               end
             else
               -- Cek ulang setelah 1 dtk: bisa jadi baru berguna setelah
