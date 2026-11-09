@@ -8471,6 +8471,10 @@ do
   SUPPORT._panelSearchAt = -999.0
   SUPPORT._classAt = -999.0
   SUPPORT._classPool = {}
+  SUPPORT._gearHold = {}
+  SUPPORT._itemCfg = {}
+  SUPPORT._armorLv = {}
+  SUPPORT._durabilityType = nil
 
   local SUPPORT_PICK_BUDGET = 2
   local SUPPORT_PICK_WINDOW = 0.10
@@ -8617,6 +8621,294 @@ do
       result = sr, define = define, wrapper = wrapper, exact = exact,
       id = id, typ = typ, count = cnt, iid = iid, hp = hp,
     }
+  end
+
+  -- ------------------------------------------------------------
+  -- Guard senjata & armor. Tujuan: fast loot tidak boleh menukar
+  -- senjata yang sudah menempati slot, dan tidak boleh mengganti
+  -- helmet/vest yang masih lebih baik dari item loot.
+  -- ------------------------------------------------------------
+
+  -- Config item (ItemSubType, Durability) di-cache per TypeSpecificID.
+  local function supportItemCfg(id)
+    id = tonumber(id)
+    if not id or id <= 0 then return nil end
+    local cache = SUPPORT._itemCfg
+    if cache == nil then cache = {} SUPPORT._itemCfg = cache end
+    local hit = cache[id]
+    if hit ~= nil then return hit or nil end
+    local itemCfg = nil
+    pcall(function()
+      local dt = rawget(_G, "CDataTable")
+      if dt and type(dt.GetTableData) == "function" then
+        itemCfg = dt.GetTableData("Item", id)
+      end
+    end)
+    cache[id] = itemCfg or false
+    return itemCfg
+  end
+
+  -- Sisa durability dari list FBattleItemAdditionalData. Field list beda
+  -- antara BattleItemData (AdditionalData) dan hasil search
+  -- (AdditionalDataList); pemanggil yang memilih field.
+  local function supportRemainDurability(adList)
+    if adList == nil then return nil end
+    local enumVal = SUPPORT._durabilityType
+    if enumVal == nil then
+      enumVal = false
+      pcall(function()
+        local E = import("EBattleItemAdditionalDataType")
+        if E then enumVal = tonumber(E.RemainingDuability) or false end
+      end)
+      SUPPORT._durabilityType = enumVal
+    end
+    local fallback, floats = nil, 0
+    for _, ad in ipairs(supportArray(adList)) do
+      local dt = tonumber(supportIndex(ad, "EDataType"))
+      local fv = tonumber(supportIndex(ad, "FloatData"))
+      if enumVal and dt == enumVal then return fv end
+      if fv ~= nil then
+        floats = floats + 1
+        if fallback == nil then fallback = fv end
+      end
+    end
+    -- Build tanpa import enum: hanya pakai FloatData bila tunggal, agar
+    -- data affix/tipe lain tidak salah dibaca sebagai durability.
+    if enumVal == false and floats == 1 then return fallback end
+    return nil
+  end
+
+  -- Level armor 1..3. Utamakan helper game; fallback mengikuti
+  -- OBPlayerInfoUI:SetLvByID (digit terakhir ItemID).
+  local function supportArmorLevel(tsid)
+    tsid = tonumber(tsid)
+    if not tsid or tsid <= 0 then return 0 end
+    local cache = SUPPORT._armorLv
+    if cache == nil then cache = {} SUPPORT._armorLv = cache end
+    local hit = cache[tsid]
+    if hit ~= nil then return hit end
+    local level = nil
+    pcall(function()
+      local u = import("BackpackUtils")
+      if u and type(u.GetEquipmentLevel) == "function" then
+        level = tonumber(u.GetEquipmentLevel(tsid))
+      end
+    end)
+    if level == nil or level <= 0 then
+      local d = tsid % 10
+      if d == 1 or d == 4 or d == 7 then level = 1
+      elseif d == 2 or d == 5 or d == 8 then level = 2
+      else level = 3 end
+    end
+    cache[tsid] = level
+    return level
+  end
+
+  local function supportBackpack(me, panel)
+    local comp = nil
+    if panel ~= nil then
+      pcall(function()
+        if type(panel.GetBackpackComponent) == "function" then
+          comp = panel:GetBackpackComponent()
+        end
+      end)
+    end
+    if comp == nil then
+      pcall(function()
+        if me and type(me.GetBackpackComponent) == "function" then
+          comp = me:GetBackpackComponent()
+        end
+      end)
+    end
+    if comp == nil then
+      pcall(function()
+        local pc = nil
+        if me and type(me.GetPlayerController) == "function" then
+          pc = me:GetPlayerController()
+        end
+        if pc and type(pc.GetBackpackComponent) == "function" then
+          comp = pc:GetBackpackComponent()
+        end
+      end)
+    end
+    if comp == nil then
+      pcall(function()
+        local lib = import("STExtraBlueprintFunctionLibrary")
+        if lib and type(lib.GetBackpackComponentFromCharacter) == "function" then
+          comp = lib.GetBackpackComponentFromCharacter(me)
+        end
+      end)
+    end
+    return comp
+  end
+
+  -- BattleItemData armor yang sedang dipakai (bEquipping), dicari per
+  -- subtype 502 (helmet) / 503 (vest).
+  local function supportEquippedArmor(comp, subType)
+    if comp == nil then return nil end
+    local found = nil
+    pcall(function()
+      local u = import("BackpackUtils")
+      if u and type(u.GetAllItemsInBackpackWithOneSubType) == "function" then
+        local arr = u.GetAllItemsInBackpackWithOneSubType(comp, subType, 0)
+        for _, item in ipairs(supportArray(arr)) do
+          if supportIndex(item, "bEquipping") then
+            found = item
+            break
+          end
+        end
+      end
+    end)
+    if found == nil then
+      pcall(function()
+        local u = import("BackpackUtils")
+        if u and type(u.GetEuqippedArmorInBackpack) == "function" then
+          for _, item in ipairs(supportArray(u.GetEuqippedArmorInBackpack(comp))) do
+            local d = supportIndex(item, "DefineID")
+            local tsid = tonumber(supportIndex(d, "TypeSpecificID"))
+            local cfg = supportItemCfg(tsid)
+            if tonumber(supportIndex(cfg, "ItemSubType")) == subType then
+              found = item
+              break
+            end
+          end
+        end
+      end)
+    end
+    return found
+  end
+
+  local function supportWeaponManager(me, panel)
+    local wm = nil
+    pcall(function()
+      if me and type(me.GetWeaponManager) == "function" then
+        wm = me:GetWeaponManager()
+      end
+    end)
+    if wm == nil and panel ~= nil then
+      pcall(function()
+        if type(panel.GetWeaponManager) == "function" then
+          wm = panel:GetWeaponManager()
+        end
+      end)
+    end
+    return wm
+  end
+
+  local function supportSlotBusy(wm, slotName)
+    if wm == nil then return nil end
+    local slot = nil
+    pcall(function()
+      local E = import("ESurviveWeaponPropSlot")
+      if E then slot = tonumber(E[slotName]) end
+    end)
+    if slot == nil then
+      -- Nilai enum client: Main1=1, Main2=2, Sub=3, Melee=4.
+      local fallback = {
+        SWPS_MainShootWeapon1 = 1, SWPS_MainShootWeapon2 = 2,
+        SWPS_SubShootWeapon = 3, SWPS_MeleeWeapon = 4,
+      }
+      slot = fallback[slotName]
+    end
+    if slot == nil then return nil end
+    local w = nil
+    local callOk = pcall(function() w = wm:GetInventoryWeaponByPropSlot(slot) end)
+    if not callOk then return nil end
+    return ESPValid(w)
+  end
+
+  -- Senjata hanya diambil bila slot tujuannya kosong. Tidak ada jalur
+  -- yang menukar senjata terpasang; bila status slot tidak bisa dibaca,
+  -- item senjata dilewati (lebih aman daripada swap).
+  local function supportWeaponPickAllowed(it, me, panel)
+    local cfg = supportItemCfg(it.id)
+    local sub = tonumber(supportIndex(cfg, "ItemSubType"))
+    local wm = supportWeaponManager(me, panel)
+    if wm == nil then return false, "weapon" end
+    if sub == 106 then
+      local busy = supportSlotBusy(wm, "SWPS_SubShootWeapon")
+      if busy == nil or busy == true then return false, "weapon" end
+      return true, "weapon"
+    end
+    if sub == 107 or sub == 108 then
+      local busy = supportSlotBusy(wm, "SWPS_MeleeWeapon")
+      if busy == nil or busy == true then return false, "weapon" end
+      return true, "weapon"
+    end
+    local a = supportSlotBusy(wm, "SWPS_MainShootWeapon1")
+    local b = supportSlotBusy(wm, "SWPS_MainShootWeapon2")
+    if a == nil or b == nil then return false, "weapon" end
+    if a == true and b == true then return false, "weapon" end
+    return true, "weapon"
+  end
+
+  local function supportRatio(remain, maxD)
+    if maxD and maxD > 0 and remain ~= nil then
+      local r = remain / maxD
+      if r < 0 then return 0.0 end
+      if r > 1 then return 1.0 end
+      return r
+    end
+    return 1.0
+  end
+
+  -- Helmet/vest hanya boleh diambil bila benar-benar lebih baik:
+  --  - tidak ada armor terpasang;
+  --  - level lebih tinggi (durability baru masih terpakai);
+  --  - level sama dan durability baru lebih tinggi dengan margin jelas;
+  --  - armor lama praktis rusak dan armor baru masih layak.
+  -- Armor level sama/lebih rendah yang masih penuh tidak pernah ditukar.
+  local function supportArmorPickAllowed(it, sub, cfg, comp)
+    -- Tanpa backpack component status armor terpasang tidak bisa dipastikan;
+    -- jangan mengambil helmet/vest (bisa menukar armor penuh).
+    if comp == nil then return false, nil end
+    local maxD = tonumber(supportIndex(cfg, "Durability"))
+    local mid = supportIndex(it.result, "MainItemData")
+    local ad = supportIndex(mid, "AdditionalDataList")
+    if ad == nil then ad = supportIndex(mid, "AdditionalData") end
+    local newRatio = supportRatio(supportRemainDurability(ad), maxD)
+    local newLevel = supportArmorLevel(it.id)
+    local cur = supportEquippedArmor(comp, sub)
+    if cur == nil then return newRatio > 0.02, nil end
+    local curDef = supportIndex(cur, "DefineID")
+    local curID = tonumber(supportIndex(curDef, "TypeSpecificID"))
+    local curCfg = supportItemCfg(curID)
+    local curMax = tonumber(supportIndex(curCfg, "Durability"))
+    local curAD = supportIndex(cur, "AdditionalData")
+    if curAD == nil then curAD = supportIndex(cur, "AdditionalDataList") end
+    local curRatio = supportRatio(supportRemainDurability(curAD), curMax)
+    local curLevel = supportArmorLevel(curID)
+    if curRatio >= 0.95 and newLevel <= curLevel then return false, nil end
+    if newLevel > curLevel then return newRatio > 0.02, nil end
+    if newLevel == curLevel then
+      if curRatio <= 0.10 then return newRatio >= 0.50, nil end
+      return newRatio >= curRatio + 0.20, nil
+    end
+    -- Level baru lebih rendah: hanya layak bila armor lama praktis rusak.
+    return curRatio <= 0.10 and newRatio >= 0.50, nil
+  end
+
+  local function supportItemGate(it, me, panel, now)
+    local typ = it.typ
+    if typ == nil then
+      -- Sebagian wrapper hanya mengekspos ID; ambil tipe dari config.
+      typ = tonumber(supportIndex(supportItemCfg(it.id), "ItemType"))
+    end
+    if typ == 1 then
+      if (SUPPORT._gearHold.weapon or 0) > now then return false, "weapon" end
+      return supportWeaponPickAllowed(it, me, panel)
+    end
+    if typ == 5 then
+      local cfg = supportItemCfg(it.id)
+      local sub = tonumber(supportIndex(cfg, "ItemSubType"))
+      if sub ~= 502 and sub ~= 503 then return true, nil end
+      local holdKey = "armor" .. tostring(sub)
+      if (SUPPORT._gearHold[holdKey] or 0) > now then return false, holdKey end
+      local comp = supportBackpack(me, panel)
+      local allowed = supportArmorPickAllowed(it, sub, cfg, comp)
+      return allowed, holdKey
+    end
+    return true, nil
   end
 
   -- Instance PickUpListPanel adalah sumber filter pickup setting utama.
@@ -8799,6 +9091,7 @@ do
     SUPPORT._panelSearchAt = -999.0
     SUPPORT._classAt = -999.0
     SUPPORT._classPool = {}
+    SUPPORT._gearHold = {}
   end
 
   function SUPPORT.Prune(now)
@@ -8935,6 +9228,16 @@ do
                 end
               end
             end
+            -- Guard tambahan di luar GetUseful2: jangan menukar senjata
+            -- yang sudah mengisi slot, dan jangan mengganti helmet/vest
+            -- yang masih lebih baik. Ini juga berlaku di world fallback
+            -- yang tidak punya GetUseful2.
+            local holdKey = nil
+            if not skip then
+              local allowed, gearKey = supportItemGate(it, me, panel, now)
+              if not allowed then skip = true end
+              holdKey = gearKey
+            end
             local ok = false
             if not skip then
               -- Jalur game tanpa animasi memakai struct hasil search asli,
@@ -8950,6 +9253,13 @@ do
               if ok then
                 budget = budget - 1
                 SUPPORT.NoteAttempt(it.key, now)
+                if holdKey then
+                  -- Tahan pickup sejenis sebentar: state server belum tentu
+                  -- sudah sinkron, jadi jangan sampai dua armor/senjata
+                  -- diambil beruntun dan saling menukar.
+                  SUPPORT._gearHold[holdKey] = math.max(
+                    SUPPORT._gearHold[holdKey] or 0, now + 1.2)
+                end
               end
             else
               -- Cek ulang setelah 1 dtk: bisa jadi baru berguna setelah
