@@ -7264,7 +7264,7 @@ do
           if not cnt or cnt < 1 then cnt = 1 end
           if id and id > 0 then
             out[#out + 1] = {
-              id = id, typ = typ, count = cnt,
+              id = id, typ = typ, count = cnt, define = d,
               -- InstanceID dipakai PickupManager:PickUpTarget (pickup per
               -- entri, bukan per wrapper) untuk fast auto pickup.
               -- Loot ground sering hanya punya ID.InstanceID; deathbox
@@ -8795,8 +8795,7 @@ do
     return wm
   end
 
-  local function supportSlotBusy(wm, slotName)
-    if wm == nil then return nil end
+  local function supportSlotEnum(slotName)
     local slot = nil
     pcall(function()
       local E = import("ESurviveWeaponPropSlot")
@@ -8810,6 +8809,12 @@ do
       }
       slot = fallback[slotName]
     end
+    return slot
+  end
+
+  local function supportSlotBusy(wm, slotName)
+    if wm == nil then return nil end
+    local slot = supportSlotEnum(slotName)
     if slot == nil then return nil end
     local w = nil
     local callOk = pcall(function() w = wm:GetInventoryWeaponByPropSlot(slot) end)
@@ -8840,6 +8845,90 @@ do
     if a == nil or b == nil then return false, "weapon" end
     if a == true and b == true then return false, "weapon" end
     return true, "weapon"
+  end
+
+  -- TypeSpecificID ammo yang dipakai senjata di slot aktif (primary 1/2 +
+  -- pistol). Ammo jenis lain tidak perlu diambil dan hanya memenuhi tas.
+  local function supportWeaponAmmoSet(me, panel)
+    local set = {}
+    local wm = supportWeaponManager(me, panel)
+    if wm == nil then return set end
+    local slots = {
+      "SWPS_MainShootWeapon1", "SWPS_MainShootWeapon2",
+      "SWPS_SubShootWeapon",
+    }
+    local function addBullet(b)
+      local id = tonumber(supportIndex(b, "TypeSpecificID"))
+      if id and id > 0 then set[id] = true end
+    end
+    for _, name in ipairs(slots) do
+      local slot = supportSlotEnum(name)
+      if slot ~= nil then
+        local w = nil
+        local ok = pcall(function() w = wm:GetInventoryWeaponByPropSlot(slot) end)
+        if ok and ESPValid(w) then
+          pcall(function()
+            local comp = nil
+            if type(w.GetWeaponEntityComponent) == "function" then
+              comp = w:GetWeaponEntityComponent()
+            end
+            if comp == nil then comp = w.WeaponEntityComp end
+            addBullet(supportIndex(comp, "BulletType"))
+          end)
+          pcall(function()
+            local glc = w.GrenadeLaunchComponent
+            if glc then addBullet(glc.BulletType) end
+          end)
+        end
+      end
+    end
+    return set
+  end
+
+  local function supportAmmoPickAllowed(it, me, panel)
+    local set = supportWeaponAmmoSet(me, panel)
+    return set[it.id] == true, nil
+  end
+
+  -- Attachment hanya diambil bila game menganggapnya berguna untuk senjata
+  -- yang sedang dibawa (GetAssociationsUseful > 0). Tanpa API tersebut,
+  -- attachment dilewati agar tas tidak penuh.
+  local function supportAttachmentPickAllowed(it, me, panel)
+    local comp = supportBackpack(me, panel)
+    local wm = supportWeaponManager(me, panel)
+    if comp == nil or wm == nil then return false, nil end
+    local define = it.define
+    if define == nil and it.result ~= nil then
+      define = supportIndex(supportIndex(it.result, "MainItemData"), "ID")
+    end
+    if define == nil then return false, nil end
+    local useful = nil
+    pcall(function()
+      local u = import("BackpackUtils")
+      if u and type(u.GetAssociationsUseful) == "function" then
+        useful = tonumber(u.GetAssociationsUseful(comp, wm, define))
+      end
+    end)
+    if useful == nil then return false, nil end
+    return useful > 0, nil
+  end
+
+  local function supportIsClothing(sub)
+    return sub ~= nil and sub >= 401 and sub <= 407
+  end
+
+  -- Backpack (subtype 501): hanya naik level. Backpack lv3 terpasang
+  -- berarti tidak ada backpack lagi yang perlu diambil.
+  local function supportBackpackPickAllowed(it, comp)
+    if comp == nil then return false, nil end
+    local newLevel = supportArmorLevel(it.id)
+    local cur = supportEquippedArmor(comp, 501)
+    if cur == nil then return true, nil end
+    local curDef = supportIndex(cur, "DefineID")
+    local curID = tonumber(supportIndex(curDef, "TypeSpecificID"))
+    local curLevel = supportArmorLevel(curID)
+    if curLevel >= 3 then return false, nil end
+    return newLevel > curLevel, nil
   end
 
   local function supportRatio(remain, maxD)
@@ -8898,9 +8987,28 @@ do
       if (SUPPORT._gearHold.weapon or 0) > now then return false, "weapon" end
       return supportWeaponPickAllowed(it, me, panel)
     end
+    -- Attachment: hanya yang berguna untuk senjata yang sedang dibawa.
+    -- Tanpa filter ini attachment acak memenuhi tas, terutama di deathbox.
+    if typ == 2 then
+      return supportAttachmentPickAllowed(it, me, panel), nil
+    end
+    -- Ammo: hanya jenis yang dipakai senjata aktif. Ammo kaliber lain
+    -- tidak ada gunanya dan hanya menghabiskan slot tas.
+    if typ == 3 then
+      return supportAmmoPickAllowed(it, me, panel), nil
+    end
     if typ == 5 then
       local cfg = supportItemCfg(it.id)
       local sub = tonumber(supportIndex(cfg, "ItemSubType"))
+      -- Pakaian (topi/masker/jaket/celana/sepatu/kacamata) tidak pernah
+      -- di-auto-pick; ini juga yang mencegah deathbox mengambil pakaian.
+      if supportIsClothing(sub) then return false, nil end
+      if sub == 501 then
+        local holdKey = "backpack"
+        if (SUPPORT._gearHold[holdKey] or 0) > now then return false, holdKey end
+        local comp = supportBackpack(me, panel)
+        return supportBackpackPickAllowed(it, comp), holdKey
+      end
       if sub ~= 502 and sub ~= 503 then return true, nil end
       local holdKey = "armor" .. tostring(sub)
       if (SUPPORT._gearHold[holdKey] or 0) > now then return false, holdKey end
@@ -9069,6 +9177,7 @@ do
                   wrapper = a, iid = iid, count = e.count or 1,
                   id = e.id, typ = e.typ, dist = dist,
                   prio = supportPriority(e.typ, e.id), key = key,
+                  define = e.define,
                 }
               end
             end
