@@ -1702,7 +1702,7 @@ function _G.InitModMenuTab()
             { Key = "ModMenu_ESP9_AirdropPredict", UI = AliasMap.Switcher, Text = T("      Landing Prediction", "      Landing Prediction"), ExpandHandle = "ModMenu_ESP9_Airdrop", GetFunc = function() return _G.RapzhangConfig.Esp9_AirdropPredict == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_AirdropPredict = v and true or false; if v then _G.RapzhangConfig.Esp9_Airdrop = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Zone", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Zone + Circle Info", "   ▶ Zone + Circle Info"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Zone == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Zone = on; if on then _G.RapzhangConfig.Esp9_ZoneTimer = true; _G.RapzhangConfig.Esp9_ZoneNext = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_ZoneTimer", UI = AliasMap.Switcher, Text = T("      Zone Timer", "      Zone Timer"), ExpandHandle = "ModMenu_ESP9_Zone", GetFunc = function() return _G.RapzhangConfig.Esp9_ZoneTimer == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_ZoneTimer = v and true or false; if v then _G.RapzhangConfig.Esp9_Zone = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
-            { Key = "ModMenu_ESP9_ZoneNext", UI = AliasMap.Switcher, Text = T("      Next Circle (Map)", "      Next Circle (Map)"), ExpandHandle = "ModMenu_ESP9_Zone", GetFunc = function() return _G.RapzhangConfig.Esp9_ZoneNext == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_ZoneNext = v and true or false; if v then _G.RapzhangConfig.Esp9_Zone = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
+            { Key = "ModMenu_ESP9_ZoneNext", UI = AliasMap.Switcher, Text = T("      Next Circle (3D)", "      Next Circle (3D)"), ExpandHandle = "ModMenu_ESP9_Zone", GetFunc = function() return _G.RapzhangConfig.Esp9_ZoneNext == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_ZoneNext = v and true or false; if v then _G.RapzhangConfig.Esp9_Zone = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_Grenade", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Grenade ESP", "   ▶ Grenade ESP"), ExpandHandle = "ModMenu_ESP9_Ex", ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Esp9_Grenade == true end, SetFunc = function(_,v) local on = v and true or false; _G.RapzhangConfig.Esp9_Grenade = on; if on then _G.RapzhangConfig.Esp9_GrenadeMark = true; _G.RapzhangConfig.Esp9_GrenadeRadius = true; _G.RapzhangConfig.Esp9_GrenadeBounce = true; _G.RapzhangConfig.Esp9_GrenadeFuse = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_GrenadeMark", UI = AliasMap.Switcher, Text = T("      Grenade Marker + Type", "      Grenade Marker + Type"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeMark == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeMark = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
             { Key = "ModMenu_ESP9_GrenadeRadius", UI = AliasMap.Switcher, Text = T("      Blast Radius", "      Blast Radius"), ExpandHandle = "ModMenu_ESP9_Grenade", GetFunc = function() return _G.RapzhangConfig.Esp9_GrenadeRadius == true end, SetFunc = function(_,v) _G.RapzhangConfig.Esp9_GrenadeRadius = v and true or false; if v then _G.RapzhangConfig.Esp9_Grenade = true end; pcall(function() if _G.ESP and _G.ESP.SyncMenuConfig then _G.ESP.SyncMenuConfig() end end); return true end },
@@ -4458,6 +4458,11 @@ do
   EX.ZoneDataOK = false
   EX.ZoneTextT = -999.0
   EX.ZoneTextCache = nil
+  EX.ZoneMeT = -999.0
+  EX.ZoneMeOK = false
+  EX.ZoneMeLoc = nil
+  EX.ZoneNextTextT = -999.0
+  EX.ZoneNextText = nil
   EX.HitResult = nil
 
   function EX.ImportClass(path, alias)
@@ -4816,6 +4821,11 @@ do
     EX.ZoneDataOK = false
     EX.ZoneTextT = -999.0
     EX.ZoneTextCache = nil
+    EX.ZoneMeT = -999.0
+    EX.ZoneMeOK = false
+    EX.ZoneMeLoc = nil
+    EX.ZoneNextTextT = -999.0
+    EX.ZoneNextText = nil
   end
 
   -- Baca properti objek slua. Sebagian properti C++ tidak terbaca lewat
@@ -6782,10 +6792,16 @@ do
 
   function EX.GetZoneCircles(data)
     data = data or EX.GetZoneData()
-    if not data then return nil, nil end
+    if not data then return nil, nil, "NONE" end
+    -- CircleInfoType 3 = NoCircleInfo (lihat ECircleState di game).
+    -- WhiteCircle/BlueCircle bisa masih menyimpan nilai fase lama; jangan
+    -- gambar next zone yang sudah tidak valid.
+    if tonumber(data.circleType) == 3 then
+      return nil, nil, "NOINFO"
+    end
     local w = zoneCircle(data.white)
     local b = zoneCircle(data.blue)
-    local outer, inner = nil, nil
+    local outer, inner, status = nil, nil, "NONE"
     if w ~= nil and b ~= nil then
       local dx = tonumber(w.X) - tonumber(b.X)
       local dy = tonumber(w.Y) - tonumber(b.Y)
@@ -6797,21 +6813,28 @@ do
       if d <= 100.0 and math.abs(wz - bz) <= 100.0 then
         outer = (wz >= bz) and w or b
         inner = nil
+        status = "TRANS"
       elseif d + wz <= bz + 1.0 then
         outer, inner = b, w
+        status = "OK"
       elseif d + bz <= wz + 1.0 then
         outer, inner = w, b
+        status = "OK"
       elseif wz <= bz then
         outer, inner = b, w
+        status = "TRANS"
       else
         outer, inner = w, b
+        status = "TRANS"
       end
     elseif w ~= nil then
       outer, inner = w, nil
+      status = "1C"
     elseif b ~= nil then
       outer, inner = b, nil
+      status = "1C"
     end
-    return outer, inner
+    return outer, inner, status
   end
 
   -- Cache data zona: GetZoneData membaca beberapa field GameState dan
@@ -6836,6 +6859,45 @@ do
   -- beberapa kali per detik, bukan tiap frame.
   local ZONE_TEXT_TTL = 0.20
 
+  -- Posisi pemain dipakai label timer + marker NEXT. Cukup 0,25 dtk:
+  -- teks dan marker di-throttle, jadi membaca pawn tiap frame hanya
+  -- menambah pcall tanpa manfaat.
+  local ZONE_ME_TTL = 0.25
+  local function zoneMeLoc(now)
+    local t = EX.ZoneMeT
+    if EX.ZoneMeOK == true and t ~= nil and (now - t) >= 0
+      and (now - t) < ZONE_ME_TTL then
+      return EX.ZoneMeLoc
+    end
+    local loc = nil
+    pcall(function() loc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
+    EX.ZoneMeLoc = loc
+    EX.ZoneMeOK = true
+    EX.ZoneMeT = now
+    return loc
+  end
+
+  local function zoneNextDist(nextCircle, myLoc)
+    if nextCircle == nil or myLoc == nil then return nil end
+    local dx = (tonumber(nextCircle.X) or 0) - (tonumber(myLoc.X) or 0)
+    local dy = (tonumber(nextCircle.Y) or 0) - (tonumber(myLoc.Y) or 0)
+    return math.sqrt(dx * dx + dy * dy) - (tonumber(nextCircle.Z) or 0)
+  end
+
+  -- Teks baris atas: NEXT <jarak> / NEXT INSIDE.
+  local function zoneNextLabel(dist)
+    if dist == nil then return "NEXT" end
+    if dist <= 0 then return "NEXT INSIDE" end
+    return string.format("NEXT %dm", math.floor(dist / 100.0 + 0.5))
+  end
+
+  -- Teks di pusat circle: cukup jarak, karena "NEXT" sudah ada di atas.
+  local function zoneMarkerLabel(dist)
+    if dist == nil then return "NEXT" end
+    if dist <= 0 then return "INSIDE" end
+    return string.format("%dm", math.floor(dist / 100.0 + 0.5))
+  end
+
   function EX.DrawZone(pc, vw, vh, now)
     local cfg = _G.RapzhangConfig or {}
     local showTimer = cfg.Esp9_ZoneTimer == true
@@ -6845,16 +6907,18 @@ do
     if not data or (not showTimer and not showNext) then
       EX.HideLabel("zone_text")
       EX.HideRing("zone_ring")
+      EX.HideRing("zone_next_mark")
+      EX.HideLabel("zone_next_text")
       return
     end
     -- Zona next/aktif ditentukan geometri, bukan nama field: WhiteCircle dan
     -- BlueCircle bisa bertukar arti antar mode. `nextCircle` dipakai untuk
-    -- NEXT + ring, `outer` (zona aktif) dipakai untuk SAFE.
-    local outer, nextCircle = EX.GetZoneCircles(data)
+    -- NEXT + ring + marker, `outer` (zona aktif) dipakai untuk SAFE.
+    local outer, nextCircle, zoneStatus = EX.GetZoneCircles(data)
     local nextOK = nextCircle ~= nil
+    local myLoc = zoneMeLoc(now)
+    local nextDist = zoneNextDist(nextCircle, myLoc)
     if showTimer then
-      local myLoc = nil
-      pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
       if (now - (EX.ZoneTextT or -999.0)) >= ZONE_TEXT_TTL
         or EX.ZoneTextCache == nil or now < (EX.ZoneTextT or 0) then
         local parts = {}
@@ -6866,15 +6930,8 @@ do
         if type(data.remain) == "number" then
           parts[#parts + 1] = "SHRINK " .. fmtTime(data.remain)
         end
-        if nextOK and myLoc then
-          local dx = (tonumber(nextCircle.X) or 0) - myLoc.X
-          local dy = (tonumber(nextCircle.Y) or 0) - myLoc.Y
-          local dist = math.sqrt(dx * dx + dy * dy) - (tonumber(nextCircle.Z) or 0)
-          if dist <= 0 then
-            parts[#parts + 1] = "NEXT INSIDE"
-          else
-            parts[#parts + 1] = string.format("NEXT %dm", math.floor(dist / 100.0 + 0.5))
-          end
+        if nextOK and nextDist ~= nil then
+          parts[#parts + 1] = zoneNextLabel(nextDist)
         end
         if outer ~= nil and myLoc then
           local dx = (tonumber(outer.X) or 0) - myLoc.X
@@ -6883,6 +6940,14 @@ do
           if dist <= (tonumber(outer.Z) or 0) then
             parts[#parts + 1] = "SAFE"
           end
+        end
+        -- Indikator validasi: status geometri + CircleInfoType mentah.
+        -- OK = next termuat; TRANS = transisi/radius fallback; 1C = hanya
+        -- satu circle; NOINFO = CircleInfoType 3. T<0..3> dari GetCircleInfo.
+        if zoneStatus ~= nil then
+          local ct = tonumber(data.circleType)
+          parts[#parts + 1] = string.format("[%s/T%s]", zoneStatus,
+            ct ~= nil and string.format("%d", math.floor(ct + 0.5)) or "?")
         end
         EX.ZoneTextT = now
         EX.ZoneTextCache = table.concat(parts, "  |  ")
@@ -6930,11 +6995,25 @@ do
         else
           EX.HideRing("zone_ring")
         end
+        -- Marker inti (diamond 4 segmen) + jarak: tanpa ini circle besar
+        -- hanya terlihat seperti garis tanpa titik acuan.
+        EX.DrawRing("zone_next_mark", cs.X, cs.Y, 7.0, 7.0, C_EX_CYAN, "zone_mark", 1.8, 4)
+        if (now - (EX.ZoneNextTextT or -999.0)) >= ZONE_TEXT_TTL
+          or EX.ZoneNextText == nil or now < (EX.ZoneNextTextT or 0) then
+          EX.ZoneNextTextT = now
+          EX.ZoneNextText = zoneMarkerLabel(nextDist)
+        end
+        EX.DrawLabel("zone_next_text", cs.X, cs.Y + 12.0,
+          EX.ZoneNextText, C_EX_CYAN)
       else
         EX.HideRing("zone_ring")
+        EX.HideRing("zone_next_mark")
+        EX.HideLabel("zone_next_text")
       end
     else
       EX.HideRing("zone_ring")
+      EX.HideRing("zone_next_mark")
+      EX.HideLabel("zone_next_text")
     end
   end
 
@@ -6947,6 +7026,8 @@ do
     else
       EX.HideLabel("zone_text")
       EX.HideMark("zone_ring")
+      EX.HideMark("zone_next_mark")
+      EX.HideLabel("zone_next_text")
     end
     if cfg.Esp9_Airdrop == true then
       if (now - (EX.LastAirdropScan or -999)) >= (ESP.AirdropInterval or 0.80) then
@@ -8599,6 +8680,7 @@ do
   SUPPORT.ScanAt = -999.0
   SUPPORT._pickAt = -999.0
   SUPPORT._rescueAt = -999.0
+  SUPPORT._rescueSearchAt = -999.0
   SUPPORT._pruneAt = -999.0
   SUPPORT._panel = nil
   SUPPORT._panelAt = -999.0
@@ -8616,6 +8698,10 @@ do
   local SUPPORT_PICK_FAIL_CD = 8.0
   local SUPPORT_SCAN_INTERVAL = 0.40
   local SUPPORT_RESCUE_INTERVAL = 0.60
+  -- Refresh search CanRescueTeammate tidak boleh tiap tick rescue: search
+  -- butuh waktu mengunci kandidat. 1,5 dtk memberi kesempatan itu tanpa
+  -- membuat rescue terasa lambat.
+  local SUPPORT_RESCUE_SEARCH_INTERVAL = 1.50
 
   local function supportDistance(key, def)
     local v = tonumber(cfg()[key]) or def
@@ -9490,6 +9576,7 @@ do
     SUPPORT.ScanAt = -999.0
     SUPPORT._pickAt = -999.0
     SUPPORT._rescueAt = -999.0
+    SUPPORT._rescueSearchAt = -999.0
     SUPPORT._pruneAt = -999.0
     SUPPORT._panel = nil
     SUPPORT._panelAt = -999.0
@@ -9706,14 +9793,49 @@ do
     end
   end
 
+  -- Minta komponen search memeriksa ulang kandidat rescue. Dipanggil
+  -- maksimal tiap SUPPORT_RESCUE_SEARCH_INTERVAL agar hasil search sempat
+  -- settle; reset tiap 0,6 dtk membuat rescue tidak pernah terkonfirmasi.
+  local function supportRefreshRescueSearch(me, now)
+    if (now - (SUPPORT._rescueSearchAt or -999.0)) < SUPPORT_RESCUE_SEARCH_INTERVAL then
+      return false
+    end
+    SUPPORT._rescueSearchAt = now
+    pcall(function()
+      local ECharacterSearchEnum = import("ECharacterSearchEnum")
+      local EExecutionCondition = import("EExecutionCondition")
+      local sc = me.SearchOtherComponent
+      if sc and ECharacterSearchEnum and EExecutionCondition then
+        if sc.ResetSearchResult then
+          sc:ResetSearchResult(ECharacterSearchEnum.CanRescueTeammate, EExecutionCondition.Client)
+        end
+        if sc.ResetTickCheckTime then
+          sc:ResetTickCheckTime(ECharacterSearchEnum.CanRescueTeammate, 0.0, EExecutionCondition.Client, false)
+        end
+      end
+    end)
+    return true
+  end
+
   function SUPPORT.FindDownedTeammate(me)
     local radius = supportDistance("Sup_AutoRescueDist", 3.0)
     local meLoc = ESP.ActorLocation(me)
     local myTeam = ESP.GetTeamID(me)
     if not meLoc or myTeam == nil then return nil end
     local pawns = nil
-    pcall(function() if Game and Game.GetAllPlayerPawns then pawns = Game:GetAllPlayerPawns() end end)
-    if not pawns then return nil end
+    -- Game:GetAllPlayerPawns() memakai colon. Fallback ke
+    -- ESP.GetAllCharacters() yang sudah memakai colon dan mengembalikan
+    -- map PlayerKey -> pawn, supaya auto rescue tidak mati saat daftar
+    -- pawn utama kosong/gagal.
+    pcall(function()
+      if Game and type(Game.GetAllPlayerPawns) == "function" then
+        pawns = Game:GetAllPlayerPawns()
+      end
+    end)
+    if type(pawns) ~= "table" or next(pawns) == nil then
+      pcall(function() pawns = ESP.GetAllCharacters() end)
+    end
+    if type(pawns) ~= "table" then return nil end
     local best, bestD = nil, radius
     for _, ch in pairs(pawns) do
       if ESPValid(ch) and ch ~= me then
@@ -9735,30 +9857,40 @@ do
     if not ESPValid(me) or ESP.IsKnocked(me) then return end
     if (now - (SUPPORT._rescueAt or -999.0)) < SUPPORT_RESCUE_INTERVAL then return end
     SUPPORT._rescueAt = now
-    local rc = nil
-    pcall(function() rc = me.RescueOtherComponent end)
-    if ESPValid(rc) then
-      local who = nil
-      pcall(function() who = rc.RescueWho end)
-      if ESPValid(who) then return end
-    end
+    -- RescueWho hanyalah kandidat dari event search, bukan bukti rescue
+    -- sedang berjalan. Satu-satunya penanda aktif adalah IsRescueingOther.
+    local rescuing = false
+    pcall(function() rescuing = me.IsRescueingOther == true end)
+    if rescuing then return end
     local target = SUPPORT.FindDownedTeammate(me)
-    if not target then return end
-    -- Segarkan hasil search agar kandidat rescue terbaru dikenal komponen.
-    pcall(function()
-      local ECharacterSearchEnum = import("ECharacterSearchEnum")
-      local EExecutionCondition = import("EExecutionCondition")
-      local sc = me.SearchOtherComponent
-      if sc and ECharacterSearchEnum and EExecutionCondition then
-        if sc.ResetSearchResult then
-          sc:ResetSearchResult(ECharacterSearchEnum.CanRescueTeammate, EExecutionCondition.Client)
-        end
-        if sc.ResetTickCheckTime then
-          sc:ResetTickCheckTime(ECharacterSearchEnum.CanRescueTeammate, 0.0, EExecutionCondition.Client, false)
+    if not target then
+      -- Kandidat bisa saja sudah dipegang komponen walau scan pawn gagal.
+      local rc = nil
+      pcall(function() rc = me.RescueOtherComponent end)
+      if ESPValid(rc) then
+        local who = nil
+        pcall(function() who = rc.RescueWho end)
+        if ESPValid(who) and who ~= me and ESP.IsKnocked(who) then
+          local myTeam, team = ESP.GetTeamID(me), ESP.GetTeamID(who)
+          local meLoc, loc = ESP.ActorLocation(me), ESP.ActorLocation(who)
+          if myTeam ~= nil and team ~= nil
+            and tostring(myTeam) == tostring(team) and meLoc and loc
+            and ESP.DistMeters(meLoc, loc) <= supportDistance("Sup_AutoRescueDist", 3.0) then
+            target = who
+          end
         end
       end
-    end)
-    pcall(function() me:PlayerConfirmToRescue() end)
+    end
+    if target then
+      -- Jalur tombol rescue game: panggil langsung supaya tidak perlu tap.
+      local confirmed = false
+      pcall(function() confirmed = me:PlayerConfirmToRescue() == true end)
+      if not confirmed then
+        supportRefreshRescueSearch(me, now)
+      end
+    else
+      supportRefreshRescueSearch(me, now)
+    end
   end
 
   function SUPPORT.Update(now)
