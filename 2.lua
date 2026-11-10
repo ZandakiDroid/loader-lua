@@ -6874,6 +6874,30 @@ do
     end)
   end
 
+  -- Widget CustomBlueCircle punya fill biru penuh (BlueFullImage/blueImage*)
+  -- yang menutupi seluruh peta. ESP hanya butuh garis next circle, jadi fill
+  -- disembunyikan dan Border_RingFX/Border_FullRing dibiarkan.
+  local function zoneMapRingOnly(w)
+    if w == nil then return end
+    local root = nil
+    pcall(function() root = w.UIRoot end)
+    if root == nil then return end
+    local function hide(ui)
+      if ui == nil then return end
+      local ok = pcall(function() w:SetVisible(ui, false) end)
+      if not ok then
+        pcall(function()
+          ui:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
+        end)
+      end
+    end
+    hide(root.BlueFullImage)
+    hide(root.blueImage1)
+    hide(root.blueImage2)
+    hide(root.blueImage3)
+    hide(root.blueImage4)
+  end
+
   local function zoneMapApply(map, w, circle)
     if w == nil then return false end
     local ok = pcall(function() w:UpdateCircle(circle) end)
@@ -6888,6 +6912,7 @@ do
       pcall(function() ready = map.CurrentMapUI ~= nil end)
       return ready == false
     end
+    pcall(zoneMapRingOnly, w)
     local closed = false
     pcall(function() closed = w.bIsClosed == true end)
     return not closed
@@ -9424,7 +9449,7 @@ do
         if item then
           raw = raw + 1
           if isGround then groundRaw = groundRaw + 1 end
-          items[#items + 1] = { item = item }
+          items[#items + 1] = { item = item, box = not isGround }
         end
       end
     end
@@ -9445,17 +9470,19 @@ do
         if arr then addArray(arr, boxActor, false) end
       end
     end
-    -- Build yang punya flag boolean harus mengikuti auto-pick game: hanya
-    -- bHighPriority == true. Build tanpa flag tetap dikumpulkan untuk
-    -- diagnostik, tetapi FastLoot menolaknya karena tidak bisa memastikan
-    -- item itu memang kandidat auto-pick bawaan.
+    -- Ground mengikuti auto-pick game: bila flag boolean ada, hanya
+    -- bHighPriority == true. Deathbox tidak memakai flag ini di game
+    -- (AutoPickTobmBoxItem tidak memeriksanya), jadi entri box tetap masuk.
     local strict = false
     for _, rec in ipairs(items) do
       if type(rec.item.hp) == "boolean" then strict = true break end
     end
     for _, rec in ipairs(items) do
       local item = rec.item
-      if not strict or item.hp == true then
+      -- Ground mengikuti auto-pick panel: wajib bHighPriority. Deathbox
+      -- tidak memakai flag itu di game (AutoPickTobmBoxItem tidak
+      -- memeriksanya), jadi entri box tetap dikumpulkan.
+      if rec.box == true or not strict or item.hp == true then
         local loc = nil
         pcall(function() loc = ESP.ActorLocation(item.wrapper) end)
         -- Kandidat tanpa wrapper pickup yang pasti tidak bisa dipakai
@@ -9474,6 +9501,7 @@ do
                 dist = dist, prio = supportPriority(item.typ, item.id),
                 key = key, result = item.result, define = item.define,
                 exact = item.exact, hp = item.hp, panel = true,
+                box = rec.box == true,
               }
             end
           end
@@ -9483,28 +9511,63 @@ do
     return groundRaw, raw
   end
 
-  -- Fallback saat panel belum punya data: query spasial game, lalu class
-  -- scan yang di-cache ~1 detik (GetActorsByClass menyusuri seluruh world).
+  -- Pool wrapper world: query useful dan query biasa digabung karena query
+  -- useful bisa hanya berisi loot ground, sementara wrapper deathbox yang
+  -- belum dibuka hanya muncul di query biasa. Duplikat dibuang. Class scan
+  -- menjadi fallback terakhir dan di-cache ~1 detik (GetActorsByClass
+  -- menyusuri seluruh world).
   local function supportWorldPool(meLoc, radius, me, now)
     local dist = radius * 100.0
-    local list = supportArray(supportQuery(
-      "QueryUsefulPickUpWrappers", meLoc, dist, nil, false, me, 40))
-    if #list > 0 then return list end
-    list = supportArray(supportQuery("QueryPickUpWrappers", meLoc, dist, nil, false, 40))
-    if #list > 0 then return list end
+    local pool, seen = {}, {}
+    local function merge(list)
+      for _, a in ipairs(supportArray(list)) do
+        if a ~= nil and not seen[a] then
+          seen[a] = true
+          pool[#pool + 1] = a
+        end
+      end
+    end
+    merge(supportQuery("QueryUsefulPickUpWrappers", meLoc, dist, nil, false, me, 40))
+    merge(supportQuery("QueryPickUpWrappers", meLoc, dist, nil, false, 40))
+    if #pool > 0 then return pool end
     if (now - (SUPPORT._classAt or -999.0)) >= 1.0 then
       SUPPORT._classAt = now
-      local pool = nil
+      local scanned = nil
       pcall(function()
         local cls = class("/Script/ShadowTrackerExtra.PickUpWrapperActor", "PickUpWrapperActor")
-        if cls then pool = actorsOfClass(cls) end
+        if cls then scanned = actorsOfClass(cls) end
       end)
-      SUPPORT._classPool = pool or {}
+      SUPPORT._classPool = scanned or {}
     end
     return SUPPORT._classPool or {}
   end
 
-  local function supportCollectWorld(meLoc, radius, out, seenKey, me, now)
+  -- Wrapper isi deathbox punya BoxType; wrapper loot ground tidak. Game
+  -- sendiri memakai pembeda ini di AIActionExecutionComponent:ActionPick
+  -- (BoxType == nil -> PickUpActor, selain itu -> PickUpWrapperActor per
+  -- entri). Fallback nama class untuk build yang tidak mengekspos BoxType.
+  local function supportIsBoxActor(a)
+    if a == nil then return false end
+    local box = false
+    pcall(function() box = a.BoxType ~= nil end)
+    if box then return true end
+    pcall(function() box = a.bIsTombBox == true or a.bIsDeadBox == true end)
+    if box then return true end
+    pcall(function()
+      local cls = a.GetClass and a:GetClass() or nil
+      local name = cls and cls.GetName and cls:GetName() or nil
+      if type(name) == "string" then
+        box = name:find("DeadBox") ~= nil or name:find("TombBox") ~= nil
+          or name:find("PickUpWrapperList") ~= nil
+      end
+    end)
+    return box
+  end
+
+  -- skipGround=true: panel sudah punya data ground, jadi scan world hanya
+  -- dipakai untuk wrapper deathbox yang tidak muncul di panel sebelum box
+  -- dibuka. Ground world tetap tidak diambil FastLoot (tidak ada GetUseful2).
+  local function supportCollectWorld(meLoc, radius, out, seenKey, me, now, skipGround)
     local pool = supportWorldPool(meLoc, radius, me, now)
     for _, a in ipairs(pool) do
       local loc = ESP.ActorLocation(a)
@@ -9517,18 +9580,21 @@ do
               or a.bIsPickedUp == true or a.bTaken == true
           end)
           if not removed then
-            local entries = listItems(a) or {}
-            for _, e in ipairs(entries) do
-              local iid = e.iid or 0
-              local key = tostring(a) .. "|" .. tostring(iid) .. "|" .. tostring(e.id)
-              if not seenKey[key] then
-                seenKey[key] = true
-                out[#out + 1] = {
-                  wrapper = a, iid = iid, count = e.count or 1,
-                  id = e.id, typ = e.typ, dist = dist,
-                  prio = supportPriority(e.typ, e.id), key = key,
-                  define = e.define,
-                }
+            local isBox = supportIsBoxActor(a)
+            if isBox or not skipGround then
+              local entries = listItems(a) or {}
+              for _, e in ipairs(entries) do
+                local iid = e.iid or 0
+                local key = tostring(a) .. "|" .. tostring(iid) .. "|" .. tostring(e.id)
+                if not seenKey[key] then
+                  seenKey[key] = true
+                  out[#out + 1] = {
+                    wrapper = a, iid = iid, count = e.count or 1,
+                    id = e.id, typ = e.typ, dist = dist,
+                    prio = supportPriority(e.typ, e.id), key = key,
+                    define = e.define, box = isBox,
+                  }
+                end
               end
             end
           end
@@ -9593,20 +9659,20 @@ do
     local panel = supportPanel(now)
     supportRefresh(panel, me, now)
     local groundRaw = supportCollectPanel(panel, meLoc, radius, out, seenKey)
-    -- groundRaw == 0 berarti panel belum punya data ground (UI belum
-    -- dibangun, build tanpa panel, atau array ground kosong). Scan world
-    -- tetap dijalankan untuk diagnostik, tetapi entri world tidak pernah
-    -- diambil: tanpa GetUseful2 batas pickup game tidak bisa dipastikan.
-    if groundRaw <= 0 then
-      supportCollectWorld(meLoc, radius, out, seenKey, me, now)
-    end
-    -- Entri panel (yang bisa diambil lewat GetUseful2) selalu di depan;
-    -- entri world hanya diagnostik dan tidak boleh mendorong kandidat panel
-    -- keluar dari batas 40. Setelah itu terdekat dulu; prioritas lama hanya
-    -- tie-breaker supaya item penting tidak menang hanya karena jenisnya.
+    -- Scan world selalu jalan untuk wrapper deathbox: isi box yang belum
+    -- dibuka tidak ada di panel, dan game tidak menyediakan GetUseful2 untuk
+    -- entri world. Ground world hanya dikumpulkan saat panel belum punya
+    -- data ground (diagnostik); FastLoot tetap menolak ground world.
+    supportCollectWorld(meLoc, radius, out, seenKey, me, now, groundRaw > 0)
+    -- Entri panel di depan, lalu deathbox world, lalu ground world. Dengan
+    -- begitu kandidat box tidak terdorong keluar batas 40 oleh loot ground.
     table.sort(out, function(x, y)
-      local xp = x.panel == true and 0 or 1
-      local yp = y.panel == true and 0 or 1
+      local function rank(it)
+        if it.panel == true then return 0 end
+        if it.box == true then return 1 end
+        return 2
+      end
+      local xp, yp = rank(x), rank(y)
       if xp ~= yp then return xp < yp end
       if x.dist ~= y.dist then return x.dist < y.dist end
       if x.prio ~= y.prio then return x.prio < y.prio end
@@ -9648,6 +9714,9 @@ do
     if (now - (SUPPORT._pickAt or -999.0)) < SUPPORT_PICK_WINDOW then return end
     SUPPORT._pickAt = now
     if supportActionBusy(me) then return end
+    local pm = nil
+    pcall(function() if me.GetPickupManager then pm = me:GetPickupManager() end end)
+    if not ESPValid(pm) then pm = nil end
     local panel = supportPanel(now)
     local panelFn = false
     if panel ~= nil then
@@ -9655,45 +9724,58 @@ do
       pcall(function() fn = panel.PickUpWrapperActorWithoutAnim end)
       panelFn = type(fn) == "function"
     end
-    -- Fast loot hanya mempercepat auto pickup bawaan. Tanpa panel tidak ada
-    -- GetUseful2, artinya batas pickup game tidak bisa dipastikan: jangan
-    -- menebak dan jangan memakai jumlah stack mentah.
-    if not panelFn then return end
+    -- Ground loot hanya lewat panel + GetUseful2. Deathbox boleh lewat
+    -- PickupManager:PickUpTarget karena isinya tidak muncul di panel
+    -- sebelum box dibuka.
+    if not pm and not panelFn then return end
     local usefulFn = nil
-    pcall(function() usefulFn = panel.GetUseful2 end)
-    if type(usefulFn) ~= "function" then return end
+    if panel ~= nil then pcall(function() usefulFn = panel.GetUseful2 end) end
+    if type(usefulFn) ~= "function" then usefulFn = nil end
     local radius = supportDistance("Sup_FastLootDist", 4.0)
     local meLoc = ESP.ActorLocation(me)
     if not meLoc then return end
     local budget = SUPPORT_PICK_BUDGET
     for _, it in ipairs(SUPPORT.Pickups) do
       if budget <= 0 then break end
-      -- Hanya entri hasil search panel (punya SearchItemResult) yang ditandai
-      -- bHighPriority, sama seperti AutoPickGroundItem/AutoPickTombBoxItem.
-      -- Entri world scan tidak punya GetUseful2, jadi tidak boleh diambil.
-      if it.panel == true and it.hp == true and it.exact == true
-        and it.result ~= nil and (SUPPORT.Cooldown[it.key] or 0) <= now then
+      local isBox = it.box == true
+      -- Ground: wajib hasil search panel + bHighPriority + GetUseful2.
+      -- Deathbox: boleh dari world scan tanpa membuka box; GetUseful2 tetap
+      -- dipakai bila struct search tersedia.
+      local eligible
+      if isBox then
+        eligible = pm ~= nil or (panelFn and it.result ~= nil and it.exact == true)
+      else
+        eligible = it.panel == true and it.hp == true and it.exact == true
+          and it.result ~= nil and usefulFn ~= nil
+      end
+      if eligible and (SUPPORT.Cooldown[it.key] or 0) <= now then
         local loc = ESP.ActorLocation(it.wrapper)
         if loc and ESPValid(it.wrapper) then
           local d = ESP.DistMeters(meLoc, loc)
           if d <= radius then
             local skip = false
-            local count = 0
-            -- GetUseful2 adalah satu-satunya sumber jumlah pickup: nilainya
-            -- sudah memperhitungkan pickup setting, limit jenis, kapasitas
-            -- tas, dan jumlah yang sudah dibawa. 0/nil = jangan ambil.
-            local useful = nil
-            local usefulOK = pcall(function()
-              useful = usefulFn(panel, it.define, it.result)
-            end)
-            useful = tonumber(useful)
-            if not usefulOK or useful == nil or useful <= 0 then
-              skip = true
-            else
-              count = math.floor(useful)
-              local stack = math.floor(tonumber(it.count) or 0)
-              if stack > 0 and count > stack then count = stack end
-              if count < 1 then skip = true end
+            local count = math.max(1, math.floor(tonumber(it.count) or 1))
+            -- GetUseful2 menghormati pickup setting, limit jenis, kapasitas
+            -- tas, dan jumlah yang sudah dibawa. Untuk box tanpa struct
+            -- search, pakai jumlah stack seperti jalur lama.
+            if usefulFn ~= nil and it.result ~= nil then
+              local useful = nil
+              local usefulOK = pcall(function()
+                useful = usefulFn(panel, it.define, it.result)
+              end)
+              useful = tonumber(useful)
+              if usefulOK and useful ~= nil then
+                if useful <= 0 then
+                  skip = true
+                else
+                  count = math.max(1, math.floor(useful))
+                  local stack = math.floor(tonumber(it.count) or 0)
+                  if stack > 0 and count > stack then count = stack end
+                end
+              elseif not isBox then
+                -- Ground tidak boleh menebak saat GetUseful2 gagal.
+                skip = true
+              end
             end
             -- Guard tambahan di luar GetUseful2: jangan menukar senjata
             -- yang sudah mengisi slot, dan jangan mengganti helmet/vest
@@ -9708,9 +9790,17 @@ do
             if not skip then
               -- Jalur game tanpa animasi memakai struct hasil search asli,
               -- termasuk InstanceID dan MainItemData yang benar.
-              ok = pcall(function()
-                panel:PickUpWrapperActorWithoutAnim(me, it.result, count)
-              end)
+              if panelFn and it.result ~= nil and it.exact == true then
+                ok = pcall(function()
+                  panel:PickUpWrapperActorWithoutAnim(me, it.result, count)
+                end)
+              end
+              -- Deathbox world: langsung ke PickupManager tanpa membuka box.
+              if not ok and isBox and pm ~= nil then
+                ok = pcall(function()
+                  pm:PickUpTarget(it.wrapper, it.iid, count, 0)
+                end)
+              end
             end
             if ok then
               budget = budget - 1
