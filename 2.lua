@@ -16350,6 +16350,7 @@ _G.__RAPZHANG_FAKE_FRIEND_LOADED = true
 _G.HackAccountData = _G.HackAccountData or { uc = 0, level = 0, collectionLevel = 0, avatar = 0, avatarFrame = 0, matchStartAnim = 0, friends = {} }
 _G._nadFfProfileCache = _G._nadFfProfileCache or {}
 _G._nadFfSet = _G._nadFfSet or {}
+_G._nadFfEntryCache = nil
 local _nadAppliedFriends = {}
 
 local function _nadRemoveFakeFriend(uid)
@@ -16652,7 +16653,10 @@ local function _nadEnsureFriendListSlot(uid)
     end
     local rfl = logic_friend_list.res_friendlist
     if not rfl.inner_list then rfl.inner_list = {} end
-    if logic_friend_list.GetFriendInfo and logic_friend_list:GetFriendInfo(uid) then return end
+    -- Cek langsung ke inner_list, bukan GetFriendInfo: method itu bisa
+    -- sudah di-patch dan tidak boleh dipakai sebagai penentu apakah slot
+    -- benar-benar ada.
+    if rfl.inner_list[uid] or rfl.inner_list[tostring(uid)] then return end
     local TimeUtil = require("client.common.time_util")
     rfl.inner_list[uid] = { uid = uid, intimacy = 0, create_time = TimeUtil.GetServerTimeInSec() }
 end
@@ -16847,58 +16851,38 @@ end
 -- injeksi inner_list yang lama.
 -- ------------------------------------------------------------------
 
-local function _nadFfOnline(uid)
-    local ok, online = pcall(function()
-        local MM = require("client.module_framework.ModuleManager")
-        local PSM = MM.GetModule(MM.CommonModuleConfig.PlayerStatusMgr)
-        local st = nil
-        if PSM and PSM.statusMap then
-            st = PSM.statusMap[uid] or PSM.statusMap[tostring(uid)]
-        end
-        return st and (st.online == 1 or st.online == true) and 1 or 0
-    end)
-    return ok and online or 0
-end
-
-local function _nadFfMakeEntry(uid, idx)
+-- Nilai tampilan untuk entri fake. Hanya field yang memang sudah dipakai
+-- entri v1 (_nadEnsureFriendListSlot): intimacy + create_time. Jangan
+-- menambah field baru ke tabel milik game; UI bisa memvalidasi schema.
+local function _nadFfMeta(uid, idx)
     uid = tonumber(uid)
     if not uid then return nil end
     idx = tonumber(idx) or 1
     -- Basis waktu stabil: kalau memakai os.time() langsung, create_time
     -- berubah tiap detik dan UI bisa re-sort/flicker.
     _G._nadFfBaseTime = _G._nadFfBaseTime or os.time()
-    -- GetFriendInfoMap dipanggil tiap render; pakai satu tabel per UID
-    -- supaya tidak alokasi baru terus dan identitas entri stabil.
-    local cache = _G._nadFfEntryCache
-    if not cache then cache = {} _G._nadFfEntryCache = cache end
-    local e = cache[uid]
-    if not e then
-        e = {
-            uid = uid,
-            -- Nilai wajar supaya tidak selalu di dasar daftar seperti entri
-            -- baru; sorting game tetap menentukan posisi akhir.
-            intimacy = 300 + idx,
-            create_time = _G._nadFfBaseTime - 90 * 86400 - idx * 3600,
-            is_fake = true,
-        }
-        cache[uid] = e
-    end
-    e.online = _nadFfOnline(uid)
+    return 300 + idx, _G._nadFfBaseTime - 90 * 86400 - idx * 3600
+end
+
+-- Enrich entri yang sudah ada (dibuat _nadEnsureFriendListSlot / notify
+-- game) supaya tampil seperti teman lama, tanpa mengubah schema.
+local function _nadFfEnrichEntry(e, uid, idx)
+    if type(e) ~= "table" then return e end
+    local intimacy, create_time = _nadFfMeta(uid, idx)
+    if not intimacy then return e end
+    if (tonumber(e.intimacy) or 0) < intimacy then e.intimacy = intimacy end
+    e.create_time = create_time
+    -- Bersihkan field tambahan dari versi v2 lama (hot reload).
+    e.is_fake = nil
     return e
 end
 
--- Isi/enrich entri yang sudah ada (mis. dari _nadEnsureFriendListSlot
--- dengan intimacy 0) supaya tampil seperti teman lama, tanpa menghapus
--- field lain yang mungkin dipakai UI.
-local function _nadFfEnrichEntry(e, uid, idx)
-    if type(e) ~= "table" then return e end
-    local mk = _nadFfMakeEntry(uid, idx)
-    if not mk then return e end
-    if (tonumber(e.intimacy) or 0) < mk.intimacy then e.intimacy = mk.intimacy end
-    e.create_time = mk.create_time
-    e.online = mk.online
-    e.is_fake = true
-    return e
+local function _nadFfFindIdx(uid)
+    local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
+    for i, f in ipairs(friends) do
+        if tonumber(f) == tonumber(uid) then return i end
+    end
+    return 1
 end
 
 local function _nadInstallFriendListPatch()
@@ -16907,52 +16891,48 @@ local function _nadInstallFriendListPatch()
     if not LFL or LFL.__nadFfMapPatched then return end
     LFL.__nadFfMapPatched = true
 
-    -- Kunci utama: UI friend list meminta map setiap render. Merge di
-    -- sini membuat entri tetap ada walau response server baru saja
-    -- mengganti inner_list (tidak perlu re-apply tiap 0,75 dtk).
+    -- UI friend list meminta map tiap render. Kalau server baru mengganti
+    -- inner_list, entri fake hilang; di sini slot dibuat ulang lewat jalur
+    -- v1 (_nadEnsureFriendListSlot) lalu tabel entri game yang sama dipakai.
     local origMap = LFL.GetFriendInfoMap
-    if origMap then
+    if type(origMap) == "function" then
         LFL.GetFriendInfoMap = function(self, ...)
             local map = origMap(self, ...)
-            if type(map) ~= "table" then map = {} end
-            local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
-            for i, f in ipairs(friends) do
-                local uid = tonumber(f)
-                if uid then
-                    local e = map[uid] or map[tostring(uid)]
-                    if not e then
-                        map[uid] = _nadFfMakeEntry(uid, i)
-                    else
-                        _nadFfEnrichEntry(e, uid, i)
+            if type(map) ~= "table" then return map end
+            -- Bungkus dengan pcall: kalau schema/build berbeda, map asli
+            -- tetap dikembalikan dan UI tidak ikut rusak.
+            pcall(function()
+                local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
+                for i, f in ipairs(friends) do
+                    local uid = tonumber(f)
+                    if uid then
+                        local e = map[uid] or map[tostring(uid)]
+                        if not e then
+                            pcall(_nadEnsureFriendListSlot, uid)
+                            local rfl = LFL.res_friendlist
+                            local il = rfl and rfl.inner_list
+                            e = il and (il[uid] or il[tostring(uid)]) or nil
+                            if e then map[uid] = e end
+                        end
+                        if e then _nadFfEnrichEntry(e, uid, i) end
                     end
                 end
-            end
+            end)
             return map
         end
     end
 
+    -- GetFriendInfo hanya meng-enrich entri yang benar-benar ada. Jangan
+    -- mensintesis entri: _nadEnsureFriendListSlot memakai inner_list untuk
+    -- memutuskan pembuatan slot, dan UI mengharapkan schema game.
     local origInfo = LFL.GetFriendInfo
-    if origInfo then
-        LFL.GetFriendInfo = function(self, uid, ...)
-            local info = origInfo(self, uid, ...)
-            if info then
-                if _nadFfIsFakeFriend(uid) then
-                    local idx = 1
-                    local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
-                    for i, f in ipairs(friends) do
-                        if tonumber(f) == tonumber(uid) then idx = i break end
-                    end
-                    _nadFfEnrichEntry(info, uid, idx)
-                end
-                return info
-            end
-            if _nadFfIsFakeFriend(uid) then
-                local idx = 1
-                local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
-                for i, f in ipairs(friends) do
-                    if tonumber(f) == tonumber(uid) then idx = i break end
-                end
-                return _nadFfMakeEntry(uid, idx)
+    if type(origInfo) == "function" then
+        LFL.GetFriendInfo = function(a, b, ...)
+            local info = origInfo(a, b, ...)
+            -- Dukung pemanggilan colon (self, uid) maupun dot (uid).
+            local uid = (type(a) == "table") and b or a
+            if info and _nadFfIsFakeFriend(uid) then
+                pcall(_nadFfEnrichEntry, info, uid, _nadFfFindIdx(uid))
             end
             return info
         end
@@ -16964,17 +16944,19 @@ local function _nadInstallRelationPatch()
     if not LogicFriend or LogicFriend.__nadFfRelationPatched then return end
     LogicFriend.__nadFfRelationPatched = true
     local origInner = LogicFriend.IsInnerFriend
-    if origInner then
-        LogicFriend.IsInnerFriend = function(uid, ...)
+    if type(origInner) == "function" then
+        LogicFriend.IsInnerFriend = function(a, b, ...)
+            local uid = (type(a) == "table") and b or a
             if _nadFfIsFakeFriend(uid) then return true end
-            return origInner(uid, ...)
+            return origInner(a, b, ...)
         end
     end
     local origFriend = LogicFriend.IsFriend
-    if origFriend then
-        LogicFriend.IsFriend = function(uid, ...)
+    if type(origFriend) == "function" then
+        LogicFriend.IsFriend = function(a, b, ...)
+            local uid = (type(a) == "table") and b or a
             if _nadFfIsFakeFriend(uid) then return true end
-            return origFriend(uid, ...)
+            return origFriend(a, b, ...)
         end
     end
 end
@@ -17029,7 +17011,6 @@ function _G._nadFfClearAll()
     _G._nadFfSet = {}
     _G._nadFfProfileCache = {}
     _G._nadFfRawCache = {}
-    _G._nadFfEntryCache = {}
     _G._nadFfLastExportStr = nil
 end
 
@@ -17102,6 +17083,11 @@ function _G.RapzhangFakeFriendApply(uids)
         uids = loader and loader.Load and loader.Load() or {}
     end
     _G.HackAccountData = _G.HackAccountData or {}
+    -- Daftar berubah? Jangan tunggu throttle 15 dtk; minta profil/status
+    -- segera supaya nama/avatar tidak tampil sebagai UID mentah.
+    if not (_G.RapzhangFriendUID and _G.RapzhangFriendUID.Equals(_G.HackAccountData.friends, uids)) then
+        _G._nadFfLastStatusReq = nil
+    end
     _G.HackAccountData.friends = uids
     pcall(_nadFfRebuildSet)
     pcall(_nadApplyFakeFriends)
@@ -17137,7 +17123,7 @@ if not _G.RapzhangStartFriendSync then
             local ok = pcall(function()
                 local ticker = require("common.time_ticker")
                 if ticker and ticker.AddTimerOnce then
-                    ticker.AddTimerOnce(3.0, syncStep)
+                    ticker.AddTimerOnce(0.75, syncStep)
                     scheduled = true
                 end
             end)
