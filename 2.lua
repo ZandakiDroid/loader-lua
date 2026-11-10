@@ -842,6 +842,12 @@ local function GetFriendUIDPaths()
     return paths
 end
 
+-- Cache daftar UID: Tick berjalan 2-50 Hz, sedangkan isi file hanya
+-- berubah saat user mengedit/menyimpan. Tanpa cache, tiap tick membuka
+-- sampai 22 path. TTL 2 dtk + invalidasi saat Save.
+local _friendUIDCache = { t = -999.0, list = {} }
+local FRIEND_UID_CACHE_TTL = 2.0
+
 local function SaveFriendUIDList(uidList)
     local lines = {}
     if type(uidList) == "table" then
@@ -866,6 +872,7 @@ local function SaveFriendUIDList(uidList)
             end
         end
     end)
+    _friendUIDCache.t = -999.0
 end
 
 local function LoadFriendUIDList()
@@ -919,6 +926,16 @@ local function LoadFriendUIDList()
     return result
 end
 
+local function LoadFriendUIDListCached()
+    local now = os.time()
+    if (now - _friendUIDCache.t) < FRIEND_UID_CACHE_TTL then
+        return _friendUIDCache.list
+    end
+    _friendUIDCache.t = now
+    _friendUIDCache.list = LoadFriendUIDList()
+    return _friendUIDCache.list
+end
+
 local function FriendUIDListEquals(a, b)
     if type(a) ~= "table" or type(b) ~= "table" then return false end
     if #a ~= #b then return false end
@@ -940,7 +957,8 @@ end
 _G.RapzhangFriendUID = {
     FileName = FriendUIDFileName,
     GetPaths = GetFriendUIDPaths,
-    Load = LoadFriendUIDList,
+    Load = LoadFriendUIDListCached,
+    LoadFresh = LoadFriendUIDList,
     Save = SaveFriendUIDList,
     Equals = FriendUIDListEquals,
     Contains = FriendUIDInList,
@@ -2285,6 +2303,7 @@ if not _G.RapzhangForceFriend then
     FF._queryAttempts = {}
 
     function FF._installHooks()
+        if FF._hooked and FF._orig.batch ~= nil then return end
         pcall(function()
             local StatusHandler = require("client.network.Protocol.StatusHandler")
             if not StatusHandler then return end
@@ -2371,19 +2390,32 @@ if not _G.RapzhangForceFriend then
         end
     end
 
+    -- Status sudah diterima? Hentikan retry per UID supaya tidak menembak
+    -- query yang sama terus-menerus.
+    local function _hasStatus(uid)
+        local ok, has = pcall(function()
+            local MM = require("client.module_framework.ModuleManager")
+            local PSM = MM.GetModule(MM.CommonModuleConfig.PlayerStatusMgr)
+            if not PSM or not PSM.statusMap then return false end
+            return (PSM.statusMap[uid] or PSM.statusMap[tostring(uid)]) ~= nil
+        end)
+        return ok and has == true
+    end
+    FF._hasStatus = _hasStatus
+
     function FF._retryQueryIfNeeded()
         if type(FF._currentUIDs) ~= "table" or #FF._currentUIDs == 0 then return end
         local now = os.time()
-        if (now - (FF._queryLastAttempt or 0)) < 1.0 then return end
+        if (now - (FF._queryLastAttempt or 0)) < 2.0 then return end
         FF._queryLastAttempt = now
         for _, uid in ipairs(FF._currentUIDs) do
             local key = tostring(uid)
             local attempts = FF._queryAttempts[key] or 0
-            if attempts < 20 then
+            if attempts < 6 and not FF._hasStatus(uid) then
                 FF._queryAttempts[key] = attempts + 1
                 pcall(function() FF._triggerQuerySingle(uid) end)
                 if attempts == 0 then
-                    print(string.format("[FORCE FRIEND] Query UID %s (attempt 1/20)", key))
+                    print(string.format("[FORCE FRIEND] Query UID %s (attempt 1/6)", key))
                 end
             end
         end
@@ -2396,7 +2428,7 @@ if not _G.RapzhangForceFriend then
         if type(uids) == "table" and #uids > 0 then
             FF._installHooks()
             FF._triggerQuery()
-            pcall(function() if _G.RapzhangFakeFriendApply then _G.RapzhangFakeFriendApply() end end)
+            pcall(function() if _G.RapzhangFakeFriendApply then _G.RapzhangFakeFriendApply(uids) end end)
             pcall(function() if _G.RapzhangStartFriendSync then _G.RapzhangStartFriendSync() end end)
         end
     end
@@ -2405,9 +2437,29 @@ if not _G.RapzhangForceFriend then
         local enabled = _G.RapzhangConfig.ForceFriend == true
         if not enabled then
             if FF._hooked then FF._uninstallHooks() end
-            FF._currentUIDs = {}
+            if type(FF._currentUIDs) == "table" and #FF._currentUIDs > 0 then
+                FF._currentUIDs = {}
+                pcall(function()
+                    if _G._nadFfClearAll then _G._nadFfClearAll() end
+                end)
+            end
             return
         end
+
+        -- Force Friend hanya relevan di lobby. Saat in-match tidak ada
+        -- friend list yang perlu di-refresh, jadi jangan scan file/query.
+        local inMatch = false
+        pcall(function() inMatch = (LobbySystem and LobbySystem.isInMatch) == true end)
+        if inMatch then return end
+
+        -- Tick berjalan 2-50 Hz; file UID cukup dibaca maksimal 2 dtk
+        -- sekali (Load sudah punya cache internal).
+        local now = os.time()
+        if (now - (FF._lastScan or -999.0)) < 2.0 then
+            FF._retryQueryIfNeeded()
+            return
+        end
+        FF._lastScan = now
 
         local uids = _G.RapzhangFriendUID and _G.RapzhangFriendUID.Load() or {}
         local changed = not _G.RapzhangFriendUID.Equals(FF._currentUIDs, uids)
@@ -2416,7 +2468,7 @@ if not _G.RapzhangForceFriend then
             if type(uids) == "table" and #uids > 0 then
                 FF._installHooks()
                 FF._triggerQuery()
-                pcall(function() if _G.RapzhangFakeFriendApply then _G.RapzhangFakeFriendApply() end end)
+                pcall(function() if _G.RapzhangFakeFriendApply then _G.RapzhangFakeFriendApply(uids) end end)
                 pcall(function() if _G.RapzhangStartFriendSync then _G.RapzhangStartFriendSync() end end)
             else
                 if FF._hooked then FF._uninstallHooks() end
@@ -2424,7 +2476,7 @@ if not _G.RapzhangForceFriend then
         elseif type(uids) == "table" and #uids > 0 and not FF._hooked then
             FF._installHooks()
             FF._triggerQuery()
-            pcall(function() if _G.RapzhangFakeFriendApply then _G.RapzhangFakeFriendApply() end end)
+            pcall(function() if _G.RapzhangFakeFriendApply then _G.RapzhangFakeFriendApply(uids) end end)
             pcall(function() if _G.RapzhangStartFriendSync then _G.RapzhangStartFriendSync() end end)
         end
 
@@ -2447,7 +2499,7 @@ if not _G.RapzhangForceFriend then
         end
     end
 
-    print("[FORCE FRIEND] Module loaded (multi-UID, auto-retry 20x).")
+    print("[FORCE FRIEND] Module loaded (multi-UID, auto-retry 6x).")
 end
 
 -- ==========================================================
@@ -16296,6 +16348,8 @@ end
 _G.__RAPZHANG_FAKE_FRIEND_LOADED = true
 
 _G.HackAccountData = _G.HackAccountData or { uc = 0, level = 0, collectionLevel = 0, avatar = 0, avatarFrame = 0, matchStartAnim = 0, friends = {} }
+_G._nadFfProfileCache = _G._nadFfProfileCache or {}
+_G._nadFfSet = _G._nadFfSet or {}
 local _nadAppliedFriends = {}
 
 local function _nadRemoveFakeFriend(uid)
@@ -16304,6 +16358,14 @@ local function _nadRemoveFakeFriend(uid)
     pcall(function()
         local FriendHandler = require("client.network.Protocol.FriendHandler")
         FriendHandler.on_del_inner_friend_notify(uid)
+    end)
+    pcall(function()
+        local MM = require("client.module_framework.ModuleManager")
+        local LFL = MM.GetModule(MM.CommonModuleConfig.logic_friend_list)
+        if LFL and LFL.res_friendlist and LFL.res_friendlist.inner_list then
+            LFL.res_friendlist.inner_list[uid] = nil
+            LFL.res_friendlist.inner_list[tostring(uid)] = nil
+        end
     end)
     _nadAppliedFriends[uid] = nil
 end
@@ -16317,13 +16379,25 @@ local function _nadFfEsc(s)
 end
 
 local function _nadFfIsFakeFriend(uid)
-    local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
     uid = tonumber(uid)
     if not uid then return false end
+    local set = _G._nadFfSet
+    if set and set[uid] then return true end
+    local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
     for _, f in ipairs(friends) do
         if tonumber(f) == uid then return true end
     end
     return false
+end
+
+local function _nadFfRebuildSet()
+    local set = {}
+    local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
+    for _, f in ipairs(friends) do
+        local n = tonumber(f)
+        if n and n > 0 then set[n] = true end
+    end
+    _G._nadFfSet = set
 end
 
 local function _nadFfSnapStatus(v)
@@ -16648,7 +16722,12 @@ local function _nadFfModeStateFromGameStatus(status, time_util, uid)
     return mode, squad, state, since
 end
 
-function _G._nadExportFakeFriendUiFile()
+function _G._nadExportFakeFriendUiFile(force)
+    -- Dipanggil dari setiap batch response; batasi 1 dtk sekali dan
+    -- hanya tulis file kalau isinya berubah.
+    local now = os.time()
+    if force ~= true and (now - (_G._nadFfLastExport or -999.0)) < 1.0 then return end
+    _G._nadFfLastExport = now
     local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
     local lines = {}
     local ModuleManager = require("client.module_framework.ModuleManager")
@@ -16663,6 +16742,17 @@ function _G._nadExportFakeFriendUiFile()
                 local p = logic_profile:GetLocalProfile(uid)
                 if not p and logic_profile.GetProfile then p = logic_profile:GetProfile(uid) end
                 if p and p.nickName and p.nickName ~= "" then name = p.nickName end
+                if p then
+                    local c = _G._nadFfProfileCache[uid]
+                    if not c then c = {} _G._nadFfProfileCache[uid] = c end
+                    if c.nickName == nil and p.nickName ~= nil then c.nickName = p.nickName end
+                    if c.level == nil and p.level ~= nil then c.level = p.level end
+                    if c.picUrl == nil and p.picUrl ~= nil then c.picUrl = p.picUrl end
+                    if c.sex == nil and p.sex ~= nil then c.sex = p.sex end
+                    if c.cur_avatar_box_id == nil and p.cur_avatar_box_id ~= nil then c.cur_avatar_box_id = p.cur_avatar_box_id end
+                    if c.nation == nil and p.nation ~= nil then c.nation = p.nation end
+                    if c.segment_info == nil and p.segment_info ~= nil then c.segment_info = p.segment_info end
+                end
             end)
             local status = nil
             if PlayerStatusMgr and PlayerStatusMgr.statusMap then
@@ -16690,14 +16780,22 @@ function _G._nadExportFakeFriendUiFile()
                 uid, _nadFfEsc(name), _nadFfEsc(mode), _nadFfEsc(squad), _nadFfEsc(state), _nadFfEsc(since))
         end
     end
+    local content = table.concat(lines, "\n")
+    if content == _G._nadFfLastExportStr then return end
+    _G._nadFfLastExportStr = content
     local f = io.open("/data/share1/rapzhang_ff_ui.txt", "w")
     if f then
-        f:write(table.concat(lines, "\n"))
+        f:write(content)
         f:close()
     end
 end
 
 local function _nadRequestFakeFriendStatus()
+    -- Status/profil tidak berubah secepat tick; 15 dtk cukup dan
+    -- menghindari spam batch request ke lobby.
+    local now = os.time()
+    if (now - (_G._nadFfLastStatusReq or -999.0)) < 15.0 then return end
+    _G._nadFfLastStatusReq = now
     local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
     local uidList = {}
     for _, uid in ipairs(friends) do
@@ -16715,6 +16813,17 @@ local function _nadRequestFakeFriendStatus()
             pcall(_G._nadExportFakeFriendUiFile)
         end)
     end)
+    -- Jalur yang dipakai game untuk "recommended friend" (bukan teman):
+    -- ini yang mengisi logic_profile sehingga nama/avatar/rank tampil.
+    pcall(function()
+        local logic_profile_get_wrap = require("client.slua.logic.user.profile.logic_profile_get_wrap")
+        local cfg = Enum_PROFILE_REPORT_CFG and Enum_PROFILE_REPORT_CFG.BATTLE_RESULT or 0
+        if logic_profile_get_wrap and logic_profile_get_wrap.GetNormalProfiles then
+            logic_profile_get_wrap.GetNormalProfiles(uidList, function()
+                pcall(_G._nadExportFakeFriendUiFile)
+            end, cfg)
+        end
+    end)
     pcall(function()
         local MM = require("client.module_framework.ModuleManager")
         local PlayerStatusMgr = MM.GetModule(MM.CommonModuleConfig.PlayerStatusMgr)
@@ -16730,7 +16839,148 @@ local function _nadRequestFakeFriendStatus()
     end)
 end
 
+-- ------------------------------------------------------------------
+-- [FORCE FRIEND v2] Profil + merge friend list
+-- Entri tampil seperti teman asli (nama/avatar/rank dari logic_profile,
+-- online dari PlayerStatusMgr, urutan wajar) tanpa menulis relasi ke
+-- server. Semua patch defensif: kalau method tidak ada, fallback ke
+-- injeksi inner_list yang lama.
+-- ------------------------------------------------------------------
+
+local function _nadFfOnline(uid)
+    local ok, online = pcall(function()
+        local MM = require("client.module_framework.ModuleManager")
+        local PSM = MM.GetModule(MM.CommonModuleConfig.PlayerStatusMgr)
+        local st = nil
+        if PSM and PSM.statusMap then
+            st = PSM.statusMap[uid] or PSM.statusMap[tostring(uid)]
+        end
+        return st and (st.online == 1 or st.online == true) and 1 or 0
+    end)
+    return ok and online or 0
+end
+
+local function _nadFfMakeEntry(uid, idx)
+    uid = tonumber(uid)
+    if not uid then return nil end
+    idx = tonumber(idx) or 1
+    -- Basis waktu stabil: kalau memakai os.time() langsung, create_time
+    -- berubah tiap detik dan UI bisa re-sort/flicker.
+    _G._nadFfBaseTime = _G._nadFfBaseTime or os.time()
+    -- GetFriendInfoMap dipanggil tiap render; pakai satu tabel per UID
+    -- supaya tidak alokasi baru terus dan identitas entri stabil.
+    local cache = _G._nadFfEntryCache
+    if not cache then cache = {} _G._nadFfEntryCache = cache end
+    local e = cache[uid]
+    if not e then
+        e = {
+            uid = uid,
+            -- Nilai wajar supaya tidak selalu di dasar daftar seperti entri
+            -- baru; sorting game tetap menentukan posisi akhir.
+            intimacy = 300 + idx,
+            create_time = _G._nadFfBaseTime - 90 * 86400 - idx * 3600,
+            is_fake = true,
+        }
+        cache[uid] = e
+    end
+    e.online = _nadFfOnline(uid)
+    return e
+end
+
+-- Isi/enrich entri yang sudah ada (mis. dari _nadEnsureFriendListSlot
+-- dengan intimacy 0) supaya tampil seperti teman lama, tanpa menghapus
+-- field lain yang mungkin dipakai UI.
+local function _nadFfEnrichEntry(e, uid, idx)
+    if type(e) ~= "table" then return e end
+    local mk = _nadFfMakeEntry(uid, idx)
+    if not mk then return e end
+    if (tonumber(e.intimacy) or 0) < mk.intimacy then e.intimacy = mk.intimacy end
+    e.create_time = mk.create_time
+    e.online = mk.online
+    e.is_fake = true
+    return e
+end
+
+local function _nadInstallFriendListPatch()
+    local MM = require("client.module_framework.ModuleManager")
+    local LFL = MM.GetModule(MM.CommonModuleConfig.logic_friend_list)
+    if not LFL or LFL.__nadFfMapPatched then return end
+    LFL.__nadFfMapPatched = true
+
+    -- Kunci utama: UI friend list meminta map setiap render. Merge di
+    -- sini membuat entri tetap ada walau response server baru saja
+    -- mengganti inner_list (tidak perlu re-apply tiap 0,75 dtk).
+    local origMap = LFL.GetFriendInfoMap
+    if origMap then
+        LFL.GetFriendInfoMap = function(self, ...)
+            local map = origMap(self, ...)
+            if type(map) ~= "table" then map = {} end
+            local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
+            for i, f in ipairs(friends) do
+                local uid = tonumber(f)
+                if uid then
+                    local e = map[uid] or map[tostring(uid)]
+                    if not e then
+                        map[uid] = _nadFfMakeEntry(uid, i)
+                    else
+                        _nadFfEnrichEntry(e, uid, i)
+                    end
+                end
+            end
+            return map
+        end
+    end
+
+    local origInfo = LFL.GetFriendInfo
+    if origInfo then
+        LFL.GetFriendInfo = function(self, uid, ...)
+            local info = origInfo(self, uid, ...)
+            if info then
+                if _nadFfIsFakeFriend(uid) then
+                    local idx = 1
+                    local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
+                    for i, f in ipairs(friends) do
+                        if tonumber(f) == tonumber(uid) then idx = i break end
+                    end
+                    _nadFfEnrichEntry(info, uid, idx)
+                end
+                return info
+            end
+            if _nadFfIsFakeFriend(uid) then
+                local idx = 1
+                local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
+                for i, f in ipairs(friends) do
+                    if tonumber(f) == tonumber(uid) then idx = i break end
+                end
+                return _nadFfMakeEntry(uid, idx)
+            end
+            return info
+        end
+    end
+end
+
+local function _nadInstallRelationPatch()
+    local LogicFriend = require("client.slua.logic.friend.logic_new_friend")
+    if not LogicFriend or LogicFriend.__nadFfRelationPatched then return end
+    LogicFriend.__nadFfRelationPatched = true
+    local origInner = LogicFriend.IsInnerFriend
+    if origInner then
+        LogicFriend.IsInnerFriend = function(uid, ...)
+            if _nadFfIsFakeFriend(uid) then return true end
+            return origInner(uid, ...)
+        end
+    end
+    local origFriend = LogicFriend.IsFriend
+    if origFriend then
+        LogicFriend.IsFriend = function(uid, ...)
+            if _nadFfIsFakeFriend(uid) then return true end
+            return origFriend(uid, ...)
+        end
+    end
+end
+
 local function _nadApplyFakeFriends()
+    _nadFfRebuildSet()
     local friends = _G.HackAccountData and _G.HackAccountData.friends or {}
     local FriendApplyHandler = require("client.network.Protocol.FriendApplyHandler")
     local LogicFriend = require("client.slua.logic.friend.logic_new_friend")
@@ -16764,7 +17014,23 @@ local function _nadApplyFakeFriends()
             _nadRemoveFakeFriend(uid)
         end
     end
+    pcall(_nadInstallFriendListPatch)
+    pcall(_nadInstallRelationPatch)
     pcall(_nadRequestFakeFriendStatus)
+end
+
+function _G._nadFfClearAll()
+    local applied = {}
+    for uid in pairs(_nadAppliedFriends) do applied[#applied + 1] = uid end
+    for _, uid in ipairs(applied) do
+        pcall(_nadRemoveFakeFriend, uid)
+    end
+    _G.HackAccountData.friends = {}
+    _G._nadFfSet = {}
+    _G._nadFfProfileCache = {}
+    _G._nadFfRawCache = {}
+    _G._nadFfEntryCache = {}
+    _G._nadFfLastExportStr = nil
 end
 
 pcall(function()
@@ -16827,12 +17093,17 @@ pcall(function()
         end)
     end
 end)
-function _G.RapzhangFakeFriendApply()
+function _G.RapzhangFakeFriendApply(uids)
     if not (_G.RapzhangConfig and _G.RapzhangConfig.ForceFriend == true) then return false end
-    local loader = _G.RapzhangFriendUID
-    local uids = loader and loader.Load and loader.Load() or {}
+    -- Pemanggil yang sudah punya daftar UID (mis. FF.Tick) boleh
+    -- mengopernya agar tidak memuat ulang file/cache.
+    if type(uids) ~= "table" then
+        local loader = _G.RapzhangFriendUID
+        uids = loader and loader.Load and loader.Load() or {}
+    end
     _G.HackAccountData = _G.HackAccountData or {}
     _G.HackAccountData.friends = uids
+    pcall(_nadFfRebuildSet)
     pcall(_nadApplyFakeFriends)
     return true
 end
@@ -16866,7 +17137,7 @@ if not _G.RapzhangStartFriendSync then
             local ok = pcall(function()
                 local ticker = require("common.time_ticker")
                 if ticker and ticker.AddTimerOnce then
-                    ticker.AddTimerOnce(0.75, syncStep)
+                    ticker.AddTimerOnce(3.0, syncStep)
                     scheduled = true
                 end
             end)
