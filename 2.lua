@@ -4452,8 +4452,12 @@ do
   EX.LastGrenadeScan = -999.0
   EX.ZoneRingT = -999.0
   EX.ZoneGroundZ = nil
-  EX.ZoneMapT = -999.0
-  EX.ZoneMapRefs = EX.ZoneMapRefs or {}
+  EX.ZoneGroundX, EX.ZoneGroundY = nil, nil
+  EX.ZoneDataT = -999.0
+  EX.ZoneDataCache = nil
+  EX.ZoneDataOK = false
+  EX.ZoneTextT = -999.0
+  EX.ZoneTextCache = nil
   EX.HitResult = nil
 
   function EX.ImportClass(path, alias)
@@ -4658,6 +4662,27 @@ do
     ESP.DrawLine(t[8], R, B, R, B - arm, th)
   end
 
+  -- Tabel titik unit circle di-cache per jumlah segmen. DrawRing dipanggil
+  -- tiap frame (zona, granat), jadi cos/sin tidak perlu dihitung ulang
+  -- 2x per segmen setiap frame.
+  function EX.GetUnitRing(n)
+    local cache = EX.UnitRings
+    if cache == nil then
+      cache = {}
+      EX.UnitRings = cache
+    end
+    local u = cache[n]
+    if u ~= nil then return u end
+    u = {}
+    for i = 1, n do
+      local a1 = ((i - 1) / n) * math.pi * 2.0
+      local a2 = (i / n) * math.pi * 2.0
+      u[i] = { math.cos(a1), math.sin(a1), math.cos(a2), math.sin(a2) }
+    end
+    cache[n] = u
+    return u
+  end
+
   function EX.DrawRing(key, cx, cy, rx, ry, color, colorKey, th, n)
     n = n or 16
     local t = EX.GetRing(key, n)
@@ -4665,13 +4690,13 @@ do
     rx = math.max(2.0, rx or 2.0)
     ry = math.max(2.0, ry or 2.0)
     th = th or 1.5
+    local u = EX.GetUnitRing(n)
     for i = 1, n do
+      local p = u[i]
       ESP.SetBrush(t[i], color, colorKey)
-      local a1 = ((i - 1) / n) * math.pi * 2.0
-      local a2 = (i / n) * math.pi * 2.0
       ESP.DrawLine(t[i],
-        cx + math.cos(a1) * rx, cy + math.sin(a1) * ry,
-        cx + math.cos(a2) * rx, cy + math.sin(a2) * ry, th)
+        cx + p[1] * rx, cy + p[2] * ry,
+        cx + p[3] * rx, cy + p[4] * ry, th)
     end
   end
 
@@ -4785,14 +4810,12 @@ do
     EX.LastAirdropScan, EX.LastGrenadeScan = -999.0, -999.0
     EX.ZoneRingT = -999.0
     EX.ZoneGroundZ = nil
-    pcall(function()
-      for i = 1, #(EX.ZoneMapRefs or {}) do
-        local r = EX.ZoneMapRefs[i]
-        if r and r.W then pcall(function() r.W:UpdateCircle(nil) end) end
-      end
-    end)
-    EX.ZoneMapRefs = {}
-    EX.ZoneMapT = -999.0
+    EX.ZoneGroundX, EX.ZoneGroundY = nil, nil
+    EX.ZoneDataT = -999.0
+    EX.ZoneDataCache = nil
+    EX.ZoneDataOK = false
+    EX.ZoneTextT = -999.0
+    EX.ZoneTextCache = nil
   end
 
   -- Baca properti objek slua. Sebagian properti C++ tidak terbaca lewat
@@ -6746,315 +6769,173 @@ do
     return data
   end
 
-  -- ==========================================================
-  -- Next circle di MAP (bukan ring 3D)
-  -- Game sudah menggambar safe zone putih lewat C++ (WhiteCircleColorC).
-  -- Supaya zona berikutnya tetap terlihat sebagai biru, widget map resmi
-  -- `CustomBlueCircle` dipakai: game yang menghitung konversi world->map,
-  -- skala zoom, dan posisi pan, jadi tidak ada proyeksi layar manual.
-  -- ==========================================================
-  local function zoneMapMgr()
-    local um = rawget(_G, "UIManager")
-    if um == nil then
-      local ok, v = pcall(function() return _G.UIManager end)
-      if ok then um = v end
-    end
-    return um
-  end
-
-  local function zoneMapAdd(list, id)
-    if id == nil then return end
-    local um = zoneMapMgr()
-    if not (um and type(um.GetUI) == "function") then return end
-    local win = nil
-    pcall(function() win = um.GetUI(id) end)
-    if win == nil then pcall(function() win = um:GetUI(id) end) end
-    local map = nil
-    -- EntireMapWindow membuat CurrentMapUIBP secara lazy; GetEntireMapUIBP()
-    -- memaksa inisialisasi supaya map besar ikut dapat ring next circle.
-    pcall(function()
-      if win and type(win.GetEntireMapUIBP) == "function" then
-        map = win:GetEntireMapUIBP()
-      end
-    end)
-    if not ESPValid(map) then
-      pcall(function()
-        local root = win and win.UIRoot
-        map = root and root.CurrentMapUIBP
-      end)
-    end
-    if not ESPValid(map) then return end
-    for i = 1, #list do
-      if list[i] == map then return end
-    end
-    list[#list + 1] = map
-  end
-
-  -- Daftar MapUIBase Lua yang aktif: MiniMapWindow selalu ada selama match,
-  -- EntireMapWindow muncul saat map besar dibuka/di-preload game.
-  function EX.GetZoneMapUIs()
-    local list = {}
-    local um = zoneMapMgr()
-    local cfg = um and um.UI_Config_InGame
-    if not cfg then return list end
-    pcall(zoneMapAdd, list, cfg.MiniMapWindow)
-    pcall(zoneMapAdd, list, cfg.EntireMapWindow)
-    return list
-  end
-
-  local function zoneMapCircle(circle)
-    if circle == nil then return nil end
-    local x = tonumber(circle.X)
-    local y = tonumber(circle.Y)
-    local z = tonumber(circle.Z)
+  -- Zona berikutnya selalu termuat di dalam zona aktif. WhiteCircle dan
+  -- BlueCircle bisa bertukar arti antar mode/build, jadi tentukan dari
+  -- geometri: lingkaran yang termuat (atau radius lebih kecil saat transisi)
+  -- adalah next; yang memuat adalah zona aktif.
+  local function zoneCircle(c)
+    if c == nil then return nil end
+    local x, y, z = tonumber(c.X), tonumber(c.Y), tonumber(c.Z)
     if x == nil or y == nil or z == nil or z <= 0 then return nil end
-    local v = nil
-    pcall(function() if FVector then v = FVector(x, y, z) end end)
-    if v == nil then v = circle end
-    return v
+    return c
   end
 
-  -- Zona berikutnya SELALU berada di dalam zona sekarang: server memilih
-  -- circle baru yang seluruhnya termuat di circle lama. Jadi lingkaran "next"
-  -- ditentukan dari geometri, bukan dari nama field. WhiteCircle/BlueCircle
-  -- bisa bertukar arti antar mode, tetapi yang termuat di lingkaran lain
-  -- selalu zona berikutnya.
   function EX.GetZoneCircles(data)
     data = data or EX.GetZoneData()
-    if not data then return nil, nil, nil end
-    local w = zoneMapCircle(data.white)
-    local b = zoneMapCircle(data.blue)
+    if not data then return nil, nil end
+    local w = zoneCircle(data.white)
+    local b = zoneCircle(data.blue)
     local outer, inner = nil, nil
     if w ~= nil and b ~= nil then
-      local dx = w.X - b.X
-      local dy = w.Y - b.Y
+      local dx = tonumber(w.X) - tonumber(b.X)
+      local dy = tonumber(w.Y) - tonumber(b.Y)
       local d = math.sqrt(dx * dx + dy * dy)
-      if d + w.Z <= b.Z + 1.0 then
+      local wz, bz = tonumber(w.Z), tonumber(b.Z)
+      -- Saat blue zone selesai menyusut, white circle menjadi zona aktif
+      -- dan next circle baru belum dibuat. Dua circle yang hampir sama
+      -- bukan "next" yang valid, jadi jangan tampilkan NEXT INSIDE.
+      if d <= 100.0 and math.abs(wz - bz) <= 100.0 then
+        outer = (wz >= bz) and w or b
+        inner = nil
+      elseif d + wz <= bz + 1.0 then
         outer, inner = b, w
-      elseif d + b.Z <= w.Z + 1.0 then
+      elseif d + bz <= wz + 1.0 then
         outer, inner = w, b
-      elseif w.Z <= b.Z then
-        -- Fase transisi (belum saling termuat): radius kecil = next.
+      elseif wz <= bz then
         outer, inner = b, w
       else
         outer, inner = w, b
       end
     elseif w ~= nil then
-      outer, inner = w, w
+      outer, inner = w, nil
     elseif b ~= nil then
-      outer, inner = b, b
+      outer, inner = b, nil
     end
-    return outer, inner, data
+    return outer, inner
   end
 
-  -- Widget CustomBlueCircle dibuat game lewat OnCreateMapWidget. Di beberapa
-  -- build BindMapUIBase menerima objek yang salah sehingga MapUIBase nil dan
-  -- ResetSize selalu error: widget ada tetapi tidak pernah tampil. Perbaiki
-  -- binding sebelum/sesudah UpdateCircle.
-  local function zoneMapRepair(map, w)
-    if w == nil then return end
-    pcall(function()
-      local base = map.CurrentMapUI
-      if base ~= nil then
-        -- BindMapUIBase di beberapa build menerima objek yang salah dan
-        -- meninggalkan MapUIBase nil / bukan widget map. ResetSize butuh
-        -- GetLevelToMapScale, LevelLandScapeCenterC, ImageBlueCircleScale.
-        local bad = w.MapUIBase == nil
-        if not bad then
-          local okScale = false
-          pcall(function() okScale = type(w.MapUIBase.GetLevelToMapScale) == "function" end)
-          local okCenter = false
-          pcall(function() okCenter = w.MapUIBase.LevelLandScapeCenterC ~= nil end)
-          bad = not (okScale and okCenter)
-        end
-        if bad then w.MapUIBase = base end
-      end
-      w.MapUI = map
-      w.bIsMiniMap = map.bIsMiniMap
-    end)
+  -- Cache data zona: GetZoneData membaca beberapa field GameState dan
+  -- mem-parse string circle. DrawZone dipanggil tiap frame, sedangkan
+  -- wave/posisi/radius zona hanya berubah per fase; 0,25 dtk cukup dan
+  -- menghemat puluhan pcall per detik.
+  local ZONE_DATA_TTL = 0.25
+  local function zoneData(now)
+    local t = EX.ZoneDataT
+    if EX.ZoneDataOK == true and t ~= nil and (now - t) >= 0
+      and (now - t) < ZONE_DATA_TTL then
+      return EX.ZoneDataCache
+    end
+    local data = EX.GetZoneData()
+    EX.ZoneDataCache = data
+    EX.ZoneDataOK = true
+    EX.ZoneDataT = now
+    return data
   end
 
-  -- Widget CustomBlueCircle punya fill biru penuh (BlueFullImage/blueImage*)
-  -- yang menutupi seluruh peta. ESP hanya butuh garis next circle, jadi fill
-  -- disembunyikan dan Border_RingFX/Border_FullRing dibiarkan.
-  local function zoneMapRingOnly(w)
-    if w == nil then return end
-    local root = nil
-    pcall(function() root = w.UIRoot end)
-    if root == nil then return end
-    local function hide(ui)
-      if ui == nil then return end
-      local ok = pcall(function() w:SetVisible(ui, false) end)
-      if not ok then
-        pcall(function()
-          ui:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed)
-        end)
-      end
-    end
-    hide(root.BlueFullImage)
-    hide(root.blueImage1)
-    hide(root.blueImage2)
-    hide(root.blueImage3)
-    hide(root.blueImage4)
-  end
-
-  local function zoneMapApply(map, w, circle)
-    if w == nil then return false end
-    local ok = pcall(function() w:UpdateCircle(circle) end)
-    if not ok then
-      zoneMapRepair(map, w)
-      ok = pcall(function() w:UpdateCircle(circle) end)
-    end
-    if not ok then
-      -- Map belum siap (CurrentMapUI belum dibuat). Tahan widget; jangan
-      -- hancurkan dan buat ulang tiap detik sampai map siap.
-      local ready = false
-      pcall(function() ready = map.CurrentMapUI ~= nil end)
-      return ready == false
-    end
-    pcall(zoneMapRingOnly, w)
-    local closed = false
-    pcall(function() closed = w.bIsClosed == true end)
-    return not closed
-  end
-
-  -- Sinkronkan next circle ke widget map. `circle` nil = sembunyikan.
-  -- Throttle 1 detik: DrawZone dipanggil tiap frame, sedangkan posisi/radius
-  -- zona hanya berubah per fase.
-  function EX.SyncZoneMap(now, circle)
-    now = tonumber(now) or 0.0
-    if (now - (EX.ZoneMapT or -999.0)) < 1.0 then return end
-    EX.ZoneMapT = now
-    local maps = EX.GetZoneMapUIs()
-    local want = zoneMapCircle(circle)
-    local old = EX.ZoneMapRefs or {}
-    local refs = {}
-    for i = 1, #maps do
-      local map = maps[i]
-      local ref = nil
-      for j = 1, #old do
-        if old[j].UI == map then ref = old[j] break end
-      end
-      if want ~= nil then
-        local w = nil
-        if ref ~= nil and ref.W ~= nil then
-          if zoneMapApply(map, ref.W, want) then
-            w = ref.W
-          else
-            -- Widget lama sudah ditutup game / map: lepas lalu buat ulang.
-            pcall(function() ref.W:Close() end)
-            pcall(function()
-              local cw = map.CustomBlueWidget
-              if cw ~= nil and (cw == ref.W or cw._RapzhangZoneMap == true) then
-                map.CustomBlueWidget = nil
-              end
-            end)
-          end
-        end
-        if w == nil then
-          local cur = nil
-          pcall(function() cur = map.CustomBlueWidget end)
-          if cur ~= nil then
-            -- Slot terisi: adopsi hanya kalau memang widget buatan kita.
-            local mine = false
-            pcall(function() mine = cur._RapzhangZoneMap == true end)
-            if mine then
-              zoneMapRepair(map, cur)
-              if zoneMapApply(map, cur, want) then w = cur end
-            end
-          else
-            -- Slot kosong: buat lewat jalur resmi game.
-            -- BlueCircleUI menutup CustomBlueWidget sekali saat blue circle
-            -- asli mulai tampil. Kalau itu terjadi setelah widget kita dibuat,
-            -- event pembuatan widget tidak dipasang lagi dan next circle
-            -- hilang. Tandai BlueWidget sudah pernah menutup custom widget,
-            -- lalu buat lewat event; bila event sudah tidak terpasang, pakai
-            -- factory resmi MapUIBase.
-            local bw = nil
-            pcall(function() bw = map.BlueWidget end)
-            if bw ~= nil and bw.bHasClosedCustomCircle ~= true then
-              pcall(function() bw.bHasClosedCustomCircle = true end)
-            end
-            pcall(function() map:OnReceivedCustomBlueCircle(nil, nil, want, false) end)
-            pcall(function() cur = map.CustomBlueWidget end)
-            if cur == nil then
-              pcall(function() map:OnCreateMapWidget("CustomBlueWidget", "CustomBlueCircleUI") end)
-              pcall(function() cur = map.CustomBlueWidget end)
-            end
-            if cur ~= nil then
-              pcall(function() cur._RapzhangZoneMap = true end)
-              zoneMapRepair(map, cur)
-              if zoneMapApply(map, cur, want) then w = cur end
-            end
-          end
-        end
-        if w ~= nil then refs[#refs + 1] = { UI = map, W = w } end
-      else
-        -- OFF / belum ada zona: collapse widget milik kita, jangan hancurkan,
-        -- supaya fase berikutnya tinggal UpdateCircle lagi.
-        if ref ~= nil and ref.W ~= nil then
-          pcall(function() ref.W:UpdateCircle(nil) end)
-          refs[#refs + 1] = ref
-        end
-      end
-    end
-    EX.ZoneMapRefs = refs
-  end
+  -- Label timer ikut di-throttle: teks NEXT/SAFE hanya perlu diperbarui
+  -- beberapa kali per detik, bukan tiap frame.
+  local ZONE_TEXT_TTL = 0.20
 
   function EX.DrawZone(pc, vw, vh, now)
     local cfg = _G.RapzhangConfig or {}
     local showTimer = cfg.Esp9_ZoneTimer == true
     local showNext = cfg.Esp9_ZoneNext == true
-    local data = EX.GetZoneData()
+    now = tonumber(now) or ESP.Now()
+    local data = zoneData(now)
     if not data or (not showTimer and not showNext) then
       EX.HideLabel("zone_text")
       EX.HideRing("zone_ring")
-      pcall(EX.SyncZoneMap, now, nil)
       return
     end
-    local myLoc = nil
-    pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
-    -- Zona berikutnya selalu termuat di dalam zona sekarang, jadi yang
-    -- dipakai untuk NEXT adalah lingkaran dalam (inner), bukan field putih.
-    local outer, inner = EX.GetZoneCircles(data)
-    local innerOK = inner ~= nil
+    -- Zona next/aktif ditentukan geometri, bukan nama field: WhiteCircle dan
+    -- BlueCircle bisa bertukar arti antar mode. `nextCircle` dipakai untuk
+    -- NEXT + ring, `outer` (zona aktif) dipakai untuk SAFE.
+    local outer, nextCircle = EX.GetZoneCircles(data)
+    local nextOK = nextCircle ~= nil
     if showTimer then
-      local parts = {}
-      if type(data.wave) == "number" and data.wave >= 0 then
-        parts[#parts + 1] = string.format("ZONE %d", math.floor(data.wave + 0.5))
-      else
-        parts[#parts + 1] = "ZONE"
-      end
-      if type(data.remain) == "number" then
-        parts[#parts + 1] = "SHRINK " .. fmtTime(data.remain)
-      end
-      if innerOK and myLoc then
-        local dx = inner.X - myLoc.X
-        local dy = inner.Y - myLoc.Y
-        local dist = math.sqrt(dx * dx + dy * dy) - inner.Z
-        if dist <= 0 then
-          parts[#parts + 1] = "NEXT INSIDE"
+      local myLoc = nil
+      pcall(function() myLoc = ESP.ActorLocation(ESP.GetLocalCharacter()) end)
+      if (now - (EX.ZoneTextT or -999.0)) >= ZONE_TEXT_TTL
+        or EX.ZoneTextCache == nil or now < (EX.ZoneTextT or 0) then
+        local parts = {}
+        if type(data.wave) == "number" and data.wave >= 0 then
+          parts[#parts + 1] = string.format("ZONE %d", math.floor(data.wave + 0.5))
         else
-          parts[#parts + 1] = string.format("NEXT %dm", math.floor(dist / 100.0 + 0.5))
+          parts[#parts + 1] = "ZONE"
         end
-      end
-      -- SAFE = pemain masih di dalam zona aktif (lingkaran luar).
-      if outer ~= nil and myLoc then
-        local dx = outer.X - myLoc.X
-        local dy = outer.Y - myLoc.Y
-        local dist = math.sqrt(dx * dx + dy * dy)
-        if dist <= outer.Z then
-          parts[#parts + 1] = "SAFE"
+        if type(data.remain) == "number" then
+          parts[#parts + 1] = "SHRINK " .. fmtTime(data.remain)
         end
+        if nextOK and myLoc then
+          local dx = (tonumber(nextCircle.X) or 0) - myLoc.X
+          local dy = (tonumber(nextCircle.Y) or 0) - myLoc.Y
+          local dist = math.sqrt(dx * dx + dy * dy) - (tonumber(nextCircle.Z) or 0)
+          if dist <= 0 then
+            parts[#parts + 1] = "NEXT INSIDE"
+          else
+            parts[#parts + 1] = string.format("NEXT %dm", math.floor(dist / 100.0 + 0.5))
+          end
+        end
+        if outer ~= nil and myLoc then
+          local dx = (tonumber(outer.X) or 0) - myLoc.X
+          local dy = (tonumber(outer.Y) or 0) - myLoc.Y
+          local dist = math.sqrt(dx * dx + dy * dy)
+          if dist <= (tonumber(outer.Z) or 0) then
+            parts[#parts + 1] = "SAFE"
+          end
+        end
+        EX.ZoneTextT = now
+        EX.ZoneTextCache = table.concat(parts, "  |  ")
       end
-      EX.DrawLabel("zone_text", vw * 0.5, 36.0, table.concat(parts, "  |  "), C_EX_CYAN)
+      EX.DrawLabel("zone_text", vw * 0.5, 36.0, EX.ZoneTextCache, C_EX_CYAN)
     else
       EX.HideLabel("zone_text")
     end
-    -- Ring next circle sekarang digambar di map (mini + entire map) dengan
-    -- widget CustomBlueCircle milik game; tidak ada lagi ring proyeksi 3D.
-    EX.HideRing("zone_ring")
-    pcall(EX.SyncZoneMap, now, showNext and inner or nil)
+    if showNext and nextOK and pc then
+      local wx = tonumber(nextCircle.X) or 0
+      local wy = tonumber(nextCircle.Y) or 0
+      -- Ground Z hanya perlu di-trace ulang saat pusat circle berpindah
+      -- (fase baru) atau tiap 3 dtk sebagai penyegar. Sebelumnya line trace
+      -- jalan tiap 1 dtk meski pusat zona tidak bergerak.
+      local moved = true
+      if EX.ZoneGroundX ~= nil and EX.ZoneGroundY ~= nil then
+        local gx, gy = wx - EX.ZoneGroundX, wy - EX.ZoneGroundY
+        moved = (gx * gx + gy * gy) > 10000.0
+      end
+      if EX.ZoneGroundZ == nil or moved or (now - (EX.ZoneRingT or -999.0)) >= 3.0 then
+        EX.ZoneRingT = now
+        EX.ZoneGroundX, EX.ZoneGroundY = wx, wy
+        EX.ZoneGroundZ = EX.GroundZ(pc, wx, wy, 20000.0)
+      end
+      local center = {
+        X = wx,
+        Y = wy,
+        Z = (EX.ZoneGroundZ or 0) + 30.0,
+      }
+      local cs = ESP.Project(pc, center)
+      if cs and cs.X > -200 and cs.X < vw + 200 and cs.Y > -200 and cs.Y < vh + 200 then
+        local r = tonumber(nextCircle.Z) or 0
+        local px = ESP.Project(pc, { X = center.X + r, Y = center.Y, Z = center.Z })
+        local py = ESP.Project(pc, { X = center.X, Y = center.Y + r, Z = center.Z })
+        local rx, ry = nil, nil
+        if px and py then
+          local dx, dy = px.X - cs.X, px.Y - cs.Y
+          rx = math.sqrt(dx * dx + dy * dy)
+          dx, dy = py.X - cs.X, py.Y - cs.Y
+          ry = math.sqrt(dx * dx + dy * dy)
+        end
+        if rx and ry and rx > 4 and ry > 4 and rx < 20000 and ry < 20000 then
+          EX.DrawRing("zone_ring", cs.X, cs.Y, rx, ry, C_EX_CYAN, "zone", 1.4,
+            ESP.ZoneRingSegments or 20)
+        else
+          EX.HideRing("zone_ring")
+        end
+      else
+        EX.HideRing("zone_ring")
+      end
+    else
+      EX.HideRing("zone_ring")
+    end
   end
 
   function EX.Update(pc, vw, vh, camLoc, now)
@@ -7066,7 +6947,6 @@ do
     else
       EX.HideLabel("zone_text")
       EX.HideMark("zone_ring")
-      pcall(EX.SyncZoneMap, now, nil)
     end
     if cfg.Esp9_Airdrop == true then
       if (now - (EX.LastAirdropScan or -999)) >= (ESP.AirdropInterval or 0.80) then
