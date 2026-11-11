@@ -1,4 +1,3 @@
-bypass.lua
 anticheat.lua
 1.lua
 2.lua
