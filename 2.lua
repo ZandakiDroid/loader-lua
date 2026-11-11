@@ -6960,6 +6960,7 @@ do
       EX.HideLabel("zone_text")
       EX.HideRing("zone_ring")
       EX.HideRing("zone_next_mark")
+      EX.HideRing("zone_next_spot")
       EX.HideLabel("zone_next_text")
       return
     end
@@ -7032,6 +7033,24 @@ do
       local cs = ESP.Project(pc, center)
       if cs and cs.X > -200 and cs.X < vw + 200 and cs.Y > -200 and cs.Y < vh + 200 then
         local r = tonumber(nextCircle.Z) or 0
+        -- Marker = titik masuk terdekat di tepi next circle, bukan pusat.
+        -- Saat pemain masih di luar next, titik ini adalah "spot in" yang
+        -- paling cepat dicapai; saat sudah di dalam next, marker kembali ke
+        -- pusat karena tepi terdekat justru arah keluar.
+        local markX, markY = wx, wy
+        local hasSpot = false
+        if myLoc and r > 0 then
+          local mdx = (tonumber(myLoc.X) or 0) - wx
+          local mdy = (tonumber(myLoc.Y) or 0) - wy
+          local md = math.sqrt(mdx * mdx + mdy * mdy)
+          if md > (r + 1.0) then
+            markX = wx + (mdx / md) * r
+            markY = wy + (mdy / md) * r
+            hasSpot = true
+          end
+        end
+        local markZ = center.Z
+        local ms = ESP.Project(pc, { X = markX, Y = markY, Z = markZ })
         local px = ESP.Project(pc, { X = center.X + r, Y = center.Y, Z = center.Z })
         local py = ESP.Project(pc, { X = center.X, Y = center.Y + r, Z = center.Z })
         local rx, ry = nil, nil
@@ -7047,9 +7066,17 @@ do
         else
           EX.HideRing("zone_ring")
         end
-        -- Marker inti (diamond 4 segmen) + jarak: tanpa ini circle besar
-        -- hanya terlihat seperti garis tanpa titik acuan.
+        -- Diamond di pusat next circle: acuan utama zona berikutnya.
         EX.DrawRing("zone_next_mark", cs.X, cs.Y, 7.0, 7.0, C_EX_CYAN, "zone_mark", 1.8, 4)
+        -- Spot-in: titik masuk terdekat di tepi next circle (oranye), hanya
+        -- saat pemain masih di luar. Ini yang dipakai untuk arah jalan,
+        -- bukan pusat zona.
+        if hasSpot and ms and ms.X > -200 and ms.X < vw + 200
+          and ms.Y > -200 and ms.Y < vh + 200 then
+          EX.DrawRing("zone_next_spot", ms.X, ms.Y, 5.0, 5.0, C_EX_ORANGE, "zone_spot", 1.8, 4)
+        else
+          EX.HideRing("zone_next_spot")
+        end
         if (now - (EX.ZoneNextTextT or -999.0)) >= ZONE_TEXT_TTL
           or EX.ZoneNextText == nil or now < (EX.ZoneNextTextT or 0) then
           EX.ZoneNextTextT = now
@@ -7060,11 +7087,13 @@ do
       else
         EX.HideRing("zone_ring")
         EX.HideRing("zone_next_mark")
+        EX.HideRing("zone_next_spot")
         EX.HideLabel("zone_next_text")
       end
     else
       EX.HideRing("zone_ring")
       EX.HideRing("zone_next_mark")
+      EX.HideRing("zone_next_spot")
       EX.HideLabel("zone_next_text")
     end
   end
