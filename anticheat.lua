@@ -7326,10 +7326,16 @@ end  -- END _partG_rapzhang12
 --   ClientRPC_NormalTips / ClientRPC_StrongTips / ClientRPC_SyncBanID
 --   TxMissionHandler.ShowErrorTips: 100251031 / 100251051 di-skip
 --   PlayerStateBase:SetSuspiciousFlag
--- Pak/map check:
---   Client.IsFileExistInCSCWithCheckRaw, Client.IsFileExistsWithOutPakCheck
---   HDmpveRemoteConfigGetBool("MapPakFileBinDiffCheck")
---   PufferSwitch.BanDownload, PufferMapManager:CheckCorrupted
+-- Pak/map check (default):
+--   HDmpveRemoteConfigGetBool("MapPakFileBinDiffCheck") -> false
+--   (InitMapPaks menganggap pak map_pakfilebindiff sudah ada, jadi state-nya
+--    Done dan tidak ada download/cek bin-diff)
+-- Hook pak tambahan ada di _G.AntiCheatPakConfig, default OFF karena bisa
+-- memutus koneksi:
+--   fakeFileExists  : Client.IsFileExistInCSCWithCheckRaw("PakFileBinDiff")
+--                     -> true (hanya file bin-diff, bukan semua path)
+--   banDownload     : PufferSwitch.BanDownload = true / false
+--   checkCorrupted  : PufferMapManager.CheckCorrupted -> false
 --
 -- Diekspor ke _G.AntiCheatBypass supaya loader 2.lua bisa memanggil Install().
 -- ============================================================================
@@ -7432,21 +7438,48 @@ local function BanPakApplySuspiciousFlag()
   return true
 end
 
+-- Konfigurasi hook pak. Bisa diubah kapan saja lalu panggil
+-- _G.AntiCheatBypass.PakCheck() untuk menerapkan ulang.
+--
+-- fakeFileExists / banDownload / checkCorrupted sengaja OFF secara default:
+-- memaksa Client.* -> true membuat game mengira pak ada padahal tidak, dan
+-- memaksa BanDownload = false justru MENGAKTIFKAN alur download puffer
+-- (lihat InitMapPaks: defaultComplete = (not bSkipDepends) or BanDownload).
+-- Keduanya pernah membuat koneksi tidak masuk.
+local BanPakConfig = _G.AntiCheatPakConfig or {
+  binDiffCheck   = true,    -- paksa MapPakFileBinDiffCheck = false (cek pak 21759)
+  fakeFileExists = false,   -- Client.IsFileExistInCSCWithCheckRaw("PakFileBinDiff") -> true
+  banDownload    = "keep",  -- "keep" | true (matikan download) | false (aktifkan download)
+  checkCorrupted = "keep",  -- "keep" | false (jangan hapus file *.corrupted)
+}
+_G.AntiCheatPakConfig = BanPakConfig
+
 local function BanPakApplyClientPakCheck()
+  if BanPakConfig.fakeFileExists ~= true then return false end
   local ClientTbl = rawget(_G, "Client")
   if type(ClientTbl) ~= "table" then return false end
-  local hit = false
-  for _, key in ipairs({ "IsFileExistInCSCWithCheckRaw", "IsFileExistsWithOutPakCheck" }) do
-    if type(ClientTbl[key]) == "function" then
-      ClientTbl[key] = BanPakRetTrue
-      hit = true
-    end
+  -- Hanya cek file bin-diff yang dipalsukan. IsFileExistsWithOutPakCheck
+  -- sengaja TIDAK disentuh: kalau semua path dianggap ada, game bisa mencari
+  -- pak di folder puffer padahal file-nya ada di obb.
+  local orig = ClientTbl.IsFileExistInCSCWithCheckRaw
+  if type(orig) ~= "function" then return false end
+  if BanPakHooked.cscWrapper and ClientTbl.IsFileExistInCSCWithCheckRaw == BanPakHooked.cscWrapper then
+    BanPakHooked.csc = true
+    return true
   end
-  if hit then BanPakHooked.csc = true end
-  return hit
+  local wrapper = function(name, ...)
+    if type(name) == "string" and name:find("PakFileBinDiff", 1, true) then return true end
+    return orig(name, ...)
+  end
+  local ok = pcall(function() ClientTbl.IsFileExistInCSCWithCheckRaw = wrapper end)
+  if not ok then return false end
+  BanPakHooked.cscWrapper = wrapper
+  BanPakHooked.csc = true
+  return true
 end
 
 local function BanPakApplyRemoteSwitch()
+  if BanPakConfig.binDiffCheck == false then return false end
   local RemoteCfg = rawget(_G, "HDmpveRemote")
   if type(RemoteCfg) ~= "table" then return false end
   if type(RemoteCfg.HDmpveRemoteConfigGetBool) ~= "function" then return false end
@@ -7472,18 +7505,17 @@ local function BanPakApplyRemoteSwitch()
 end
 
 local function BanPakApplyPufferSwitch()
+  local mode = BanPakConfig.banDownload
+  if mode ~= true and mode ~= false then return false end
   local PufferSwitch = BanPakSafeLoadModule("client.slua.logic.download.puffer_switch")
   if type(PufferSwitch) ~= "table" then return false end
-  if type(PufferSwitch.BanDownload) == "function" then
-    PufferSwitch.BanDownload = BanPakRetFalse
-  else
-    PufferSwitch.BanDownload = false
-  end
+  PufferSwitch.BanDownload = mode
   BanPakHooked.pufferSwitch = true
   return true
 end
 
 local function BanPakApplyCheckCorrupted()
+  if BanPakConfig.checkCorrupted ~= false then return false end
   local MapManager = BanPakSafeLoadModule("client.slua.logic.download.puffer.map.puffer_map_manager")
   if type(MapManager) ~= "table" then return false end
   if type(MapManager.CheckCorrupted) ~= "function" then return false end
@@ -7497,6 +7529,7 @@ local BanPak = {
   Version = BANPAK_VERSION,
   TickInterval = BANPAK_TICK_INTERVAL,
   BanTipIds = { 100251031, 100251051 },
+  Config = BanPakConfig,
 }
 
 function BanPak.BanLogic()
@@ -7548,6 +7581,8 @@ function BanPak.Status()
   for k, v in pairs(BanPakHooked) do
     if type(v) ~= "function" then copy[k] = v end
   end
+  copy.config = {}
+  for k, v in pairs(BanPakConfig) do copy.config[k] = v end
   return copy
 end
 
