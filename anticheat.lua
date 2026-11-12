@@ -7326,12 +7326,15 @@ end  -- END _partG_rapzhang12
 --   ClientRPC_NormalTips / ClientRPC_StrongTips / ClientRPC_SyncBanID
 --   TxMissionHandler.ShowErrorTips: 100251031 / 100251051 di-skip
 --   PlayerStateBase:SetSuspiciousFlag
--- Pak/map check (default):
+-- Pak/map check: DEFAULT OFF. Saat boot Part H tidak menyentuh apa pun
+-- yang berhubungan dengan puffer/remote config, jadi login aman.
+-- Nyalakan setelah masuk lobby:
+--   _G.AntiCheatBypass.EnablePakBypass()
+-- Yang dipasang saat enabled:
 --   HDmpveRemoteConfigGetBool("MapPakFileBinDiffCheck") -> false
---   (InitMapPaks menganggap pak map_pakfilebindiff sudah ada, jadi state-nya
---    Done dan tidak ada download/cek bin-diff)
--- Hook pak tambahan ada di _G.AntiCheatPakConfig, default OFF karena bisa
--- memutus koneksi:
+--   (InitMapPaks menganggap pak map_pakfilebindiff sudah ada, state Done,
+--    tanpa cek/download bin-diff)
+-- Hook pak tambahan di _G.AntiCheatPakConfig, semuanya default OFF:
 --   fakeFileExists  : Client.IsFileExistInCSCWithCheckRaw("PakFileBinDiff")
 --                     -> true (hanya file bin-diff, bukan semua path)
 --   banDownload     : PufferSwitch.BanDownload = true / false
@@ -7354,6 +7357,7 @@ local BanPakHooked = {
 }
 local BanPakNextTick = 0.0
 local BanPakAnnounced = false
+local BanPakPakAnnounced = false
 local BanPakRetryScheduled = false
 
 local function BanPakNop() return true end
@@ -7446,12 +7450,18 @@ end
 -- memaksa BanDownload = false justru MENGAKTIFKAN alur download puffer
 -- (lihat InitMapPaks: defaultComplete = (not bSkipDepends) or BanDownload).
 -- Keduanya pernah membuat koneksi tidak masuk.
+-- enabled = false -> Part H HANYA memasang hook ban. Tidak ada satu pun
+-- hook pak/puffer yang dipasang saat boot, jadi login tidak tersentuh.
+-- Nyalakan setelah berhasil masuk lobby:
+--   _G.AntiCheatBypass.EnablePakBypass()
 local BanPakConfig = _G.AntiCheatPakConfig or {
+  enabled        = false,   -- master switch bypass pak (default OFF)
   binDiffCheck   = true,    -- paksa MapPakFileBinDiffCheck = false (cek pak 21759)
   fakeFileExists = false,   -- Client.IsFileExistInCSCWithCheckRaw("PakFileBinDiff") -> true
   banDownload    = "keep",  -- "keep" | true (matikan download) | false (aktifkan download)
   checkCorrupted = "keep",  -- "keep" | false (jangan hapus file *.corrupted)
 }
+BanPakConfig.enabled = BanPakConfig.enabled == true
 _G.AntiCheatPakConfig = BanPakConfig
 
 local function BanPakApplyClientPakCheck()
@@ -7498,6 +7508,7 @@ local function BanPakApplyRemoteSwitch()
   end
   local ok = pcall(function() RemoteCfg.HDmpveRemoteConfigGetBool = wrapper end)
   if not ok then return false end
+  BanPakHooked.origRemoteGet = origGet
   BanPakHooked.remoteWrapper = wrapper
   pcall(function() RemoteCfg.__rzPakSwitchHook = true end)
   BanPakHooked.remoteSwitch = true
@@ -7557,14 +7568,45 @@ function BanPak.PakCheck()
   return ok
 end
 
+function BanPak.EnablePakBypass()
+  BanPakConfig.enabled = true
+  local ok = false
+  pcall(function() ok = BanPak.PakCheck() end)
+  if not BanPakPakAnnounced then
+    BanPakPakAnnounced = true
+    print("[ACU-Ban] bypass pak aktif (build " .. BANPAK_VERSION .. ")")
+  end
+  return ok
+end
+
+function BanPak.DisablePakBypass()
+  BanPakConfig.enabled = false
+  local RemoteCfg = rawget(_G, "HDmpveRemote")
+  if type(RemoteCfg) == "table" and BanPakHooked.origRemoteGet then
+    pcall(function()
+      if RemoteCfg.HDmpveRemoteConfigGetBool == BanPakHooked.remoteWrapper then
+        RemoteCfg.HDmpveRemoteConfigGetBool = BanPakHooked.origRemoteGet
+      end
+    end)
+    pcall(function() RemoteCfg.__rzPakSwitchHook = nil end)
+  end
+  BanPakHooked.remoteSwitch = false
+  BanPakHooked.remoteWrapper = nil
+  BanPakHooked.origRemoteGet = nil
+  return true
+end
+
 function BanPak.Install()
   local okBan = false
   pcall(function() okBan = BanPak.BanLogic() end)
   local okPak = false
-  pcall(function() okPak = BanPak.PakCheck() end)
-  if (okBan or okPak) and not BanPakAnnounced then
+  if BanPakConfig.enabled == true then
+    pcall(function() okPak = BanPak.PakCheck() end)
+  end
+  if okBan and not BanPakAnnounced then
     BanPakAnnounced = true
-    print("[ACU-Ban] bypass aktif (build " .. BANPAK_VERSION .. ")")
+    print("[ACU-Ban] bypass ban aktif (build " .. BANPAK_VERSION .. "); bypass pak " ..
+      (BanPakConfig.enabled and "AKTIF" or "OFF"))
   end
   return okBan or okPak
 end
@@ -7590,6 +7632,8 @@ _G.AntiCheatBypass = BanPak
 if ACU then ACU.BanPak = BanPak end
 _G.BanLogicBypass = BanPak.BanLogic
 _G.PakCheckBypass = BanPak.PakCheck
+_G.EnablePakBypass = BanPak.EnablePakBypass
+_G.DisablePakBypass = BanPak.DisablePakBypass
 _G.RapzhangBanPakTick = function() BanPak.Tick() end
 
 local function _partH_ban_pak_check()
