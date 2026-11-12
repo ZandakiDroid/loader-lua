@@ -12458,6 +12458,12 @@ _G.RapzhangAutoTextFeedback = (function()
     "ultimate_royale_data", "ultimateRoyaleData", "UltimateRoyaleData",
     "BP_STRUCT_URRating", "BP_STRUCT_UltimateRoyaleRating",
     "BP_STRUCT_URRatingInfo", "BP_STRUCT_UltimateRoyaleRatingInfo",
+    -- 4.7 exposes the ladder under its internal "PeakGame" name. The struct
+    -- is shared with BP_STRUCT_BTRating (rank_rating / change_rank_rating /
+    -- old_segment / new_segment).
+    "peakgame_rating_info", "peakGameRatingInfo", "PeakGameRatingInfo",
+    "peakgame_rating", "peakGameRating", "PeakGameRating",
+    "BP_STRUCT_PeakGameRating", "BP_STRUCT_PeakGameRatingInfo",
   }
 
   local function collectURTables(sources, result, rating)
@@ -12494,6 +12500,174 @@ _G.RapzhangAutoTextFeedback = (function()
       end)
     end
     return out
+  end
+
+  -- ==========================================================================
+  -- PEAKGAME (Ultimate Royale internal name in 4.7+)
+  -- ==========================================================================
+  local PEAK_CONTAINER_KEYS = {
+    "peakgame_rating_info", "peakGameRatingInfo", "PeakGameRatingInfo",
+    "peakgame_rating", "peakGameRating", "PeakGameRating",
+    "BP_STRUCT_PeakGameRating", "BP_STRUCT_PeakGameRatingInfo",
+  }
+  local PEAK_FLAG_KEYS = {
+    "is_peakgame", "isPeakGame", "IsPeakGame", "bIsPeakGame",
+    "is_peak_game", "peakgame_mode", "PeakGameMode",
+  }
+  local PEAK_RATING_FIELDS = {
+    "rank_rating", "change_rank_rating", "new_segment", "old_segment",
+    "peakgame_rank_rating", "peakgame_change_rank_rating",
+    "peakgame_new_segment", "peakgame_old_segment",
+  }
+
+  local function hasAnyField(t, keys)
+    if type(t) ~= "table" then return false end
+    for _, key in ipairs(keys) do
+      local value = firstNumber(g(t, key))
+      -- Zero is the default for a missing/empty BP struct; it is not a
+      -- usable rating row by itself.
+      if value ~= nil and value ~= 0 then return true end
+    end
+    return false
+  end
+
+  -- Result/source table that carries the PeakGame rating struct. Empty or
+  -- all-nil structs are ignored so a stray field cannot force UR mode.
+  local function peakRatingFrom(sources, result)
+    local function pick(t)
+      if type(t) ~= "table" then return nil end
+      for _, key in ipairs(PEAK_CONTAINER_KEYS) do
+        local value = g(t, key)
+        if type(value) == "table" and hasAnyField(value, PEAK_RATING_FIELDS) then
+          return value
+        end
+      end
+      return nil
+    end
+    local direct = pick(result)
+    if direct then return direct end
+    for _, src in ipairs(sources) do
+      local found = pick(src)
+      if found then return found end
+    end
+    return nil
+  end
+
+  -- Server-side mode check used by the game itself when it builds the
+  -- result ranking data (BattleResultUtil).
+  local function peakBattleType(battleType)
+    if battleType == nil then return false end
+    local util = nil
+    local pkg = hostValue("package")
+    if type(pkg) == "table" and type(pkg.loaded) == "table" then
+      util = pkg.loaded["client.logic.PeakGame.LogicPeakGameUtil"]
+    end
+    if util == nil then
+      local req = hostValue("require")
+      if type(req) == "function" then
+        local ok, lib = pcall(req, "client.logic.PeakGame.LogicPeakGameUtil")
+        if ok then util = lib end
+      end
+    end
+    if type(util) == "table" and type(util.IsPeakGameBattleTypeIgnoreSwitch) == "function" then
+      local ok, value = pcall(util.IsPeakGameBattleTypeIgnoreSwitch, battleType)
+      if ok and value == true then return true end
+    end
+    return false
+  end
+
+  local function peakFlagSignal(sources, result)
+    local flat = {}
+    flat[#flat + 1] = result
+    for _, src in ipairs(sources) do flat[#flat + 1] = src end
+    for _, t in ipairs(flat) do
+      if type(t) == "table" then
+        for _, key in ipairs(PEAK_FLAG_KEYS) do
+          local value = g(t, key)
+          if value == true or value == 1 then return true end
+          if type(value) == "string" then
+            local lower = value:lower()
+            if lower == "1" or lower == "true" then return true end
+          end
+        end
+        -- These fields are zero-initialized in a BP struct. Only a positive
+        -- value means the result really came from a PeakGame match.
+        local teamRank = firstNumber(g(t, "peakgame_team_rank"))
+        if teamRank and teamRank > 0 then return true end
+        local peakSegment = firstNumber(g(t, "peakgame_segment_id"), g(t, "PeakSegmentID"))
+        if peakSegment and peakSegment > 0 then return true end
+        if g(t, "peakgame_cross_zone_team_limit") == true then return true end
+      end
+    end
+    return false
+  end
+
+  local function peakSubName(segment)
+    local n = tonumber(segment)
+    if n == nil or n <= 0 then return nil end
+    if n >= 1000 and n < 1100 then n = n - 1000 end
+    local index = nil
+    if n >= 1 and n <= 25 then
+      index = (n - 1) % 5 + 1
+    else
+      local low = n % 100
+      if low >= 1 and low <= 5 then index = low end
+    end
+    return index and UR_SUB_NAMES[index] or nil
+  end
+
+  local function peakText(value)
+    if value == nil then return nil end
+    if type(value) == "number" then
+      if value == math.floor(value) then
+        local localized = locStr(value)
+        if localized ~= nil and tostring(localized) ~= "" then
+          return tostring(localized)
+        end
+      end
+      return nil
+    end
+    local text = tostring(value)
+    if text:match("^%d+$") then
+      local localized = locStr(tonumber(text))
+      if localized ~= nil and tostring(localized) ~= "" then
+        return tostring(localized)
+      end
+      return nil
+    end
+    return urText(value)
+  end
+
+  -- PeakGameRankIntegralLevel is the table LogicPeakGameUtil.GetPeakRankTableData
+  -- reads. Prefer its localized name; fall back to the local 1..25 mapping.
+  local function peakTierFromSegment(segment)
+    local n = tonumber(segment)
+    if n == nil or n <= 0 then return nil end
+    local base = nil
+    for _, name in ipairs({ "PeakGameRankIntegralLevel", "PeakRankIntegralLevel" }) do
+      local cfg = tableData(name, n)
+      if type(cfg) == "table" then
+        base = peakText(g(cfg, "IntegralTypeName"))
+          or peakText(g(cfg, "RankName"))
+          or peakText(g(cfg, "Name"))
+        if base == nil then
+          local tier = firstNumber(g(cfg, "IntegralType"), g(cfg, "BigSegment"), g(cfg, "SegmentType"))
+          if tier and tier >= 1 and tier <= #UR_TIER_NAMES then
+            base = UR_TIER_NAMES[tier]
+          end
+        end
+        if base then break end
+      end
+    end
+    if base == nil then return urTierFromSegment(n) end
+    if base:find("%s[IVX]+$") then return base end
+    local lowerBase = base:lower()
+    -- Legend is the open-ended top tier; the local mapping has no sub-levels
+    -- for it either.
+    if lowerBase:find("legend", 1, true) then return base end
+    local sub = peakSubName(n)
+    if sub then return base .. " " .. sub end
+    return base
   end
 
   local UR_CFG_POINT_KEYS = {
@@ -12583,8 +12757,10 @@ _G.RapzhangAutoTextFeedback = (function()
     return nil
   end
 
-  local function finalizeUR(ur)
+  local function finalizeUR(ur, isPeak)
     if type(ur) ~= "table" then return nil end
+    isPeak = isPeak == true or ur.peakgame == true
+    if isPeak then ur.peakgame = true end
     if ur.points ~= nil and ur.points < UR_BASE_POINTS then ur.points = nil end
     if ur.segment ~= nil and ur.segment <= 0 then ur.segment = nil end
     if ur.oldSegment ~= nil and ur.oldSegment <= 0 then ur.oldSegment = nil end
@@ -12597,8 +12773,16 @@ _G.RapzhangAutoTextFeedback = (function()
     if type(ur.oldTier) == "string" and ur.oldTier ~= "" then
       ur.oldTierName = ur.oldTierName or ur.oldTier
     end
-    ur.tier = ur.tierName or urTierFromPoints(ur.points) or urTierFromSegment(ur.segment)
-    ur.oldTier = ur.oldTierName or urTierFromPoints(ur.oldPoints) or urTierFromSegment(ur.oldSegment)
+    -- PeakGame points do not always share the classic UR 1000-step layout,
+    -- so its segment (authoritative rank row) wins over point interpolation.
+    ur.tier = ur.tierName
+      or (isPeak and peakTierFromSegment(ur.segment))
+      or urTierFromPoints(ur.points)
+      or urTierFromSegment(ur.segment)
+    ur.oldTier = ur.oldTierName
+      or (isPeak and peakTierFromSegment(ur.oldSegment))
+      or urTierFromPoints(ur.oldPoints)
+      or urTierFromSegment(ur.oldSegment)
     if ur.tier and ur.oldTier and ur.tier ~= ur.oldTier then
       ur.tierLabel = ur.oldTier .. " → " .. ur.tier
     else
@@ -12608,9 +12792,10 @@ _G.RapzhangAutoTextFeedback = (function()
     return ur
   end
 
-  local function extractUR(sources, result, rating, allowClassic)
+  local function extractUR(sources, result, rating, allowClassic, isPeak)
     local containers = collectURTables(sources, result, rating)
     local ur = {}
+    isPeak = isPeak == true
 
     local flat = {}
     for _, src in ipairs(sources) do flat[#flat + 1] = src end
@@ -12647,7 +12832,7 @@ _G.RapzhangAutoTextFeedback = (function()
       ur.oldSegment = ur.oldSegment or firstNumber(g(rating, "old_segment"))
     end
 
-    return finalizeUR(ur)
+    return finalizeUR(ur, isPeak)
   end
 
   local UR_FLAG_KEYS = {
@@ -13566,20 +13751,35 @@ _G.RapzhangAutoTextFeedback = (function()
     )
     d.seasonName = seasonLabel(d.season)
 
-    local urTables = collectURTables(sources, result, rating)
+    -- In 4.7 the Ultimate Royale ladder is reported as "PeakGame". Its
+    -- rating struct lives in result.peakgame_rating_info and uses the same
+    -- field names as BP_STRUCT_BTRating, so that table must be preferred over
+    -- the classic result.rating for UR extraction.
+    local peakRating = peakRatingFrom(sources, result)
+    local peakMode = peakRating ~= nil
+      or peakBattleType(d.battleType)
+      or peakFlagSignal(sources, result)
+    local urTables = collectURTables(sources, result, peakRating or rating)
     local urMode = modeLooksUR(d.mode, sources, d.subMode)
     if not urMode then
       -- 1..25 and 1001..1025 are not classic segments; they identify UR even
       -- when the result does not expose the mode name.
-      local urSegment = firstNumber(g(rating, "new_segment"), g(rating, "newSegment"))
+      local urSegment = firstNumber(
+        g(peakRating, "new_segment"), g(peakRating, "newSegment"),
+        g(rating, "new_segment"), g(rating, "newSegment")
+      )
       if urSegment and urTierFromSegment(urSegment) ~= nil then urMode = true end
     end
+    if not urMode and peakMode then urMode = true end
     local urData = nil
     if urMode or #urTables > 0 then
-      urData = extractUR(sources, result, rating, urMode)
+      -- Only older UR builds reuse the classic rating struct. When a PeakGame
+      -- signal exists, classic rank fields must not leak into the UR ladder.
+      urData = extractUR(sources, result, peakRating or rating, urMode and not peakMode, peakMode)
     end
     if not urMode and urData ~= nil then urMode = true end
     d.urMatch = urMode
+    d.isPeakGame = peakMode
     if urMode then
       -- Ultimate Royale has its own ladder; do not feed its segment into the
       -- classic rank table, and do not label classic points as UR points.
@@ -13748,7 +13948,7 @@ _G.RapzhangAutoTextFeedback = (function()
     local hasRank = d.rankTier ~= nil or d.rankPoints ~= nil
       or d.killRating ~= nil or d.winRating ~= nil
       or (d.protection ~= nil and not d.urMatch)
-    if hasRank or d.ur == nil then
+    if d.ur == nil then
       add("")
       add("🏅 <b>RANK</b>")
       bullet("Tier", esc(d.rankTier))
@@ -13923,7 +14123,7 @@ _G.RapzhangAutoTextFeedback = (function()
           if segmentArg and segmentArg > 0 and (d.ur.segment == nil or d.ur.segment == 0) then
             d.ur.segment = segmentArg
           end
-          d.ur = finalizeUR(d.ur)
+          d.ur = finalizeUR(d.ur, d.isPeakGame)
         end
       else
         if (d.rankPoints == nil or d.rankPoints == 0) and (rankArg or 0) > 0 then
