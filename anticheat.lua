@@ -2,7 +2,7 @@
 --[[============================================================================
   AntiCheatUnified.lua — FULL MERGE (tanpa hapus, tanpa ganti)
   ----------------------------------------------------------------------------
-  Berisi 8 blok (7 file asli + bypass 4.7.0.21759) dalam fungsi terisolasi:
+  Berisi 7 file asli yang dibungkus utuh dalam fungsi terisolasi:
     Part A: rapzhang8  — GameSafeCallbacks (source asli, dijalankan paling awal)
     Part B: rapzhang7  — stub Server.security.*
     Part C: rapzhang5  — ClientPatch
@@ -10,9 +10,8 @@
     Part E: rapzhang10 — DisableKillReport
     Part F: rapzhang11 — AntiCheatBypass_Unified
     Part G: rapzhang12 — AntiCheatBlock_Full
-    Part H: bypass ban + pak check (build 4.7.0.21759)
 
-  Urutan eksekusi: A -> B -> C -> D -> E -> F -> G -> H
+  Urutan eksekusi: A -> B -> C -> D -> E -> F -> G
   Setiap blok dibungkus pcall agar error di satu file tidak menghentikan file lain.
   Isi asli setiap file TIDAK diubah.
 
@@ -7319,338 +7318,6 @@ local function _partG_rapzhang12()
 end  -- END _partG_rapzhang12
 
 -- ============================================================================
--- PART H: bypass ban + pak check (build 4.7.0.21759)
--- ----------------------------------------------------------------------------
--- Ban-related:
---   SecurityNotifyPCFeature:Notify / SyncBanInfo / ClientRPC_WeakTips /
---   ClientRPC_NormalTips / ClientRPC_StrongTips / ClientRPC_SyncBanID
---   TxMissionHandler.ShowErrorTips: 100251031 / 100251051 di-skip
---   PlayerStateBase:SetSuspiciousFlag
--- Pak/map check: DEFAULT OFF. Saat boot Part H tidak menyentuh apa pun
--- yang berhubungan dengan puffer/remote config, jadi login aman.
--- Nyalakan setelah masuk lobby:
---   _G.AntiCheatBypass.EnablePakBypass()
--- Yang dipasang saat enabled:
---   HDmpveRemoteConfigGetBool("MapPakFileBinDiffCheck") -> false
---   (InitMapPaks menganggap pak map_pakfilebindiff sudah ada, state Done,
---    tanpa cek/download bin-diff)
--- Hook pak tambahan di _G.AntiCheatPakConfig, semuanya default OFF:
---   fakeFileExists  : Client.IsFileExistInCSCWithCheckRaw("PakFileBinDiff")
---                     -> true (hanya file bin-diff, bukan semua path)
---   banDownload     : PufferSwitch.BanDownload = true / false
---   checkCorrupted  : PufferMapManager.CheckCorrupted -> false
---
--- Diekspor ke _G.AntiCheatBypass supaya loader 2.lua bisa memanggil Install().
--- ============================================================================
-local BANPAK_VERSION = "4.7.0.21759"
-local BANPAK_TICK_INTERVAL = 2.0
-local BANPAK_TIP_IDS = { [100251031] = true, [100251051] = true }
-
-local BanPakHooked = {
-  ban = false,
-  tips = false,
-  suspicious = false,
-  csc = false,
-  remoteSwitch = false,
-  pufferSwitch = false,
-  corrupted = false,
-}
-local BanPakNextTick = 0.0
-local BanPakAnnounced = false
-local BanPakPakAnnounced = false
-local BanPakRetryScheduled = false
-
-local function BanPakNop() return true end
-local function BanPakRetTrue() return true end
-local function BanPakRetFalse() return false end
-
-local function BanPakSafeLoadModule(name)
-  local m = package.loaded[name]
-  if m ~= nil then return m end
-  local ok, r = pcall(require, name)
-  if ok then return r end
-  return nil
-end
-
-local function BanPakNow()
-  if type(os) == "table" then
-    if type(os.clock) == "function" then
-      local ok, v = pcall(os.clock)
-      if ok and type(v) == "number" then return v end
-    end
-    if type(os.time) == "function" then
-      local ok, v = pcall(os.time)
-      if ok and type(v) == "number" then return v end
-    end
-  end
-  return 0
-end
-
-local function BanPakApplySecurityNotify()
-  local SecurityNotify = BanPakSafeLoadModule("GameLua.Mod.BaseMod.Common.Security.SecurityNotifyPCFeature")
-  if type(SecurityNotify) ~= "table" then return false end
-  local hit = false
-  for _, key in ipairs({
-    "Notify", "SyncBanInfo", "ClientRPC_WeakTips",
-    "ClientRPC_NormalTips", "ClientRPC_StrongTips", "ClientRPC_SyncBanID",
-  }) do
-    if type(SecurityNotify[key]) == "function" then
-      SecurityNotify[key] = BanPakNop
-      hit = true
-    end
-  end
-  if hit then
-    if not BanPakHooked.ban then
-      print("[ACU-Ban] SecurityNotifyPCFeature dimatikan")
-    end
-    BanPakHooked.ban = true
-  end
-  return hit
-end
-
-local function BanPakApplyBanTips()
-  local TxMissionHandler = BanPakSafeLoadModule("client.network.Protocol.TxMissionHandler")
-  if type(TxMissionHandler) ~= "table" then return false end
-  local current = TxMissionHandler.ShowErrorTips
-  if type(current) ~= "function" then return false end
-  if TxMissionHandler.__rzBanTipsHook or (BanPakHooked.tipsWrapper and current == BanPakHooked.tipsWrapper) then
-    BanPakHooked.tips = true
-    return true
-  end
-  local origTips = current
-  local wrapper = function(error_id, ext_info, invalid_members)
-    if BANPAK_TIP_IDS[tonumber(error_id)] then
-      print("[ACU-Ban] ban tip dilewati id=" .. tostring(error_id))
-      return
-    end
-    return origTips(error_id, ext_info, invalid_members)
-  end
-  local ok = pcall(function() TxMissionHandler.ShowErrorTips = wrapper end)
-  if not ok then return false end
-  BanPakHooked.tipsWrapper = wrapper
-  pcall(function() TxMissionHandler.__rzBanTipsHook = true end)
-  BanPakHooked.tips = true
-  return true
-end
-
-local function BanPakApplySuspiciousFlag()
-  local PlayerStateBase = BanPakSafeLoadModule("GameLua.GameCore.Framework.PlayerStateBase")
-  if type(PlayerStateBase) ~= "table" then return false end
-  if type(PlayerStateBase.SetSuspiciousFlag) ~= "function" then return false end
-  PlayerStateBase.SetSuspiciousFlag = BanPakNop
-  BanPakHooked.suspicious = true
-  return true
-end
-
--- Konfigurasi hook pak. Bisa diubah kapan saja lalu panggil
--- _G.AntiCheatBypass.PakCheck() untuk menerapkan ulang.
---
--- fakeFileExists / banDownload / checkCorrupted sengaja OFF secara default:
--- memaksa Client.* -> true membuat game mengira pak ada padahal tidak, dan
--- memaksa BanDownload = false justru MENGAKTIFKAN alur download puffer
--- (lihat InitMapPaks: defaultComplete = (not bSkipDepends) or BanDownload).
--- Keduanya pernah membuat koneksi tidak masuk.
--- enabled = false -> Part H HANYA memasang hook ban. Tidak ada satu pun
--- hook pak/puffer yang dipasang saat boot, jadi login tidak tersentuh.
--- Nyalakan setelah berhasil masuk lobby:
---   _G.AntiCheatBypass.EnablePakBypass()
-local BanPakConfig = _G.AntiCheatPakConfig or {
-  enabled        = false,   -- master switch bypass pak (default OFF)
-  binDiffCheck   = true,    -- paksa MapPakFileBinDiffCheck = false (cek pak 21759)
-  fakeFileExists = false,   -- Client.IsFileExistInCSCWithCheckRaw("PakFileBinDiff") -> true
-  banDownload    = "keep",  -- "keep" | true (matikan download) | false (aktifkan download)
-  checkCorrupted = "keep",  -- "keep" | false (jangan hapus file *.corrupted)
-}
-BanPakConfig.enabled = BanPakConfig.enabled == true
-_G.AntiCheatPakConfig = BanPakConfig
-
-local function BanPakApplyClientPakCheck()
-  if BanPakConfig.fakeFileExists ~= true then return false end
-  local ClientTbl = rawget(_G, "Client")
-  if type(ClientTbl) ~= "table" then return false end
-  -- Hanya cek file bin-diff yang dipalsukan. IsFileExistsWithOutPakCheck
-  -- sengaja TIDAK disentuh: kalau semua path dianggap ada, game bisa mencari
-  -- pak di folder puffer padahal file-nya ada di obb.
-  local orig = ClientTbl.IsFileExistInCSCWithCheckRaw
-  if type(orig) ~= "function" then return false end
-  if BanPakHooked.cscWrapper and ClientTbl.IsFileExistInCSCWithCheckRaw == BanPakHooked.cscWrapper then
-    BanPakHooked.csc = true
-    return true
-  end
-  local wrapper = function(name, ...)
-    if type(name) == "string" and name:find("PakFileBinDiff", 1, true) then return true end
-    return orig(name, ...)
-  end
-  local ok = pcall(function() ClientTbl.IsFileExistInCSCWithCheckRaw = wrapper end)
-  if not ok then return false end
-  BanPakHooked.cscWrapper = wrapper
-  BanPakHooked.csc = true
-  return true
-end
-
-local function BanPakApplyRemoteSwitch()
-  if BanPakConfig.binDiffCheck == false then return false end
-  local RemoteCfg = rawget(_G, "HDmpveRemote")
-  if type(RemoteCfg) ~= "table" then return false end
-  if type(RemoteCfg.HDmpveRemoteConfigGetBool) ~= "function" then return false end
-  if RemoteCfg.__rzPakSwitchHook then
-    BanPakHooked.remoteSwitch = true
-    return true
-  end
-  if BanPakHooked.remoteWrapper and RemoteCfg.HDmpveRemoteConfigGetBool == BanPakHooked.remoteWrapper then
-    BanPakHooked.remoteSwitch = true
-    return true
-  end
-  local origGet = RemoteCfg.HDmpveRemoteConfigGetBool
-  local wrapper = function(key, def)
-    if key == "MapPakFileBinDiffCheck" then return false end
-    return origGet(key, def)
-  end
-  local ok = pcall(function() RemoteCfg.HDmpveRemoteConfigGetBool = wrapper end)
-  if not ok then return false end
-  BanPakHooked.origRemoteGet = origGet
-  BanPakHooked.remoteWrapper = wrapper
-  pcall(function() RemoteCfg.__rzPakSwitchHook = true end)
-  BanPakHooked.remoteSwitch = true
-  return true
-end
-
-local function BanPakApplyPufferSwitch()
-  local mode = BanPakConfig.banDownload
-  if mode ~= true and mode ~= false then return false end
-  local PufferSwitch = BanPakSafeLoadModule("client.slua.logic.download.puffer_switch")
-  if type(PufferSwitch) ~= "table" then return false end
-  PufferSwitch.BanDownload = mode
-  BanPakHooked.pufferSwitch = true
-  return true
-end
-
-local function BanPakApplyCheckCorrupted()
-  if BanPakConfig.checkCorrupted ~= false then return false end
-  local MapManager = BanPakSafeLoadModule("client.slua.logic.download.puffer.map.puffer_map_manager")
-  if type(MapManager) ~= "table" then return false end
-  if type(MapManager.CheckCorrupted) ~= "function" then return false end
-  MapManager.CheckCorrupted = BanPakRetFalse
-  BanPakHooked.corrupted = true
-  return true
-end
-
-local BanPak = {
-  __rzModule = "anticheat",
-  Version = BANPAK_VERSION,
-  TickInterval = BANPAK_TICK_INTERVAL,
-  BanTipIds = { 100251031, 100251051 },
-  Config = BanPakConfig,
-}
-
-function BanPak.BanLogic()
-  local ok = false
-  pcall(function() ok = BanPakApplySecurityNotify() or ok end)
-  pcall(function() ok = BanPakApplyBanTips() or ok end)
-  pcall(function() ok = BanPakApplySuspiciousFlag() or ok end)
-  pcall(function()
-    -- GameplayCallbacks.OnDSPlayerStateChanged di 2.lua sudah memfilter
-    -- state banned/cheatdetected/violationdetected/integrityfailure.
-    if _G.GameplayCallbacks and type(_G.GameplayCallbacks.OnDSPlayerStateChanged) == "function" then
-      BanPakHooked.ban = true
-      ok = true
-    end
-  end)
-  return ok
-end
-
-function BanPak.PakCheck()
-  local ok = false
-  pcall(function() ok = BanPakApplyClientPakCheck() or ok end)
-  pcall(function() ok = BanPakApplyRemoteSwitch() or ok end)
-  pcall(function() ok = BanPakApplyPufferSwitch() or ok end)
-  pcall(function() ok = BanPakApplyCheckCorrupted() or ok end)
-  return ok
-end
-
-function BanPak.EnablePakBypass()
-  BanPakConfig.enabled = true
-  local ok = false
-  pcall(function() ok = BanPak.PakCheck() end)
-  if not BanPakPakAnnounced then
-    BanPakPakAnnounced = true
-    print("[ACU-Ban] bypass pak aktif (build " .. BANPAK_VERSION .. ")")
-  end
-  return ok
-end
-
-function BanPak.DisablePakBypass()
-  BanPakConfig.enabled = false
-  local RemoteCfg = rawget(_G, "HDmpveRemote")
-  if type(RemoteCfg) == "table" and BanPakHooked.origRemoteGet then
-    pcall(function()
-      if RemoteCfg.HDmpveRemoteConfigGetBool == BanPakHooked.remoteWrapper then
-        RemoteCfg.HDmpveRemoteConfigGetBool = BanPakHooked.origRemoteGet
-      end
-    end)
-    pcall(function() RemoteCfg.__rzPakSwitchHook = nil end)
-  end
-  BanPakHooked.remoteSwitch = false
-  BanPakHooked.remoteWrapper = nil
-  BanPakHooked.origRemoteGet = nil
-  return true
-end
-
-function BanPak.Install()
-  local okBan = false
-  pcall(function() okBan = BanPak.BanLogic() end)
-  local okPak = false
-  if BanPakConfig.enabled == true then
-    pcall(function() okPak = BanPak.PakCheck() end)
-  end
-  if okBan and not BanPakAnnounced then
-    BanPakAnnounced = true
-    print("[ACU-Ban] bypass ban aktif (build " .. BANPAK_VERSION .. "); bypass pak " ..
-      (BanPakConfig.enabled and "AKTIF" or "OFF"))
-  end
-  return okBan or okPak
-end
-
-function BanPak.Tick(force)
-  local now = BanPakNow()
-  if not force and now < BanPakNextTick then return end
-  BanPakNextTick = now + BANPAK_TICK_INTERVAL
-  BanPak.Install()
-end
-
-function BanPak.Status()
-  local copy = {}
-  for k, v in pairs(BanPakHooked) do
-    if type(v) ~= "function" then copy[k] = v end
-  end
-  copy.config = {}
-  for k, v in pairs(BanPakConfig) do copy.config[k] = v end
-  return copy
-end
-
-_G.AntiCheatBypass = BanPak
-if ACU then ACU.BanPak = BanPak end
-_G.BanLogicBypass = BanPak.BanLogic
-_G.PakCheckBypass = BanPak.PakCheck
-_G.EnablePakBypass = BanPak.EnablePakBypass
-_G.DisablePakBypass = BanPak.DisablePakBypass
-_G.RapzhangBanPakTick = function() BanPak.Tick() end
-
-local function _partH_ban_pak_check()
-  BanPak.Install()
-  -- Retry mandiri kalau file ini dipakai tanpa tick dari 2.lua.
-  if not BanPakRetryScheduled and type(Game) == "table" and type(Game.SetTimer) == "function" then
-    BanPakRetryScheduled = true
-    for _, delay in ipairs({1, 3, 5, 10, 20, 30}) do
-      pcall(Game.SetTimer, delay, false, function()
-        pcall(BanPak.Install)
-      end)
-    end
-  end
-  return BanPak
-end
-
--- ============================================================================
 -- CONTROLLER: jalankan semua PART berurutan
 -- ============================================================================
 local function _run(name, fn)
@@ -7667,7 +7334,6 @@ function ACU.Apply()
   _run("E_rapzhang10", _partE_rapzhang10)
   _run("F_rapzhang11", _partF_rapzhang11)
   _run("G_rapzhang12", _partG_rapzhang12)
-  _run("H_ban_pak",   _partH_ban_pak_check)
   ACU.Installed = true
   print("[ACU] ===== FULL MERGE APPLY DONE =====")
 end
@@ -7680,8 +7346,6 @@ function ACU.Stats()
     sanitized     = ACU.SanitizedCount,
     parts         = ACU.Parts,
     part_errors   = ACU.PartErrors,
-    ban_pak       = _G.AntiCheatBypass and _G.AntiCheatBypass.Status
-                    and _G.AntiCheatBypass.Status() or nil,
   }
 end
 
@@ -7694,7 +7358,7 @@ end
 pcall(function()
   print("[ACU] Boot FULL-MERGE v1.0")
   ACU.Apply()
-  print("[ACU] ACTIVE — 8 parts merged")
+  print("[ACU] ACTIVE — 7 parts merged")
 end)
 
 return ACU
