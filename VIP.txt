@@ -1,2 +1,4 @@
+anticheat.lua
+spoof_470.lua
 1.lua
 2.lua
