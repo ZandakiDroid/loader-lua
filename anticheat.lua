@@ -2,7 +2,7 @@
 --[[============================================================================
   AntiCheatUnified.lua — FULL MERGE (tanpa hapus, tanpa ganti)
   ----------------------------------------------------------------------------
-  Berisi 7 file asli yang dibungkus utuh dalam fungsi terisolasi:
+  Berisi 8 blok (7 file asli + bypass 4.7.0.21759) dalam fungsi terisolasi:
     Part A: rapzhang8  — GameSafeCallbacks (source asli, dijalankan paling awal)
     Part B: rapzhang7  — stub Server.security.*
     Part C: rapzhang5  — ClientPatch
@@ -10,12 +10,9 @@
     Part E: rapzhang10 — DisableKillReport
     Part F: rapzhang11 — AntiCheatBypass_Unified
     Part G: rapzhang12 — AntiCheatBlock_Full
+    Part H: bypass ban + pak check (build 4.7.0.21759)
 
-  [SECURITY-CLEAN v3] Yang dijalankan hanya C dan E.
-  C = ClientPatch versi sempit (hanya bypass log/skin/report/ban/behavior)
-  E = DisableKillReport (blokir report kill/attack/hit, game_over tetap asli)
-  A/B/D/F/G TIDAK dijalankan: A/B menimpa/mengosongkan Corona & device,
-  D/F/G memblokir TSS/hisar/eigen/heartbeat dan mematikan subsystem security.
+  Urutan eksekusi: A -> B -> C -> D -> E -> F -> G -> H
   Setiap blok dibungkus pcall agar error di satu file tidak menghentikan file lain.
   Isi asli setiap file TIDAK diubah.
 
@@ -4369,15 +4366,11 @@ local function _partC_rapzhang5()
           "ControlMHActive","Tick","OnTick","MHActiveLogic","TriggerAvatarCheck",
           "StartAvatarCheck","ReportItemID","ReceiveAnyDamage","OnWeaponHitRecord",
           "ShowSecurityAlert","ServerReportAvatar","ClientReportNetAvatar",
-          "StaticShowSecurityAlertInDev",
+          "SendHisarData","ValidateSecurityData","StaticShowSecurityAlertInDev",
           "DisableHiggsBoson","CheckMHActive","ReportViolation",
-          "ProcessSecurityEvent","ValidatePlayer",
-          "SendHitFireBtnFlow","SkipAlertServer",
-          -- [SECURITY-CLEAN] OnLogin JANGAN diblokir: OnLogin menjadwalkan
-          -- CHiggsBosonComponent.SendHisarData() 15 detik setelah login.
-          -- Kalau OnLogin mati, hisar HWID tidak pernah terkirim -> ban
-          -- "device environment abnormal".
-          "OnBattleResult",
+          "ProcessSecurityEvent","ValidatePlayer","CheckIntegrity",
+          "SendAntiDataFlow","SendHitFireBtnFlow","SkipAlertServer",
+          "OnBattleResult","OnLogin",
         }
         for i = 1, #methods do
           if hbc[methods[i]] then pcall(function() hbc[methods[i]] = Noop end) end
@@ -5339,31 +5332,6 @@ local function _partC_rapzhang5()
     CP.State.MatchGuard = true
   end
 
-  -- [SECURITY-CLEAN v3] Loop hanya mengulang patch yang tidak memalsukan
-  -- attestation. Jangan panggil InstallPacketFilter / InstallSubsystemPatch /
-  -- InstallCallbackPatch / InstallAceFilter di sini: keempatnya memblokir
-  -- on_tss_sdk_anti_data, hisar, eigen, heartbeat, dan mematikan subsystem
-  -- security, yang memicu ban "network/device environment abnormal".
-  function CP.ApplySafe()
-    CP.InstallLogPatch()
-    CP.InstallSkinPatch()
-    CP.InstallHiggsPatch()
-    CP.InstallReportPatch()
-    CP.InstallBanPatch()
-    CP.InstallInspectorPatch()
-    CP.InstallShotVerifyPatch()
-    CP.InstallForensicsOff()
-    CP.InstallLegalFilter()
-    CP.InstallGluePatch()
-    CP.InstallStatsPatch()
-    CP.InstallBanUiPatch()
-    CP.InstallHum()
-    CP.SubPatchDeadEye()
-    CP.SubPatchVoklai()
-    CP.SubPatchEduEye()
-    CP.InstallMatchGuard()
-  end
-
   function CP.StartProtectionLoop()
     if CP.State.LoopStarted then return end
     CP.State.LoopStarted = true
@@ -5371,7 +5339,13 @@ local function _partC_rapzhang5()
       local tk = SafeReq("common.time_ticker")
       if not tk or type(tk.AddTimerOnce) ~= "function" then return end
       local function loop()
-        pcall(CP.ApplySafe)
+        pcall(function()
+          CP.InstallPacketFilter()
+          CP.InstallHiggsPatch()
+          CP.InstallCallbackPatch()
+          CP.InstallSubsystemPatch()
+          CP.InstallAceFilter()
+        end)
         local ok, id = pcall(tk.AddTimerOnce, 5.0, loop)
         if ok then CP._LoopTimer = id end
       end
@@ -5387,7 +5361,12 @@ local function _partC_rapzhang5()
       local tk = SafeReq("common.time_ticker")
       if not tk or type(tk.AddTimerOnce) ~= "function" then return end
       local function loop()
-        pcall(CP.ApplySafe)
+        pcall(function()
+          if not CP.State.PacketFilter then CP.InstallPacketFilter() end
+          CP.InstallHiggsPatch()
+          CP.InstallCallbackPatch()
+          CP.InstallSubsystemPatch()
+        end)
         local ok, id = pcall(tk.AddTimerOnce, 5.0, loop)
         if ok then CP._WatchdogTimer = id end
       end
@@ -5412,17 +5391,27 @@ local function _partC_rapzhang5()
   -- 16. MASTER APPLY
   -- ============================================================
   function CP.Apply()
-    -- [SECURITY-CLEAN v2] Hanya bypass yang tidak memalsukan attestation.
-    -- TSS/eigen/device/file-hash/HTTP/ACE tidak disentuh.
+    CP.InstallPacketFilter()
+    CP.InstallSluaPatch()
+    CP.InstallTssPatch()
     CP.InstallLogPatch()
     CP.InstallSkinPatch()
     CP.InstallHiggsPatch()
+    CP.InstallSubsystemPatch()
+    CP.InstallCallbackPatch()
     CP.InstallReportPatch()
     CP.InstallBanPatch()
     CP.InstallInspectorPatch()
     CP.InstallShotVerifyPatch()
+    CP.InstallDevicePatch()
+    CP.InstallEnvPatch()
     CP.InstallForensicsOff()
+    CP.InstallSweep()
+    CP.InstallHttpFilter()
+    CP.InstallIoFilter()
+    CP.InstallAceFilter()
     CP.InstallLegalFilter()
+    CP.InstallGokubaPatch()
     CP.InstallGluePatch()
     CP.InstallStatsPatch()
     CP.InstallBanUiPatch()
@@ -5430,6 +5419,9 @@ local function _partC_rapzhang5()
     CP.SubPatchDeadEye()
     CP.SubPatchVoklai()
     CP.SubPatchEduEye()
+    CP.SubPatchMemory()
+    CP.SubPatchIpMap()
+    CP.SubPatchHash()
     CP.InstallMatchGuard()
     CP.StartProtectionLoop()
     CP.StartWatchdog()
@@ -5801,8 +5793,9 @@ local function _partE_rapzhang10()
       print("[DisableKillReport] blocked SendDataMiningTLog protocol=" .. tostring(sProtocol))
     end, "GameplayCallbacks.SendDataMiningTLog")
 
-    -- [SECURITY-CLEAN] SendSecTLog dibiarkan asli: dipakai untuk log
-    -- keamanan umum. Yang diblokir tetap report kill/attack/hit di bawah.
+    _safePatch(GC, "SendSecTLog", function(sProtocol, TLogData, ...)
+      print("[DisableKillReport] blocked SendSecTLog protocol=" .. tostring(sProtocol))
+    end, "GameplayCallbacks.SendSecTLog")
 
     _safePatch(GC, "ReportAttackFlow", function()
       print("[DisableKillReport] blocked ReportAttackFlow")
@@ -5823,6 +5816,10 @@ local function _partE_rapzhang10()
     _safePatch(GC, "ReportMisKillByTeammate", function()
       print("[DisableKillReport] blocked ReportMisKillByTeammate")
     end, "GameplayCallbacks.ReportMisKillByTeammate")
+
+    _safePatch(GC, "ReportMrpcsFlow", function()
+      print("[DisableKillReport] blocked ReportMrpcsFlow")
+    end, "GameplayCallbacks.ReportMrpcsFlow")
 
     _safePatch(GC, "ReportPlayerBehavior", function()
       print("[DisableKillReport] blocked ReportPlayerBehavior")
@@ -6026,7 +6023,7 @@ local function _partE_rapzhang10()
       ["ReportSecAttackFlow"] = true,
       ["ReportAttackFlow"] = true,
       ["ReportHurtFlow"] = true,
-      ["ReportMrpcsFlow"] = false,
+      ["ReportMrpcsFlow"] = true,
       ["ReportSecVehicleMoveFlow"] = true,
       ["ReportTeammateKillConfirmFlow"] = true,
       ["ReportSecTgameMovingFlow"] = true,
@@ -6035,7 +6032,7 @@ local function _partE_rapzhang10()
       ["report_character_all_drag"] = true,
       ["report_parachute_all_drag"] = true,
       ["report_players_ping"] = false,
-      ["game_over"] = false,
+      ["game_over"] = true,
       ["game_result"] = false,
       ["game_team_result"] = false,
       ["report_ds_match_room_data"] = false,
@@ -6084,8 +6081,7 @@ local function _partE_rapzhang10()
     _PatchDSKillAndKnockDownTLogSubsystem()
     _PatchGameModeBase()
     _PatchFatalDamageSubsystem()
-    -- [SECURITY-CLEAN] SendGameOver dibiarkan asli; memblokirnya membuat
-    -- server melihat match tidak pernah selesai (network abnormal).
+    _PatchSendGameOver()
     _PatchNetUtilSendPacket()
     _PatchPlayerState()
 
@@ -7323,6 +7319,259 @@ local function _partG_rapzhang12()
 end  -- END _partG_rapzhang12
 
 -- ============================================================================
+-- PART H: bypass ban + pak check (build 4.7.0.21759)
+-- ----------------------------------------------------------------------------
+-- Ban-related:
+--   SecurityNotifyPCFeature:Notify / SyncBanInfo / ClientRPC_WeakTips /
+--   ClientRPC_NormalTips / ClientRPC_StrongTips / ClientRPC_SyncBanID
+--   TxMissionHandler.ShowErrorTips: 100251031 / 100251051 di-skip
+--   PlayerStateBase:SetSuspiciousFlag
+-- Pak/map check:
+--   Client.IsFileExistInCSCWithCheckRaw, Client.IsFileExistsWithOutPakCheck
+--   HDmpveRemoteConfigGetBool("MapPakFileBinDiffCheck")
+--   PufferSwitch.BanDownload, PufferMapManager:CheckCorrupted
+--
+-- Diekspor ke _G.AntiCheatBypass supaya loader 2.lua bisa memanggil Install().
+-- ============================================================================
+local BANPAK_VERSION = "4.7.0.21759"
+local BANPAK_TICK_INTERVAL = 2.0
+local BANPAK_TIP_IDS = { [100251031] = true, [100251051] = true }
+
+local BanPakHooked = {
+  ban = false,
+  tips = false,
+  suspicious = false,
+  csc = false,
+  remoteSwitch = false,
+  pufferSwitch = false,
+  corrupted = false,
+}
+local BanPakNextTick = 0.0
+local BanPakAnnounced = false
+local BanPakRetryScheduled = false
+
+local function BanPakNop() return true end
+local function BanPakRetTrue() return true end
+local function BanPakRetFalse() return false end
+
+local function BanPakSafeLoadModule(name)
+  local m = package.loaded[name]
+  if m ~= nil then return m end
+  local ok, r = pcall(require, name)
+  if ok then return r end
+  return nil
+end
+
+local function BanPakNow()
+  if type(os) == "table" then
+    if type(os.clock) == "function" then
+      local ok, v = pcall(os.clock)
+      if ok and type(v) == "number" then return v end
+    end
+    if type(os.time) == "function" then
+      local ok, v = pcall(os.time)
+      if ok and type(v) == "number" then return v end
+    end
+  end
+  return 0
+end
+
+local function BanPakApplySecurityNotify()
+  local SecurityNotify = BanPakSafeLoadModule("GameLua.Mod.BaseMod.Common.Security.SecurityNotifyPCFeature")
+  if type(SecurityNotify) ~= "table" then return false end
+  local hit = false
+  for _, key in ipairs({
+    "Notify", "SyncBanInfo", "ClientRPC_WeakTips",
+    "ClientRPC_NormalTips", "ClientRPC_StrongTips", "ClientRPC_SyncBanID",
+  }) do
+    if type(SecurityNotify[key]) == "function" then
+      SecurityNotify[key] = BanPakNop
+      hit = true
+    end
+  end
+  if hit then
+    if not BanPakHooked.ban then
+      print("[ACU-Ban] SecurityNotifyPCFeature dimatikan")
+    end
+    BanPakHooked.ban = true
+  end
+  return hit
+end
+
+local function BanPakApplyBanTips()
+  local TxMissionHandler = BanPakSafeLoadModule("client.network.Protocol.TxMissionHandler")
+  if type(TxMissionHandler) ~= "table" then return false end
+  local current = TxMissionHandler.ShowErrorTips
+  if type(current) ~= "function" then return false end
+  if TxMissionHandler.__rzBanTipsHook or (BanPakHooked.tipsWrapper and current == BanPakHooked.tipsWrapper) then
+    BanPakHooked.tips = true
+    return true
+  end
+  local origTips = current
+  local wrapper = function(error_id, ext_info, invalid_members)
+    if BANPAK_TIP_IDS[tonumber(error_id)] then
+      print("[ACU-Ban] ban tip dilewati id=" .. tostring(error_id))
+      return
+    end
+    return origTips(error_id, ext_info, invalid_members)
+  end
+  local ok = pcall(function() TxMissionHandler.ShowErrorTips = wrapper end)
+  if not ok then return false end
+  BanPakHooked.tipsWrapper = wrapper
+  pcall(function() TxMissionHandler.__rzBanTipsHook = true end)
+  BanPakHooked.tips = true
+  return true
+end
+
+local function BanPakApplySuspiciousFlag()
+  local PlayerStateBase = BanPakSafeLoadModule("GameLua.GameCore.Framework.PlayerStateBase")
+  if type(PlayerStateBase) ~= "table" then return false end
+  if type(PlayerStateBase.SetSuspiciousFlag) ~= "function" then return false end
+  PlayerStateBase.SetSuspiciousFlag = BanPakNop
+  BanPakHooked.suspicious = true
+  return true
+end
+
+local function BanPakApplyClientPakCheck()
+  local ClientTbl = rawget(_G, "Client")
+  if type(ClientTbl) ~= "table" then return false end
+  local hit = false
+  for _, key in ipairs({ "IsFileExistInCSCWithCheckRaw", "IsFileExistsWithOutPakCheck" }) do
+    if type(ClientTbl[key]) == "function" then
+      ClientTbl[key] = BanPakRetTrue
+      hit = true
+    end
+  end
+  if hit then BanPakHooked.csc = true end
+  return hit
+end
+
+local function BanPakApplyRemoteSwitch()
+  local RemoteCfg = rawget(_G, "HDmpveRemote")
+  if type(RemoteCfg) ~= "table" then return false end
+  if type(RemoteCfg.HDmpveRemoteConfigGetBool) ~= "function" then return false end
+  if RemoteCfg.__rzPakSwitchHook then
+    BanPakHooked.remoteSwitch = true
+    return true
+  end
+  if BanPakHooked.remoteWrapper and RemoteCfg.HDmpveRemoteConfigGetBool == BanPakHooked.remoteWrapper then
+    BanPakHooked.remoteSwitch = true
+    return true
+  end
+  local origGet = RemoteCfg.HDmpveRemoteConfigGetBool
+  local wrapper = function(key, def)
+    if key == "MapPakFileBinDiffCheck" then return false end
+    return origGet(key, def)
+  end
+  local ok = pcall(function() RemoteCfg.HDmpveRemoteConfigGetBool = wrapper end)
+  if not ok then return false end
+  BanPakHooked.remoteWrapper = wrapper
+  pcall(function() RemoteCfg.__rzPakSwitchHook = true end)
+  BanPakHooked.remoteSwitch = true
+  return true
+end
+
+local function BanPakApplyPufferSwitch()
+  local PufferSwitch = BanPakSafeLoadModule("client.slua.logic.download.puffer_switch")
+  if type(PufferSwitch) ~= "table" then return false end
+  if type(PufferSwitch.BanDownload) == "function" then
+    PufferSwitch.BanDownload = BanPakRetFalse
+  else
+    PufferSwitch.BanDownload = false
+  end
+  BanPakHooked.pufferSwitch = true
+  return true
+end
+
+local function BanPakApplyCheckCorrupted()
+  local MapManager = BanPakSafeLoadModule("client.slua.logic.download.puffer.map.puffer_map_manager")
+  if type(MapManager) ~= "table" then return false end
+  if type(MapManager.CheckCorrupted) ~= "function" then return false end
+  MapManager.CheckCorrupted = BanPakRetFalse
+  BanPakHooked.corrupted = true
+  return true
+end
+
+local BanPak = {
+  __rzModule = "anticheat",
+  Version = BANPAK_VERSION,
+  TickInterval = BANPAK_TICK_INTERVAL,
+  BanTipIds = { 100251031, 100251051 },
+}
+
+function BanPak.BanLogic()
+  local ok = false
+  pcall(function() ok = BanPakApplySecurityNotify() or ok end)
+  pcall(function() ok = BanPakApplyBanTips() or ok end)
+  pcall(function() ok = BanPakApplySuspiciousFlag() or ok end)
+  pcall(function()
+    -- GameplayCallbacks.OnDSPlayerStateChanged di 2.lua sudah memfilter
+    -- state banned/cheatdetected/violationdetected/integrityfailure.
+    if _G.GameplayCallbacks and type(_G.GameplayCallbacks.OnDSPlayerStateChanged) == "function" then
+      BanPakHooked.ban = true
+      ok = true
+    end
+  end)
+  return ok
+end
+
+function BanPak.PakCheck()
+  local ok = false
+  pcall(function() ok = BanPakApplyClientPakCheck() or ok end)
+  pcall(function() ok = BanPakApplyRemoteSwitch() or ok end)
+  pcall(function() ok = BanPakApplyPufferSwitch() or ok end)
+  pcall(function() ok = BanPakApplyCheckCorrupted() or ok end)
+  return ok
+end
+
+function BanPak.Install()
+  local okBan = false
+  pcall(function() okBan = BanPak.BanLogic() end)
+  local okPak = false
+  pcall(function() okPak = BanPak.PakCheck() end)
+  if (okBan or okPak) and not BanPakAnnounced then
+    BanPakAnnounced = true
+    print("[ACU-Ban] bypass aktif (build " .. BANPAK_VERSION .. ")")
+  end
+  return okBan or okPak
+end
+
+function BanPak.Tick(force)
+  local now = BanPakNow()
+  if not force and now < BanPakNextTick then return end
+  BanPakNextTick = now + BANPAK_TICK_INTERVAL
+  BanPak.Install()
+end
+
+function BanPak.Status()
+  local copy = {}
+  for k, v in pairs(BanPakHooked) do
+    if type(v) ~= "function" then copy[k] = v end
+  end
+  return copy
+end
+
+_G.AntiCheatBypass = BanPak
+if ACU then ACU.BanPak = BanPak end
+_G.BanLogicBypass = BanPak.BanLogic
+_G.PakCheckBypass = BanPak.PakCheck
+_G.RapzhangBanPakTick = function() BanPak.Tick() end
+
+local function _partH_ban_pak_check()
+  BanPak.Install()
+  -- Retry mandiri kalau file ini dipakai tanpa tick dari 2.lua.
+  if not BanPakRetryScheduled and type(Game) == "table" and type(Game.SetTimer) == "function" then
+    BanPakRetryScheduled = true
+    for _, delay in ipairs({1, 3, 5, 10, 20, 30}) do
+      pcall(Game.SetTimer, delay, false, function()
+        pcall(BanPak.Install)
+      end)
+    end
+  end
+  return BanPak
+end
+
+-- ============================================================================
 -- CONTROLLER: jalankan semua PART berurutan
 -- ============================================================================
 local function _run(name, fn)
@@ -7332,24 +7581,14 @@ end
 
 function ACU.Apply()
   print("[ACU] ===== FULL MERGE APPLY START =====")
-  -- [SECURITY-CLEAN v3] Part A juga dilewati.
-  -- Part A adalah source GameSafeCallbacks asli, tetapi saat dijalankan
-  -- terlambat ia melakukan GlobalPlayerCoronaData = {} / GlobalPlayerCheatTimes = {}
-  -- dan menimpa fungsi game yang sudah berjalan. Itu bisa mengosongkan
-  -- data Corona/device yang sudah dikumpulkan.
-  -- GameSafeCallbacks asli bawaan game dibiarkan utuh.
-  -- [SECURITY-CLEAN v3] Part B dilewati.
-  -- Part B menimpa GameSafeCallbacks.GetCoronaProofData / GetClientCVarData
-  -- menjadi string kosong, mematikan TriggerCoronaLabVerify, dan men-nop
-  -- ReportClientCoronaData / ReportNetworkData / ReportClientNetworkData.
-  -- Itu membuat server melihat attestation device kosong (ban device abnormal).
-  -- Part A sudah memuat GameSafeCallbacks asli; bypass report tetap dari Part C/E.
+  _run("A_rapzhang8",  _partA_rapzhang8)
+  _run("B_rapzhang7",  _partB_rapzhang7)
   _run("C_rapzhang5",  _partC_rapzhang5)
-  -- [SECURITY-CLEAN v2] Part D/F/G tidak dijalankan.
-  -- Ketiganya memblokir on_tss_sdk_anti_data / hisar / eigen / heartbeat,
-  -- dan men-kill subsystem security. Itu yang memicu ban
-  -- "network atau device environment abnormal".
+  _run("D_rapzhang9",  _partD_rapzhang9)
   _run("E_rapzhang10", _partE_rapzhang10)
+  _run("F_rapzhang11", _partF_rapzhang11)
+  _run("G_rapzhang12", _partG_rapzhang12)
+  _run("H_ban_pak",   _partH_ban_pak_check)
   ACU.Installed = true
   print("[ACU] ===== FULL MERGE APPLY DONE =====")
 end
@@ -7362,6 +7601,8 @@ function ACU.Stats()
     sanitized     = ACU.SanitizedCount,
     parts         = ACU.Parts,
     part_errors   = ACU.PartErrors,
+    ban_pak       = _G.AntiCheatBypass and _G.AntiCheatBypass.Status
+                    and _G.AntiCheatBypass.Status() or nil,
   }
 end
 
@@ -7374,7 +7615,7 @@ end
 pcall(function()
   print("[ACU] Boot FULL-MERGE v1.0")
   ACU.Apply()
-  print("[ACU] ACTIVE — 7 parts merged")
+  print("[ACU] ACTIVE — 8 parts merged")
 end)
 
 return ACU
