@@ -135,15 +135,23 @@ local MATCH_CONFIG = {
 }
 
 -- ============================================================================
--- KATALOG ITEM RUNTIME
+-- KATALOG ITEM RUNTIME (LANGSUNG DARI TABEL PUBG)
 --
 -- Daftar ~16.000 ID hardcoded (15.958 baris) dihapus dan diganti pemindaian
 -- tabel "Item" milik game. Hanya item yang punya WardrobeMainTab + WardrobeTab
--- yang masuk katalog, karena hanya item itulah yang bisa tampil di grid
--- Inventory/Wardrobe. Hasilnya di-cache sekali; item baru otomatis ikut.
+-- + ItemSubType yang masuk katalog, karena hanya item itulah yang bisa tampil
+-- dan dipakai di grid Wardrobe. Hasilnya di-cache sekali; kalau PUBG menambah
+-- item baru, item itu otomatis ikut tanpa menyentuh script ini.
+--
+-- Meta (ItemType/ItemSubType/WardrobeMainTab/WardrobeTab/ItemQuality) ikut
+-- disimpan saat pemindaian supaya injeksi massal tidak perlu memanggil
+-- CDataTable.GetTableData ribuan kali (ini yang bikin lag di versi lama).
 -- ============================================================================
-local ITEM_CATALOG = nil
-local ITEM_CATALOG_SET = nil
+local ITEM_CATALOG = nil        -- array resID, urut naik
+local ITEM_CATALOG_SET = nil    -- resID -> true
+local ITEM_CATALOG_INDEX = nil  -- resID -> posisi 1..N (dasar insID sintetis)
+local ITEM_CATALOG_META = nil   -- posisi -> { ItemType, ItemSubType, MainTab, SubTab, Quality }
+local INS_BASE = 2000000000
 
 local function getItemTableRaw()
     local cdt = rawget(_G, "CDataTable")
@@ -171,23 +179,39 @@ local function buildItemCatalog()
     local tbl = getItemTableRaw()
     if not tbl then return nil end
     local arrayForm = type(tbl[1]) == "table"
-    local list, seen = {}, {}
+    local list, seen, meta = {}, {}, {}
     for key, row in pairs(tbl) do
         if type(row) == "table" then
             local rid = catalogRowID(key, row, arrayForm)
             local mainTab = tonumber(row.WardrobeMainTab or row.wardrobeMainTab) or 0
             local subTab = tonumber(row.WardrobeTab or row.wardrobeTab) or 0
-            if rid and rid > 0 and not seen[rid] and mainTab > 0 and subTab > 0 then
+            local itemType = tonumber(row.ItemType or row.itemType) or 0
+            local subType = tonumber(row.ItemSubType or row.itemSubType) or 0
+            if rid and rid > 0 and not seen[rid]
+                and mainTab > 0 and subTab > 0 and subType > 0 then
                 seen[rid] = true
                 list[#list + 1] = rid
+                meta[#list] = { itemType, subType, mainTab, subTab,
+                    tonumber(row.ItemQuality or row.itemQuality) or 0 }
             end
         end
     end
     if #list == 0 then return nil end
-    table.sort(list)
-    ITEM_CATALOG = list
-    ITEM_CATALOG_SET = seen
-    return list
+    -- Urutkan resID sambil menjaga pasangan meta tetap sejajar.
+    local order = {}
+    for i = 1, #list do order[i] = i end
+    table.sort(order, function(a, b) return list[a] < list[b] end)
+    local ids, metas, index = {}, {}, {}
+    for pos = 1, #order do
+        local old = order[pos]
+        local rid = list[old]
+        ids[pos] = rid
+        metas[pos] = meta[old]
+        index[rid] = pos
+    end
+    ITEM_CATALOG, ITEM_CATALOG_SET = ids, seen
+    ITEM_CATALOG_INDEX, ITEM_CATALOG_META = index, metas
+    return ids
 end
 
 local function itemCatalog()
@@ -203,12 +227,37 @@ function F.itemCatalog()
     return itemCatalog()
 end
 
+function F.itemCatalogSet()
+    return itemCatalogSet()
+end
 
+function F.catalogIndex(resID)
+    resID = tonumber(resID)
+    if not resID then return nil end
+    buildItemCatalog()
+    return ITEM_CATALOG_INDEX and ITEM_CATALOG_INDEX[resID] or nil
+end
 
+function F.catalogMeta(resID)
+    local i = F.catalogIndex(resID)
+    return i and ITEM_CATALOG_META and ITEM_CATALOG_META[i] or nil
+end
 
+-- insID sintetis selalu INS_BASE + posisi katalog, bukan INS_BASE + resID.
+-- Hasilnya < 2^31 dan tidak berubah selama urutan tabel Item sama.
+function F.catalogIns(resID)
+    local i = F.catalogIndex(resID)
+    if i then return INS_BASE + i end
+    return nil
+end
 
-
-local INS_BASE = 2000000000
+function F.syntheticResFromIns(insID)
+    insID = tonumber(insID)
+    if not insID or insID < INS_BASE then return nil end
+    local list = itemCatalog()
+    if not list then return nil end
+    return list[insID - INS_BASE]
+end
 local PKG_SLOT = 3
 local MELEE_ID = 108
 local HAT_SUB = 401
@@ -487,12 +536,77 @@ function F.indexWeaponSkin(resID, insID)
     R.byWeapon[wid][resID] = insID
 end
 
+-- Varian tanpa CDataTable.GetTableData: subtype sudah diketahui dari meta
+-- katalog, jadi injeksi massal tidak memanggil config native dua kali.
+function F.indexWeaponSkinDirect(resID, insID, st)
+    resID, insID, st = tonumber(resID), tonumber(insID), tonumber(st)
+    if not resID or not insID or not st then return end
+    if not (GUN_SUB[st] or st == MELEE_ID) then return end
+    local wid = (st == MELEE_ID) and MELEE_ID or tonumber(F.weaponIdFromSkin(resID))
+    if not wid or wid <= 0 then return end
+    local t = R.byWeapon[wid]
+    if not t then t = {}; R.byWeapon[wid] = t end
+    t[resID] = insID
+    F.injectArmory(resID, insID, wid)
+end
+
 function F.isInjectedIns(ins)
     return ins and R.insToRes[tonumber(ins)] ~= nil
 end
 
 function F.isInjectedRes(res)
     return res and R.resToIns[tonumber(res)] ~= nil
+end
+
+-- "Owned" untuk Wardrobe = ada di katalog live PUBG. Ini dipakai sebelum
+-- injeksi sempat jalan (mis. cek HasItem saat loading) dan oleh UI yang
+-- menanyakan status milik tanpa menyentuh depot.
+function F.isOwnedRes(resID)
+    resID = tonumber(resID)
+    if not resID then return false end
+    if R.resToIns[resID] then return true end
+    local set = ITEM_CATALOG_SET
+    if not set then
+        buildItemCatalog()
+        set = ITEM_CATALOG_SET
+    end
+    return set ~= nil and set[resID] == true
+end
+
+-- Materialisasi satu item katalog ke depot atas permintaan. Dipakai kalau
+-- ada kode yang menanyakan item tertentu sebelum injectAll selesai.
+function F.ensureOwnedDepot(resID)
+    resID = tonumber(resID)
+    if not resID then return nil end
+    local e = F.getEntity and F.getEntity() or nil
+    if not e or not e.bInit or type(e._data) ~= "table" then return nil end
+    local arr = e.ResIDToIndexArrayMap and e.ResIDToIndexArrayMap[resID]
+    if arr then
+        for k = 1, #arr do
+            local d = e._data[arr[k]]
+            if d then return d end
+        end
+    end
+    local idx = F.catalogIndex(resID)
+    if not idx then return nil end
+    local insID = INS_BASE + idx
+    if not e.InsIDToIndexMap or e.InsIDToIndexMap[insID] == nil then
+        pcall(F.injectOne, e, resID, insID)
+    end
+    return e:GetDataByInsID(insID)
+end
+
+function F.ensureOwnedDepotByIns(insID)
+    insID = tonumber(insID)
+    if not insID then return nil end
+    if insID >= INS_BASE then
+        local res = F.syntheticResFromIns(insID)
+        if res then return F.ensureOwnedDepot(res) end
+        return nil
+    end
+    local e = F.getEntity and F.getEntity() or nil
+    if not e then return nil end
+    return e:GetDataByInsID(insID)
 end
 
 function F.isWeaponSkinRes(resID)
@@ -544,6 +658,98 @@ function F.depotSubType(insID, resID)
     return d and tonumber(d.itemSubType)
 end
 
+-- ============================================================================
+-- RESPON EQUIP LOKAL
+--
+-- Server tidak tahu item sintetis, jadi `depot_put_on_req` untuk item katalog
+-- pasti ditolak dan wardrobe tidak pernah masuk jalur sukses. Di sini respon
+-- sukses dibentuk sendiri memakai fungsi handler game yang asli, sehingga
+-- SELURUH logika on_puton_rsp berjalan: model hall, fashion bag, grenade,
+-- event grid, dan penyimpanan skin.
+--
+-- `index` untuk throw object HARUS indeks fashion bag yang aktif; kalau tidak,
+-- skin grenade masuk ke bag lain dan tidak terlihat terpakai.
+-- ============================================================================
+function F.activeBagIndex()
+    local idx
+    pcall(function()
+        local fbd = require("client.slua.logic.wardrobe.fashionbag.fashionbag_data")
+        idx = tonumber(fbd:GetFashionBagUseIndex())
+        local bag = idx and fbd:GetFashionBag(idx)
+        if not bag or type(bag.throw_object_list) ~= "table" then idx = nil end
+    end)
+    return idx
+end
+
+function F.localEquipResponse(insID, extra, oldInsID)
+    insID = tonumber(insID)
+    if not insID then return false end
+    local resID = tonumber(R.insToRes[insID])
+    local wd = require("client.slua.logic.wardrobe.wardrobe_data")
+    local d = wd:GetHallDepotItemDataByInsID(insID)
+    if not resID and d then resID = tonumber(d.resID or d.res_id) end
+    if not resID or resID <= 0 then return false end
+    local WRH = require("client.network.Protocol.WardRobeHandler")
+    if type(WRH.on_depot_put_on_rsp) ~= "function" then return false end
+
+    local item = {
+        res_id = resID,
+        count = tonumber(d and d.count) or 1,
+        -- expire_ts = 0 (truthy) mencegah UpdateLastEquipForeverSkin menyimpan
+        -- insID sintetis sebagai skin permanen akun.
+        expire_ts = 0,
+        color = d and d.colorID or nil,
+        pattern = d and d.patternID or nil,
+    }
+    local olditem
+    oldInsID = tonumber(oldInsID)
+    if (not oldInsID or oldInsID <= 0) and d then
+        -- Cari item yang sedang dipakai untuk subtipe yang sama supaya
+        -- on_puton_rsp bisa melepas yang lama (tidak menumpuk dua skin).
+        pcall(function()
+            local la = require("client.slua.logic.wardrobe.logic_wardrobe_avatar")
+            local sub = tonumber(d.itemSubType)
+            local wear = la:GetCurrentWearPreview(sub)
+            local cur = wear and tonumber(wear.insID)
+            if cur and cur > 0 and cur ~= insID then oldInsID = cur end
+        end)
+    end
+    if oldInsID and oldInsID > 0 then
+        local od = wd:GetHallDepotItemDataByInsID(oldInsID)
+        if od then
+            olditem = {
+                res_id = od.resID or od.res_id,
+                count = od.count,
+                expire_ts = 0,
+                color = od.colorID,
+                pattern = od.patternID,
+            }
+        end
+    end
+
+    local index = F.activeBagIndex()
+    local called = pcall(WRH.on_depot_put_on_rsp, NET_OK, item, olditem, index, insID, oldInsID or 0, extra)
+    return called
+end
+
+function F.localUnequipResponse(insID)
+    insID = tonumber(insID)
+    if not insID then return false end
+    local resID = tonumber(R.insToRes[insID])
+    local wd = require("client.slua.logic.wardrobe.wardrobe_data")
+    local d = wd:GetHallDepotItemDataByInsID(insID)
+    if not resID and d then resID = tonumber(d.resID or d.res_id) end
+    if not resID or resID <= 0 then return false end
+    local WRH = require("client.network.Protocol.WardRobeHandler")
+    if type(WRH.on_depot_put_down_rsp) ~= "function" then return false end
+    local called = pcall(WRH.on_depot_put_down_rsp, NET_OK, {
+        res_id = resID,
+        count = tonumber(d and d.count) or 1,
+        expire_ts = 0,
+    }, insID)
+    return called
+end
+
 function F.tryLocalWearByIns(insID)
     insID = tonumber(insID)
     if not insID then return false end
@@ -565,7 +771,12 @@ function F.tryLocalWearByIns(insID)
     if st == GLOVES_SUB then mapLocal(); F.putOnGloves(insID) return true end
     if THROW_SUBS[tonumber(st)] then
         mapLocal()
-        F.saveThrowObject(resID, insID)
+        -- Jalur sukses asli: ShowGrenadeModel + PutOnThrowObjectSkin ke
+        -- fashion bag aktif + event update grid. Kalau handler belum siap,
+        -- simpan konfigurasi supaya skin tetap dipakai saat match.
+        if not F.localEquipResponse(insID) then
+            F.saveThrowObject(resID, insID)
+        end
         pcall(F.applyThrowObjectSkins)
         return true
     end
@@ -587,21 +798,27 @@ function F.tryLocalWearByIns(insID)
     if FACE_SUBS[st] then mapLocal(); F.putOnFaceAccessory(insID) return true end
     if BODY_SUBS[st] or HELMET_SUBS[st] then mapLocal(); F.putOnRoleWear(insID) return true end
 
-    if not F.isInjectedIns(insID) then return false end
+    if not F.isOwnedRes(resID) then return false end
     if GUN_SUB[st] then
         local wid = F.weaponIdFromSkin(resID)
         if wid then F.equipWeaponSkin(wid, insID) end
         return true
     end
     if st == MELEE_ID then F.equipWeaponSkin(MELEE_ID, insID) return true end
-    if F.isHallThemeRes(resID) and (F.isInjectedIns(insID) or F.isInjectedRes(resID)) then
+    if F.isHallThemeRes(resID) and (F.isOwnedRes(resID) or F.isInjectedIns(insID)) then
         mapLocal()
         return F.putOnHallTheme(insID)
     end
-    if F.isVehicleRes(resID) and (F.isInjectedIns(insID) or F.isInjectedRes(resID)) then
+    if F.isVehicleRes(resID) and (F.isOwnedRes(resID) or F.isInjectedIns(insID)) then
         mapLocal()
         return F.putOnVehicle(insID)
     end
+    -- Fallback generik: semua tab wardrobe lain (emoji, quicksign, quick
+    -- message, emoji bubble, holografi, plating, bag pendant, lobby music,
+    -- MiniTV, MVP motion, foot effect, toy, cabin show, dll) tetap memakai
+    -- on_puton_rsp asli, jadi event dan tampilan grid ikut benar.
+    mapLocal()
+    if F.localEquipResponse(insID) then return true end
     return false
 end
 
@@ -615,7 +832,7 @@ end
 function F.isResourcesReady(resID)
     resID = tonumber(resID)
     if not resID or resID <= 0 then return false end
-    if not F.isInjectedRes(resID) then return true end
+    if not F.isInjectedRes(resID) and not F.isOwnedRes(resID) then return true end
     local ready = false
     pcall(function()
         local PufferConst = require("client.slua.logic.download.puffer_const")
@@ -630,7 +847,8 @@ end
 
 function F.requestResourceDownload(resID)
     resID = tonumber(resID)
-    if not resID or resID <= 0 or not F.isInjectedRes(resID) then return end
+    if not resID or resID <= 0 then return end
+    if not F.isOwnedRes(resID) and not F.isInjectedRes(resID) then return end
     if F.isResourcesReady(resID) then return end
     _G.AddOutfitDownloadQueued = _G.AddOutfitDownloadQueued or {}
     if _G.AddOutfitDownloadQueued[resID] then return end
@@ -3139,8 +3357,8 @@ function F.mergeRevivedIntoMaps()
     end
 end
 
-function F.injectArmory(resID, insID)
-    local wid = F.weaponIdFromSkin(resID)
+function F.injectArmory(resID, insID, wid)
+    wid = tonumber(wid) or tonumber(F.weaponIdFromSkin(resID))
     if not wid then return end
     local Arm = require("client.logic.armory.logic_armory")
     Arm.rsp_list = Arm.rsp_list or { skin_list = {}, install_list = {} }
@@ -3196,7 +3414,7 @@ function F.injectAll(entity)
     if not catalog or #catalog == 0 then return false end
 
     local mark = LAST_INJECT[entity]
-    if mark and mark.data == entity._data then
+    if mark and mark.data == rawget(entity, "_data") then
         if not mark.mapsRebuilt then
             F.rebuildInjectedMaps(entity)
             mark.mapsRebuilt = true
@@ -3206,26 +3424,105 @@ function F.injectAll(entity)
     if F._injectBusy then return true end
     F._injectBusy = true
 
-    local n = 0
+    local n, added = 0, 0
     local ok = pcall(function()
+        local data = entity._data
+        if type(data) ~= "table" then return end
+        local insMap = entity.InsIDToIndexMap
+        local resMap = entity.ResIDToIndexArrayMap
+        if type(insMap) ~= "table" then insMap = {}; entity.InsIDToIndexMap = insMap end
+        if type(resMap) ~= "table" then resMap = {}; entity.ResIDToIndexArrayMap = resMap end
+
+        local meta = ITEM_CATALOG_META
+        local count = tonumber(entity._DataCount) or 0
+        local prevCount = count
+
         for i = 1, #catalog do
             local resID = catalog[i]
-            -- INS_BASE + indeks katalog (bukan + resID): hasilnya selalu di
-            -- bawah 2^31, sama seperti skrip skin yang sudah terbukti jalan.
-            -- resID item bisa mencapai ~1,5 miliar, sehingga INS_BASE + resID
-            -- berisiko overflow kalau ada API yang memakai int32.
             local insID = INS_BASE + i
-            if F.injectOne(entity, resID, insID) then
-                n = n + 1
-                local st = F.subType(F.cfg(resID))
-                if GUN_SUB[st] or st == MELEE_ID then
-                    -- Item yang sudah dimiliki memakai insID server, bukan
-                    -- insID sintetis, supaya armory bisa memasangnya.
-                    F.injectArmory(resID, R.resToIns[resID] or insID)
+            local m = meta and meta[i]
+            local existingIns = nil
+
+            -- Item yang benar-benar dimiliki server tetap memakai insID asli
+            -- supaya armory/equip server tidak rusak.
+            local arr = resMap[resID]
+            local reviveD
+            if arr then
+                for k = 1, #arr do
+                    local d = data[arr[k]]
+                    if d then
+                        if (tonumber(d.count) or 0) > 0 then
+                            existingIns = tonumber(d.insID or d.instid)
+                            d.expire_ts, d.expireTS, d.valid_hours = 0, 0, 0
+                            break
+                        end
+                        reviveD = reviveD or d
+                    end
                 end
+            end
+            -- Baris lama dengan count 0 (mis. habis/kedaluwarsa) dihidupkan
+            -- kembali, bukan ditambah baris kedua. Kalau ditambah, lookup
+            -- berdasarkan resID bisa mengembalikan baris count 0 lebih dulu.
+            if not existingIns and reviveD then
+                existingIns = tonumber(reviveD.insID or reviveD.instid)
+                reviveD.count = 1
+                reviveD.expire_ts, reviveD.expireTS, reviveD.valid_hours = 0, 0, 0
+                if m then
+                    reviveD.itemType = reviveD.itemType or m[1]
+                    reviveD.itemSubType = reviveD.itemSubType or m[2]
+                    reviveD.mainTabType = reviveD.mainTabType or m[3]
+                    reviveD.subTabType = reviveD.subTabType or m[4]
+                    reviveD.itemQuality = reviveD.itemQuality or m[5]
+                    reviveD.bConfigLoaded = true
+                end
+            end
+
+            local useIns
+            if existingIns then
+                useIns = existingIns
+            else
+                useIns = insID
+                count = count + 1
+                data[count] = {
+                    insID = insID,
+                    resID = resID,
+                    count = 1,
+                    lock_cnt = 0,
+                    isNew = false,
+                    validHours = 0,
+                    expireTS = 0,
+                    bConfigLoaded = true,
+                    itemType = m and m[1] or nil,
+                    itemSubType = m and m[2] or nil,
+                    mainTabType = m and m[3] or nil,
+                    subTabType = m and m[4] or nil,
+                    itemQuality = m and m[5] or nil,
+                }
+                insMap[insID] = count
+                if not arr then
+                    arr = {}
+                    resMap[resID] = arr
+                end
+                arr[#arr + 1] = count
+                added = added + 1
+            end
+
+            R.insToRes[useIns] = resID
+            R.resToIns[resID] = useIns
+            n = n + 1
+
+            if m and m[2] then
+                F.indexWeaponSkinDirect(resID, useIns, m[2])
             end
         end
 
+        entity._DataCount = count
+        -- Semua entri sintetis sudah bConfigLoaded. Majukan penanda batch
+        -- config supaya GetData berikutnya tidak memindai ribuan entri itu.
+        if type(entity.loadConfigCurrentIndex) == "number"
+            and entity.loadConfigCurrentIndex > prevCount then
+            entity.loadConfigCurrentIndex = count + 1
+        end
         if not _G.AddOutfitUnexpireDone then
             _G.AddOutfitUnexpireDone = true
             pcall(F.reviveExpiredOwned, entity)
@@ -3236,9 +3533,11 @@ function F.injectAll(entity)
     F._injectBusy = false
     if not ok then return false end
     if n > 0 then
-        LAST_INJECT[entity] = { data = rawget(entity, "_data"), count = n }
+        -- mapsRebuilt = true: peta sudah diisi langsung di loop, tidak perlu
+        -- scan ulang 16.000+ entri saat grid pertama kali dibuka.
+        LAST_INJECT[entity] = { data = rawget(entity, "_data"), count = n, mapsRebuilt = true }
     end
-    return n > 0
+    return n > 0, added
 end
 
 function F.refreshWardrobe()
@@ -4723,8 +5022,13 @@ function F.hookDepotInit()
             -- Kalau saat start modul ini belum bisa di-require, pasang hook
             -- GetData sekarang: kelasnya jelas sudah ada karena InitData jalan.
             pcall(F.hookWardrobeGetData)
+            -- Hook lain juga dipasang ulang di sini: WardRobeHandler dan
+            -- logic_wardrobe_new bisa belum ada saat script dimuat.
+            if F.ensureWardrobeHooks then pcall(F.ensureWardrobeHooks) end
             pcall(function()
                 if F.injectAll(self) then
+                    pcall(F.mergeInjectedArmorySkins)
+                    pcall(F.reapplyThrowObjectBag)
                     F.scheduleInjectRefresh()
                     LOBBY.reapplyDone = false
                     LOBBY.reapplyScheduled = false
@@ -4749,6 +5053,7 @@ function F.hookWardrobeData()
                 if F.isInjectedIns(insID) then
                     local e = F.getEntity()
                     if e then r = e:GetDataByInsID(insID) end
+                    if not r then r = F.ensureOwnedDepotByIns(insID) end
                 else
                     r = o(self, insID, ...)
                 end
@@ -4762,11 +5067,49 @@ function F.hookWardrobeData()
         end
         wrapGet("GetHallDepotItemDataByInsID")
         wrapGet("GetValidHallDepotItemDataByInsID")
+        -- Lookup berbasis resID: materialisasi entri katalog saat diminta.
+        -- Ini yang membuat item baru langsung "owned" walau injectAll belum
+        -- sempat berjalan (mis. dipanggil saat loading lobby).
+        local function wrapRes(name, returnsList)
+            local o = wd[name]
+            if not o then return end
+            wd[name] = function(self, resID, ...)
+                resID = tonumber(resID)
+                local r = o(self, resID, ...)
+                if (r == nil or (returnsList and type(r) == "table" and #r == 0))
+                    and F.isOwnedRes(resID) then
+                    F.ensureOwnedDepot(resID)
+                    r = o(self, resID, ...)
+                end
+                return r
+            end
+        end
+        wrapRes("GetHallDepotItemDataByResID")
+        wrapRes("GetAllHallDepotItemDataByResID")
+        wrapRes("GetHallDepotItemDataByResIDAndSource")
+        wrapRes("GetHallDepotItemDataByResIDAndValidExpireTime")
+        wrapRes("GetHallDepotItemDataByResIDAndTimeliness")
+        wrapRes("GetHallDepotItemListByResID", true)
+        wrapRes("GetHallDepotItemListByResIDValidExpireTime", true)
+        local oCount = wd.GetHallDepotItemCountByResID
+        if oCount then
+            wd.GetHallDepotItemCountByResID = function(self, resID, ...)
+                resID = tonumber(resID)
+                local n = oCount(self, resID, ...)
+                if (not n or n == 0) and F.isOwnedRes(resID) then
+                    F.ensureOwnedDepot(resID)
+                    n = oCount(self, resID, ...)
+                    if not n or n == 0 then n = 1 end
+                end
+                return n
+            end
+        end
         local function wrapBool(name)
             local o = wd[name]
             if not o then return end
             wd[name] = function(self, id, ...)
-                if F.isInjectedRes(tonumber(id)) or F.isInjectedIns(tonumber(id)) then return true end
+                id = tonumber(id)
+                if F.isOwnedRes(id) or F.isInjectedIns(id) then return true end
                 return o(self, id, ...)
             end
         end
@@ -4823,30 +5166,70 @@ function F.hookPageFilter()
         wl._AddOutfitPageFilterHooked = true
         local o1 = wl.IsValidCurrentPageItem
         wl.IsValidCurrentPageItem = function(self, mainTab, subTab, v, t)
-            if v and F.isInjectedRes(v.resID) then
-                local itemTab = tonumber(v.subTabType) or F.wardrobeTab(v.resID)
-                if itemTab and itemTab == subTab then
-                    if mainTab == PAGE_AVATAR or mainTab == PAGE_VEHICLE then return true end
-                    if mainTab == PAGE_PARACHUTE and F.isHallThemeRes(v.resID) then return true end
+            if v and F.isOwnedRes(v.resID) then
+                local itemTab = tonumber(v.subTabType)
+                local itemMain = tonumber(v.mainTabType)
+                if itemTab == nil or itemMain == nil then
+                    local meta = F.catalogMeta(v.resID)
+                    if meta then
+                        itemMain = itemMain or meta[3]
+                        itemTab = itemTab or meta[4]
+                    end
+                end
+                if itemTab and itemTab == subTab
+                    and (itemMain == mainTab
+                        or (mainTab == PAGE_PARACHUTE and F.isHallThemeRes(v.resID))) then
+                    -- Item katalog selalu permanen (expire 0), jadi tidak perlu
+                    -- cek waktu di sini.
+                    return true
                 end
             end
             return o1(self, mainTab, subTab, v, t)
         end
         local o2 = wl.IsCanUse
         wl.IsCanUse = function(self, resId)
-            if F.isInjectedRes(resId) then return true end
+            if F.isOwnedRes(resId) then return true end
             return o2(self, resId)
         end
         local o3 = wl.IsCharacterUse
         wl.IsCharacterUse = function(self, resId)
-            if F.isInjectedRes(resId) then return true end
+            if F.isOwnedRes(resId) then return true end
             return o3(self, resId)
         end
         local o4 = wl.GetWardrobeInsIdByResId
         wl.GetWardrobeInsIdByResId = function(self, resid)
             resid = tonumber(resid)
-            if F.isInjectedRes(resid) then return R.resToIns[resid] end
-            return o4(self, resid)
+            if not F.isOwnedRes(resid) then
+                return o4 and o4(self, resid) or 0
+            end
+            -- Sudah dipetakan (biasanya oleh injeksi massal): pakai langsung.
+            local ins = R.resToIns[resid]
+            if ins and tonumber(ins) and tonumber(ins) > 0 then return ins end
+            -- Belum dipetakan: tanya depot asli. Kalau item benar-benar
+            -- dimiliki, ini mengembalikan insID server; kalau tidak, wrapper
+            -- lookup akan membuat entri sintetis yang konsisten.
+            local real = o4 and o4(self, resid) or nil
+            real = tonumber(real)
+            if real and real > 0 then
+                R.resToIns[resid], R.insToRes[real] = real, resid
+                return real
+            end
+            ins = F.catalogIns(resid)
+            if ins then
+                R.resToIns[resid], R.insToRes[ins] = ins, resid
+                return ins
+            end
+            return 0
+        end
+        -- Region lock (ENUM ItemRegion/ValidRegionCodes) membuat item katalog
+        -- menampilkan notice 4987 dan batal dipakai. Untuk wardrobe pribadi
+        -- semua item katalog harus bisa dipakai.
+        local o5 = wl.IsItemIsolated
+        if o5 then
+            wl.IsItemIsolated = function(self, resId)
+                if F.isOwnedRes(resId) then return false end
+                return o5(self, resId)
+            end
         end
     end)
 end
@@ -4918,6 +5301,15 @@ function F.hookPutOn()
         WRH.send_depot_put_on_req = function(insID, extra)
             insID = tonumber(insID)
             if F.tryLocalWearByIns(insID) then return end
+            -- Jaring kedua: apa pun yang lolos dari jalur di atas tetapi
+            -- masih item katalog tidak boleh dikirim ke server.
+            if insID and F.isInjectedIns(insID) and F.localEquipResponse(insID, extra) then
+                return
+            end
+            -- Item sintetis tidak pernah dikenal server. Kalau respon lokal
+            -- gagal (mis. modul wardrobe belum siap), lebih baik no-op
+            -- daripada mengirim insID palsu dan memicu notice error.
+            if insID and F.isInjectedIns(insID) then return end
             return o(insID, extra)
         end
     end)
@@ -4930,8 +5322,9 @@ function F.hookPutDown()
         WRH._AddOutfitPutDownHooked = true
         local o = WRH.send_depot_put_down_req
         WRH.send_depot_put_down_req = function(insID)
-            if F.isInjectedIns(tonumber(insID)) then
-                F.takeOffInjected(insID)
+            insID = tonumber(insID)
+            if insID and F.isInjectedIns(insID) then
+                if not F.localUnequipResponse(insID) then F.takeOffInjected(insID) end
                 return
             end
             return o(insID)
@@ -4941,7 +5334,7 @@ function F.hookPutDown()
             local rest = {}
             for _, id in ipairs(instid_list or {}) do
                 if F.isInjectedIns(tonumber(id)) then
-                    F.takeOffInjected(id)
+                    if not F.localUnequipResponse(id) then F.takeOffInjected(id) end
                 else
                     rest[#rest + 1] = id
                 end
@@ -6465,6 +6858,71 @@ function F.applyThrowObjectSkins()
     end)
     return true
 end
+
+-- ============================================================================
+-- PULIHKAN SKIN GRENADE KE FASHION BAG
+--
+-- fashionbag_data menyimpan pilihan per subtipe (612 shoulei, 613 smoke,
+-- 614 stun, 615 burn) di bag yang sedang dipakai. Setelah relogin / ganti
+-- bag, slot itu bisa kosong lagi karena server tidak pernah menerima item
+-- sintetis. Fungsi ini mengisi slot kosong dari config tersimpan, dan kalau
+-- server ternyata sudah punya skin asli di slot itu, cache lokal disamakan
+-- dengan nilai server supaya grid dan bag tidak berbeda.
+-- ============================================================================
+function F.reapplyThrowObjectBag()
+    local cch = F.cache()
+    local changed = false
+    pcall(function()
+        local fbd = require("client.slua.logic.wardrobe.fashionbag.fashionbag_data")
+        local idx = tonumber(fbd:GetFashionBagUseIndex())
+        if not idx then return end
+        -- Jangan menyentuh bag yang belum dimuat: GetThrowObjectSkin akan
+        -- mengindeks throw_object_list milik bag kosong.
+        local bag = fbd.GetFashionBag and fbd:GetFashionBag(idx) or nil
+        if not bag then return end
+        bag.throw_object_list = bag.throw_object_list or {}
+        local wd = require("client.slua.logic.wardrobe.wardrobe_data")
+        for st, info in pairs(cch.throwObjects or {}) do
+            st = tonumber(st)
+            local res = info and tonumber(info.resID)
+            if THROW_SUBS[st] and res and res > 0 then
+                local cur = tonumber(fbd:GetThrowObjectSkin(st, idx)) or 0
+                if cur == 0 then
+                    local ins = tonumber(info.insID)
+                    if not ins or ins <= 0 then
+                        ins = tonumber(R.resToIns[res]) or tonumber(F.catalogIns(res)) or 0
+                    end
+                    if ins > 0 then
+                        fbd:SetThrowObjectSkin(st, ins, idx)
+                        info.insID = ins
+                        PERSIST.configThrowObjects = PERSIST.configThrowObjects or {}
+                        PERSIST.configThrowObjects[st] = res
+                        changed = true
+                    end
+                elseif cur ~= tonumber(info.insID) then
+                    -- Bag server menang. Ambil resID aslinya supaya config
+                    -- tersimpan tidak menunjuk item yang tidak terpasang.
+                    local d = wd:GetHallDepotItemDataByInsID(cur)
+                    local serverRes = d and tonumber(d.resID or d.res_id)
+                    if serverRes and serverRes > 0 then
+                        info.insID = cur
+                        info.resID = serverRes
+                        PERSIST.configThrowObjects = PERSIST.configThrowObjects or {}
+                        PERSIST.configThrowObjects[st] = serverRes
+                        R.resToIns[serverRes], R.insToRes[cur] = cur, serverRes
+                        changed = true
+                    end
+                end
+            end
+        end
+    end)
+    if changed then
+        pcall(F.persistMarkDirty)
+        pcall(F.applyThrowObjectSkins)
+    end
+    return changed
+end
+
 function F.hookThrowObjects()
     pcall(function()
         local PCB = require("GameLua.GameCore.Framework.PlayerControllerBase")
@@ -6963,6 +7421,19 @@ function F.hookPutOnRsp()
     end)
 end
 
+-- Pasang ulang semua hook wardrobe yang penting. Dipanggil dari InitData dan
+-- dari loop auto-inject supaya modul yang belum siap saat script dimuat
+-- (WardRobeHandler, logic_wardrobe_new, fashionbag_data) tetap ter-hook.
+function F.ensureWardrobeHooks()
+    if F.hookWardrobeData then pcall(F.hookWardrobeData) end
+    if F.hookWardrobeGetData then pcall(F.hookWardrobeGetData) end
+    if F.hookPageFilter then pcall(F.hookPageFilter) end
+    if F.hookPutOn then pcall(F.hookPutOn) end
+    if F.hookPutDown then pcall(F.hookPutDown) end
+    if F.hookWardrobePutOnReq then pcall(F.hookWardrobePutOnReq) end
+    if F.hookPutOnRsp then pcall(F.hookPutOnRsp) end
+end
+
 function F.hookLobbyWeaponCache()
     if _G.AddOutfitLobbyWeaponCacheHooked then return end
     _G.AddOutfitLobbyWeaponCacheHooked = true
@@ -7063,6 +7534,7 @@ function F.hookWardrobePutOnReq()
             insID = tonumber(insID)
             F.ensureDepotItemValid(insID)
             if F.tryLocalWearByIns(insID) then return end
+            if insID and F.isInjectedIns(insID) then return end
             return oReq(self, insID, extra)
         end
         if not wl._AddOutfitPutOnDataHooked then
@@ -7295,6 +7767,7 @@ end
 function F.afterInjectApply(firstTime)
     F.mergeInjectedArmorySkins()
     -- Keep the original armory response intact; do not prune lobby inventory entries.
+    pcall(F.reapplyThrowObjectBag)
     if firstTime then
         F.refreshWardrobeOnce()
         F.persistApplyLoaded()
@@ -7787,6 +8260,7 @@ end)
     end)
 
     local firstLobby = not _G.AddOutfitLobbyInitDone
+    if F.ensureWardrobeHooks then pcall(F.ensureWardrobeHooks) end
     if F.injectAll() then
         if firstLobby then _G.AddOutfitLobbyInitDone = true end
         F.afterInjectApply(firstLobby)
@@ -8525,6 +8999,7 @@ function F.startAutoInject()
 
     local function pass()
         if _G.AddOutfitAutoInjectDone then return true end
+        if F.ensureWardrobeHooks then pcall(F.ensureWardrobeHooks) end
         local ok, injected = pcall(F.injectAll)
         if ok and injected then
             applyOnce()
