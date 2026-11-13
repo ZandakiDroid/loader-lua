@@ -191,6 +191,35 @@ M.config = {
     list = {},
   },
 
+  -- Layer 8b: depot/Inventory (WardrobeData) sintetis.
+  -- Item yang tidak ada di akun tetap disuntikkan ke entity depot client,
+  -- sehingga muncul di tab Inventory/Wardrobe (bukan hanya Collection).
+  wardrobe = {
+    enabled = true,
+    inject = true,
+    -- "missing" = hanya item yang belum ada di depot (tanpa duplikat),
+    -- "all"     = suntik semua item kosmetik (bisa tampil ganda kalau sudah
+    --             dimiliki),
+    -- "list"    = hanya id di `items`.
+    mode = "missing",
+    -- Tambahan id eksplisit. Format: { 401001, 401002 } atau
+    -- { [401001] = true }.
+    items = {},
+    -- Batas jumlah item yang disuntikkan (0 = tanpa batas).
+    maxItems = 20000,
+    -- Hanya tipe item tertentu. Kosong = semua item yang punya
+    -- WardrobeMainTab/WardrobeTab.
+    includeItemTypes = {},
+    excludeItemTypes = {},
+    -- Hapus entri sintetis saat item asli dengan resID sama masuk dari server.
+    dropOnReal = true,
+    -- Minta UI refresh setelah injeksi.
+    notify = true,
+    -- Equip lokal untuk entri sintetis. Tidak mengirim RPC ke server dan
+    -- hanya mengubah tampilan lobby (mannequin/preview). Default false.
+    localEquip = false,
+  },
+
   -- Layer 9: fake gacha lokal.
   fakeGacha = {
     enabled = true,
@@ -2235,6 +2264,531 @@ local function installGrenade()
 end
 
 -- ============================================================================
+-- 10.5 Wardrobe depot: item sintetis di Inventory/Wardrobe
+--
+-- Collection hanya membaca flag "owned". Tab Inventory/Wardrobe membaca
+-- entity depot (WardrobeDataEntity) yang diisi server lewat
+-- WardrobeData:InitHallDepotData / OnHallDepotDataNotify. Supaya item benar
+-- benar muncul di Inventory, entri sintetis ditambahkan ke entity tersebut
+-- dengan insID lokal dan field yang sama seperti entri server.
+-- ============================================================================
+
+local WARDROBE_DATA_PATH = "client.slua.logic.wardrobe.wardrobe_data"
+local WARDROBE_CENTER_PATH = "client.slua.logic.wardrobe.logic_wardrobe_data_center"
+local WARDROBE_LOGIC_PATH = "client.slua.logic.wardrobe.logic_wardrobe_new"
+local WARDROBE_HANDLER_PATH = "client.network.Protocol.WardRobeHandler"
+
+-- insID asli adalah 64-bit (timestamp << 32). Basis rendah ini tidak mungkin
+-- bentrok dan membuat urutan sortir tetap wajar.
+local WARDROBE_INS_BASE = 1000000000
+local WARDROBE_INS_SPAN = 10000000
+
+local function wardrobeFakeIns(resID)
+  local id = tonumber(resID)
+  if not id then
+    return nil
+  end
+  return WARDROBE_INS_BASE + id
+end
+
+local function isWardrobeFakeIns(insID)
+  local id = tonumber(insID)
+  if not id then
+    return false
+  end
+  return id >= WARDROBE_INS_BASE and id < WARDROBE_INS_BASE + WARDROBE_INS_SPAN
+end
+
+local function getWardrobeEntity(source)
+  local center = safeRequire(WARDROBE_CENTER_PATH)
+  if type(center) ~= "table" or not isFn(center.GetWardrobeData) then
+    return nil
+  end
+  local ok, entity = pcall(center.GetWardrobeData, center, source)
+  if ok and type(entity) == "table" then
+    return entity
+  end
+  return nil
+end
+
+local function getWardrobeItemByIns(insID)
+  local entity = getWardrobeEntity()
+  if not entity or not isFn(entity.GetDataByInsID) then
+    return nil
+  end
+  local ok, item = pcall(entity.GetDataByInsID, entity, insID)
+  if ok then
+    return item
+  end
+  return nil
+end
+
+-- Field tabel "Item" yang dipakai WardrobeDataEntity:LoadConfigForData.
+local function wardrobeRowTabs(row)
+  if type(row) ~= "table" then
+    return nil
+  end
+  local main = tonumber(row.WardrobeMainTab)
+  local sub = tonumber(row.WardrobeTab)
+  if main and main > 0 and sub and sub > 0 then
+    return main, sub
+  end
+  return nil
+end
+
+local function wardrobeTypeInList(list, typ)
+  if type(list) ~= "table" then
+    return false
+  end
+  if typ ~= nil and list[typ] then
+    return true
+  end
+  for _, v in ipairs(list) do
+    if tonumber(v) == typ then
+      return true
+    end
+  end
+  return false
+end
+
+local function wardrobeTypeAllowed(typ, cfg)
+  typ = tonumber(typ)
+  local inc = cfg.includeItemTypes
+  if type(inc) == "table" and next(inc) ~= nil then
+    if not wardrobeTypeInList(inc, typ) then
+      return false
+    end
+  end
+  local exc = cfg.excludeItemTypes
+  if type(exc) == "table" and typ ~= nil and wardrobeTypeInList(exc, typ) then
+    return false
+  end
+  return true
+end
+
+local function asWardrobeItemID(v)
+  local n = tonumber(v)
+  if n and n >= 10000 and n < 100000000 then
+    return n
+  end
+  return nil
+end
+
+-- resID yang sudah punya entri valid di depot. Entri kedaluwarsa tidak
+-- dihitung, supaya skin trial yang sudah habis tetap disuntik ulang.
+local function wardrobeServerTime()
+  local tu = safeRequire("client.common.time_util")
+  if type(tu) == "table" and isFn(tu.GetServerTimeInSec) then
+    local ok, t = pcall(tu.GetServerTimeInSec)
+    if ok and tonumber(t) then
+      return tonumber(t)
+    end
+  end
+  return os.time()
+end
+
+local function wardrobeValidResSet(entity)
+  local data = entity and entity._data
+  if type(data) ~= "table" then
+    return nil
+  end
+  local set = {}
+  local serverTime = wardrobeServerTime()
+  for _, item in pairs(data) do
+    if type(item) == "table" then
+      local res = tonumber(item.resID)
+      local count = tonumber(item.count) or 0
+      local expire = tonumber(item.expireTS) or 0
+      if res and count > 0 and (expire == 0 or expire > serverTime) then
+        set[res] = true
+      end
+    end
+  end
+  return set
+end
+
+local function wardrobeCandidates(entity, cfg)
+  local list, seen = {}, {}
+  local existing = nil
+  if cfg.mode ~= "all" then
+    existing = wardrobeValidResSet(entity)
+  end
+
+  local function add(id, row)
+    id = asWardrobeItemID(id)
+    if not id or seen[id] then
+      return
+    end
+    if existing and existing[id] ~= nil then
+      return
+    end
+    row = row or getItemCfg(id)
+    local main, sub = wardrobeRowTabs(row)
+    if main == nil then
+      return
+    end
+    if not wardrobeTypeAllowed(row.ItemType, cfg) then
+      return
+    end
+    seen[id] = true
+    list[#list + 1] = id
+  end
+
+  if cfg.mode == "all" or cfg.mode == "missing" then
+    local items = getTable("Item")
+    if type(items) == "table" then
+      for id, row in pairs(items) do
+        add(id, row)
+      end
+    end
+  end
+
+  -- Tambahan eksplisit, mendukung array maupun map.
+  local extra = cfg.items
+  if type(extra) == "table" then
+    for k, v in pairs(extra) do
+      local kid = asWardrobeItemID(k)
+      local vid = asWardrobeItemID(v)
+      if kid then
+        add(kid)
+      elseif vid then
+        add(vid)
+      end
+    end
+  end
+
+  table.sort(list)
+  local max = tonumber(cfg.maxItems) or 0
+  if max > 0 and #list > max then
+    for i = #list, max + 1, -1 do
+      list[i] = nil
+    end
+  end
+  return list
+end
+
+local function postWardrobeUpdate()
+  if not M.config.wardrobe.notify then
+    return false
+  end
+  local ev = rawget(_G, "EventSystem")
+  local et = rawget(_G, "EVENTTYPE_WARDROBE")
+  local eid = rawget(_G, "EVENTID_WARDROBE_DEPOT_UPDATE")
+  if type(ev) == "table" and isFn(ev.postEvent) and et ~= nil and eid ~= nil then
+    local ok = pcall(ev.postEvent, ev, et, eid)
+    if ok then
+      M.stats.wardrobeNotifies = (M.stats.wardrobeNotifies or 0) + 1
+      return true
+    end
+  end
+  return false
+end
+
+local function wardrobeProbeValid(entity)
+  local probe = M._state.wardrobeProbe
+  if type(probe) ~= "table" or probe.ins == nil then
+    return false
+  end
+  local maps = entity.InsIDToIndexMap
+  local index = type(maps) == "table" and maps[probe.ins] or nil
+  if index == nil then
+    return false
+  end
+  local data = entity._data
+  local item = type(data) == "table" and data[index] or nil
+  return type(item) == "table" and tonumber(item.resID) == probe.res
+end
+
+local function injectWardrobeEntity(entity, force)
+  local cfg = M.config.wardrobe
+  if not M.started or not cfg.enabled or not cfg.inject then
+    return 0
+  end
+  if type(entity) ~= "table" or not isFn(entity.AddData) then
+    return 0
+  end
+  -- InitData membangun ulang _data. Jangan suntik sebelum data server siap.
+  if entity.bInit ~= true then
+    return 0
+  end
+  if not force and wardrobeProbeValid(entity) then
+    return 0
+  end
+
+  local clean = M._state.wardrobeClean
+  if not force and type(clean) == "table" and clean.entity == entity
+    and clean.count == entity._DataCount then
+    return 0
+  end
+
+  local candidates = wardrobeCandidates(entity, cfg)
+  local getTableDataFn = nil
+  local cdt = getCDataTable()
+  if cdt and isFn(cdt.GetTableData) then
+    getTableDataFn = cdt.GetTableData
+  end
+
+  local injected = 0
+  local lastIns, lastRes = nil, nil
+  for i = 1, #candidates do
+    local res = candidates[i]
+    local ins = wardrobeFakeIns(res)
+    local maps = entity.InsIDToIndexMap
+    if ins and not (type(maps) == "table" and maps[ins] ~= nil) then
+      local ok, info = pcall(entity.AddData, entity, {
+        instid = ins,
+        res_id = res,
+        count = 1,
+        lock_cnt = 0,
+        isnew = 0,
+        valid_hours = 0,
+        expire_ts = 0,
+      })
+      if ok and type(info) == "table" then
+        if getTableDataFn and isFn(entity.LoadConfigForData) then
+          pcall(entity.LoadConfigForData, entity, info, getTableDataFn)
+        end
+        -- Cadangan kalau LoadConfigForData belum siap: isi field yang
+        -- dibaca filter tab.
+        if info.bConfigLoaded ~= true then
+          local row = getItemCfg(res)
+          local main, sub = wardrobeRowTabs(row)
+          if main ~= nil then
+            info.itemType = row.ItemType
+            info.itemSubType = row.ItemSubType
+            info.mainTabType = main
+            info.subTabType = sub
+            info.itemQuality = row.ItemQuality
+            info.bConfigLoaded = true
+          end
+        end
+        if info.bConfigLoaded == true then
+          injected = injected + 1
+          lastIns, lastRes = ins, res
+        end
+      end
+    end
+  end
+
+  if injected > 0 then
+    M._state.wardrobeProbe = { ins = lastIns, res = lastRes }
+    M._state.wardrobeClean = nil
+    M.stats.wardrobeInjected = (M.stats.wardrobeInjected or 0) + injected
+    trace("wardrobe inject %d item", injected)
+    postWardrobeUpdate()
+  else
+    -- Semua item sudah ada; hindari scan tabel Item setiap tick.
+    M._state.wardrobeClean = { entity = entity, count = entity._DataCount or 0 }
+  end
+  return injected
+end
+
+local injectWardrobe = function(force)
+  local cfg = M.config.wardrobe
+  if not M.started or not cfg.enabled or not cfg.inject then
+    return 0
+  end
+  local entity = getWardrobeEntity()
+  if not entity then
+    return 0
+  end
+  return injectWardrobeEntity(entity, force)
+end
+
+local function dropWardrobeReals(changelist)
+  local cfg = M.config.wardrobe
+  if not cfg.dropOnReal or type(changelist) ~= "table" then
+    return 0
+  end
+  local entity = getWardrobeEntity()
+  if not entity or not isFn(entity.RemoveData) then
+    return 0
+  end
+  local removed = 0
+  for _, v in pairs(changelist) do
+    if type(v) == "table" then
+      local res = tonumber(v.res_id or v.resID)
+      local cnt = tonumber(v.count)
+      if res and res >= 10000 and (cnt == nil or cnt > 0) then
+        local ins = wardrobeFakeIns(res)
+        local maps = entity.InsIDToIndexMap
+        if ins and type(maps) == "table" and maps[ins] ~= nil then
+          local ok = pcall(entity.RemoveData, entity, ins)
+          if ok then
+            removed = removed + 1
+          end
+        end
+      end
+    end
+  end
+  return removed
+end
+
+-- Hapus semua entri sintetis saat stop() supaya Inventory kembali ke data
+-- server. Dipanggil hanya kalau modul memang pernah menyuntik.
+local function cleanupWardrobe()
+  local entity = getWardrobeEntity()
+  if not entity or not isFn(entity.RemoveData) or type(entity._data) ~= "table" then
+    return 0
+  end
+  local ids = {}
+  for _, item in pairs(entity._data) do
+    if type(item) == "table" and isWardrobeFakeIns(item.insID) then
+      ids[#ids + 1] = item.insID
+    end
+  end
+  local removed = 0
+  for i = 1, #ids do
+    local ok = pcall(entity.RemoveData, entity, ids[i])
+    if ok then
+      removed = removed + 1
+    end
+  end
+  if removed > 0 then
+    M.stats.wardrobeRemoved = (M.stats.wardrobeRemoved or 0) + removed
+    postWardrobeUpdate()
+  end
+  return removed
+end
+
+local function wardrobeWornItem(subType)
+  local avatar = safeRequire("client.slua.logic.wardrobe.logic_wardrobe_avatar")
+  if type(avatar) ~= "table" or not isFn(avatar.GetCurrentWearPreview) then
+    return nil
+  end
+  local ok, wear = pcall(avatar.GetCurrentWearPreview, avatar, subType)
+  if ok and type(wear) == "table" and wear.insID then
+    return { instid = wear.insID, res_id = wear.resID }
+  end
+  return nil
+end
+
+-- Cache wrapper per fungsi asli supaya ticker tidak membuat closure baru
+-- setiap detik.
+local wardrobeWrapCache = setmetatable({}, { __mode = "k" })
+
+local function wardrobeWrap(old, factory)
+  if not isFn(old) then
+    return nil
+  end
+  local cached = wardrobeWrapCache[old]
+  if cached == nil then
+    cached = factory(old)
+    wardrobeWrapCache[old] = cached
+  end
+  return cached
+end
+
+local function wardrobeInitWrapper(old)
+  return function(self, ...)
+    local result = old(self, ...)
+    if M.started and M.config.wardrobe.enabled then
+      M._state.wardrobeProbe = nil
+      M._state.wardrobeClean = nil
+      pcall(injectWardrobe)
+    end
+    return result
+  end
+end
+
+local function wardrobeNotifyWrapper(old)
+  return function(self, changelist, ...)
+    local result = old(self, changelist, ...)
+    if M.started and M.config.wardrobe.enabled then
+      pcall(dropWardrobeReals, changelist)
+      M._state.wardrobeClean = nil
+      pcall(injectWardrobe)
+    end
+    return result
+  end
+end
+
+local function wardrobePutOnWrapper(old)
+  return function(self, insID, extra)
+    local cfg = M.config.wardrobe
+    if M.started and cfg.enabled and cfg.localEquip and isWardrobeFakeIns(insID) then
+      local item = getWardrobeItemByIns(insID)
+      if item then
+        local logic = (type(self) == "table" and isFn(self.on_puton_rsp)) and self or nil
+        if logic == nil then
+          logic = safeRequire(WARDROBE_LOGIC_PATH)
+        end
+        if type(logic) == "table" and isFn(logic.on_puton_rsp) then
+          local olditem = wardrobeWornItem(item.itemSubType)
+          M._state.wardrobeEquipping = true
+          local ok, err = pcall(logic.on_puton_rsp, logic, 0, {
+            instid = item.insID,
+            res_id = item.resID,
+            color = item.colorID,
+            pattern = item.patternID,
+          }, olditem, nil, extra)
+          M._state.wardrobeEquipping = false
+          if ok then
+            M.stats.wardrobeEquipped = (M.stats.wardrobeEquipped or 0) + 1
+            trace("wardrobe local equip %s", tostring(item.resID))
+            return true
+          end
+          addError("wardrobeEquip", err)
+        end
+      end
+    end
+    return old(self, insID, extra)
+  end
+end
+
+local function wardrobeHeadShowWrapper(old)
+  return function(...)
+    if M._state.wardrobeEquipping then
+      M.stats.wardrobeRpcBlocked = (M.stats.wardrobeRpcBlocked or 0) + 1
+      return
+    end
+    return old(...)
+  end
+end
+
+local function installWardrobe()
+  local cfg = M.config.wardrobe
+  if not M.started or not cfg.enabled then
+    return false
+  end
+
+  local mod = safeRequire(WARDROBE_DATA_PATH)
+  if type(mod) ~= "table" then
+    return false
+  end
+
+  local okInit = patchValue(mod, "InitHallDepotData",
+    wardrobeWrap(mod.InitHallDepotData, wardrobeInitWrapper),
+    "wardrobe", "WardrobeData.InitHallDepotData")
+  local okNotify = patchValue(mod, "OnHallDepotDataNotify",
+    wardrobeWrap(mod.OnHallDepotDataNotify, wardrobeNotifyWrapper),
+    "wardrobe", "WardrobeData.OnHallDepotDataNotify")
+  if okInit or okNotify then
+    M._installed.wardrobe = true
+  end
+
+  -- Modul logic hanya di-patch kalau sudah dimuat game. Memaksa require di
+  -- awal login bisa menarik macros/import yang belum siap.
+  local logic = package and package.loaded and package.loaded[WARDROBE_LOGIC_PATH]
+  if cfg.localEquip and type(logic) == "table" and isFn(logic.wardrobe_puton_req) then
+    patchValue(logic, "wardrobe_puton_req",
+      wardrobeWrap(logic.wardrobe_puton_req, wardrobePutOnWrapper),
+      "wardrobe", "WardrobeLogic.wardrobe_puton_req")
+  end
+
+  local handler = package and package.loaded and package.loaded[WARDROBE_HANDLER_PATH]
+  if cfg.localEquip and type(handler) == "table"
+    and isFn(handler.send_depot_set_head_show_req) then
+    patchValue(handler, "send_depot_set_head_show_req",
+      wardrobeWrap(handler.send_depot_set_head_show_req, wardrobeHeadShowWrapper),
+      "wardrobe", "WardRobeHandler.send_depot_set_head_show_req")
+  end
+
+  pcall(injectWardrobe)
+  return okInit or okNotify
+end
+
+-- ============================================================================
 -- 11. Fake gacha
 -- ============================================================================
 
@@ -2572,6 +3126,7 @@ local function installPending()
   if M.config.avatar.enabled then
     pcall(installAvatarClass)
   end
+  pcall(installWardrobe)
   pcall(installWeapon)
   pcall(installVehicle)
   pcall(installGlide)
@@ -2679,6 +3234,9 @@ function M.stop()
   M._timerGen = (M._timerGen or 0) + 1
   M._scheduledGen = nil
   pcall(restoreAll)
+  if M._installed.wardrobe then
+    pcall(cleanupWardrobe)
+  end
   M._installed = {}
   M._state = {}
   M._scanned = {}
@@ -2696,6 +3254,8 @@ end
 function M.refresh()
   M._configRevision = M._configRevision + 1
   M._cache = {}
+  M._state.wardrobeProbe = nil
+  M._state.wardrobeClean = nil
   if M.started then
     pcall(applyProfile)
     pcall(applyCurrency)
@@ -2719,6 +3279,40 @@ end
 
 function M.applyCosmetics()
   return applyPawnCosmetics(true)
+end
+
+-- Paksa injeksi ulang depot (item baru tetap idempoten: yang sudah ada
+-- dilewati lewat insID sintetis).
+function M.injectWardrobe()
+  return injectWardrobe(true)
+end
+
+-- Diagnostik depot: jumlah entri total, entri sintetis, dan probe injeksi.
+function M.wardrobeInfo()
+  local cfg = M.config.wardrobe
+  local entity = getWardrobeEntity()
+  local out = {
+    enabled = (cfg.enabled and cfg.inject) and true or false,
+    mode = cfg.mode,
+    entity = entity ~= nil,
+    total = 0,
+    fake = 0,
+    injected = M.stats.wardrobeInjected or 0,
+    equipped = M.stats.wardrobeEquipped or 0,
+    blocked = M.stats.wardrobeRpcBlocked or 0,
+    probe = M._state.wardrobeProbe ~= nil,
+  }
+  if entity and type(entity._data) == "table" then
+    for _, item in pairs(entity._data) do
+      if type(item) == "table" then
+        out.total = out.total + 1
+        if isWardrobeFakeIns(item.insID) then
+          out.fake = out.fake + 1
+        end
+      end
+    end
+  end
+  return out
 end
 
 function M.status()
@@ -2859,6 +3453,8 @@ function M.describe()
     st.stats.weaponInjected or 0, st.stats.vehicleInjected or 0,
     st.stats.glideInjected or 0, st.stats.grenadeInjected or 0,
     st.stats.fakeDraws or 0))
+  print(string.format("[UNLOCK470] wardrobe=%d equipped=%d",
+    st.stats.wardrobeInjected or 0, st.stats.wardrobeEquipped or 0))
   return st
 end
 
