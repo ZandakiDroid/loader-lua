@@ -756,6 +756,123 @@ local function InitializeOperationalStatsBypass()
     end)
 end
 
+-- ==========================================================
+-- [ANTICHEAT MODULE LOADER] build 4.7.0.21759
+-- Bypass ban + pengecekan pak dipindah ke anticheat.lua supaya bisa
+-- dipakai bersama mod lain dan tidak menambah panjang 2.lua.
+-- Urutan pemuatan: _G.AntiCheatBypass -> require("anticheat") ->
+-- file anticheat.lua di folder Saved/Paks (path yang sama dengan
+-- rapzhang_frienduid.txt) -> folder yang sama dengan chunk 2.lua.
+-- Kalau tidak ketemu, hanya dicetak peringatan; 2.lua tetap jalan.
+-- ==========================================================
+local AntiCheatFileName = "anticheat.lua"
+local AntiCheatSelfDir = nil
+local AntiCheatWarned = false
+
+pcall(function()
+    local info = debug and debug.getinfo and debug.getinfo(1, "S")
+    local src = info and info.source
+    if type(src) == "string" and src:sub(1, 1) == "@" then
+        AntiCheatSelfDir = src:match("^(.*[/\\])")
+    end
+end)
+
+local function GetAntiCheatPaths()
+    local pkgs = {
+        "com.tencent.ig",
+        "com.tencent.igfit",
+        "com.vng.pubgmobile",
+        "com.pubg.krmobile",
+        "com.rekoo.pubgm",
+        "com.pubg.imobile",
+    }
+    local paths = {}
+    if AntiCheatSelfDir then paths[#paths + 1] = AntiCheatSelfDir .. AntiCheatFileName end
+    for _, pkg in ipairs(pkgs) do
+        paths[#paths + 1] = "//storage/emulated/0/Android/data/" .. pkg .. "/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. AntiCheatFileName
+        paths[#paths + 1] = "/" .. pkg .. "/Documents/ShadowTrackerExtra/Saved/Paks/" .. AntiCheatFileName
+    end
+    paths[#paths + 1] = "//storage/emulated/0/Documents/ShadowTrackerExtra/Saved/Paks/" .. AntiCheatFileName
+    paths[#paths + 1] = "ShadowTrackerExtra/Saved/Paks/" .. AntiCheatFileName
+    paths[#paths + 1] = "../../ShadowTrackerExtra/Saved/Paks/" .. AntiCheatFileName
+    paths[#paths + 1] = AntiCheatFileName
+    paths[#paths + 1] = "./" .. AntiCheatFileName
+    pcall(function()
+        local home = os and os.getenv and os.getenv("HOME")
+        if home and home ~= "" then
+            table.insert(paths, 1, home .. "/Documents/ShadowTrackerExtra/Saved/Paks/puffer_temp/" .. AntiCheatFileName)
+            table.insert(paths, 1, home .. "/Documents/ShadowTrackerExtra/Saved/Paks/" .. AntiCheatFileName)
+        end
+    end)
+    return paths
+end
+
+local function LoadAntiCheatFromFile()
+    for _, path in ipairs(GetAntiCheatPaths()) do
+        local f = nil
+        pcall(function() f = io.open(path, "rb") end)
+        if f then
+            local src = nil
+            pcall(function() src = f:read("*a") end)
+            pcall(function() f:close() end)
+            if type(src) == "string" and #src > 0 then
+                local chunk, err = load(src, "@" .. path)
+                if chunk then
+                    local ok, runErr = pcall(chunk)
+                    local mod = rawget(_G, "AntiCheatBypass")
+                    if ok and type(mod) == "table" then
+                        print("[ANTICHEAT] dimuat dari " .. path)
+                        return mod
+                    end
+                    if not ok then print("[ANTICHEAT] error di " .. path .. ": " .. tostring(runErr)) end
+                else
+                    print("[ANTICHEAT] syntax error di " .. path .. ": " .. tostring(err))
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function LoadAntiCheatModule()
+    local existing = rawget(_G, "AntiCheatBypass")
+    if type(existing) == "table" and type(existing.Install) == "function" then return existing end
+
+    local okReq, mod = pcall(require, "anticheat")
+    if okReq and type(mod) == "table" and type(mod.Install) == "function" then return mod end
+    local afterRequire = rawget(_G, "AntiCheatBypass")
+    if type(afterRequire) == "table" and type(afterRequire.Install) == "function" then return afterRequire end
+
+    -- Nama alternatif: anticheat.lua hasil merge ACU biasa di-require sebagai
+    -- "AntiCheatUnified" (lihat header file-nya).
+    local okUnified, unified = pcall(require, "AntiCheatUnified")
+    if okUnified and type(unified) == "table" and type(unified.Install) == "function" then return unified end
+    local afterUnified = rawget(_G, "AntiCheatBypass")
+    if type(afterUnified) == "table" and type(afterUnified.Install) == "function" then return afterUnified end
+
+    local fromFile = LoadAntiCheatFromFile()
+    if fromFile then
+        pcall(function() package.loaded["anticheat"] = fromFile end)
+        return fromFile
+    end
+    return nil
+end
+
+_G.RapzhangLoadAntiCheat = function()
+    local mod = LoadAntiCheatModule()
+    if mod and type(mod.Install) == "function" then
+        pcall(mod.Install)
+        return mod
+    end
+    if not AntiCheatWarned then
+        AntiCheatWarned = true
+        print("[ANTICHEAT] " .. AntiCheatFileName .. " tidak ditemukan - bypass ban/pak check tidak aktif")
+    end
+    return nil
+end
+
+_G.RapzhangLoadAntiCheat()
+
 _G.StartBypass_VIP_v3 = function()
     pcall(function()
         print("[ULTIMATE BYPASS] Starting initialization...")
@@ -781,16 +898,14 @@ _G.StartBypass_VIP_v3 = function()
         InitializeKillAllSubsystems()
         InitializeOperationalStatsBypass()
         InitializeFinalProtection()
-        ClientEntryBypass()
-        HawkEyeBypass()
-        BanLogicBypass()
-        ReportSystemBypass()
-        TLogBypass()
-        DNSDeviceBypass()
-        GokubaBypass()
-        RacingAntiCheatBypass()
-        LoginModuleBypass()
-        NetworkBypass()
+        -- Fungsi-fungsi ini tidak didefinisikan di file ini (warisan mod lain),
+        -- jadi dipanggil hanya kalau ada. Sebelumnya panggilan nil di sini
+        -- menghentikan seluruh blok dan sisa bypass tidak pernah jalan.
+        for _, name in ipairs({"ClientEntryBypass", "HawkEyeBypass", "ReportSystemBypass", "TLogBypass", "DNSDeviceBypass", "GokubaBypass", "RacingAntiCheatBypass", "LoginModuleBypass"}) do
+            local fn = _G[name]
+            if type(fn) == "function" then pcall(fn) end
+        end
+        if _G.RapzhangLoadAntiCheat then pcall(_G.RapzhangLoadAntiCheat) end
         print("[ULTIMATE BYPASS] Complete - All Security Systems Disabled")
     end)
 end
@@ -13265,7 +13380,322 @@ _G.RapzhangAutoTextFeedback = (function()
     }
   end
 
+  -- [TELEMETRY REGION DETECTION]
+  -- Nama paket adalah sumber paling kuat: GetPublishRegion() bisa
+  -- mengembalikan GLOBAL/FIT untuk client Flash, sedangkan paketnya tetap
+  -- com.tencent.igfit. Karena itu paket diperiksa sebelum region.
+  local cachedPackageName = nil
+
+  local function normalizePackageText(value)
+    if value == nil then return nil end
+    local ok, text = pcall(tostring, value)
+    if not ok or text == nil then return nil end
+    text = text:gsub("[\r\n\t]+", " ")
+    text = text:match("^%s*(.-)%s*$") or text
+    if text == "" or text == "nil" then return nil end
+    return text
+  end
+
+  local function packageFromText(value)
+    local text = normalizePackageText(value)
+    if text == nil then return nil end
+    -- igfit harus dicek sebelum ig: com.tencent.ig adalah awalan igfit.
+    local known = {
+      "com.tencent.igfit",
+      "com.tencent.ig",
+      "com.pubg.imobile",
+      "com.pubg.krmobile",
+      "com.vng.pubgmobile",
+      "com.rekoo.pubgm",
+    }
+    for _, pkg in ipairs(known) do
+      if text:find(pkg, 1, true) then return pkg end
+    end
+    return nil
+  end
+
+  local function detectPackageName()
+    if cachedPackageName ~= nil then return cachedPackageName or nil end
+    local found = nil
+    local function consider(value)
+      if found ~= nil then return end
+      local pkg = packageFromText(value)
+      if pkg ~= nil then found = pkg end
+    end
+
+    -- Native Client: beberapa build menyediakan nama paket/bundle.
+    pcall(function()
+      local c = rawget(_G, "Client")
+      local kind = type(c)
+      if kind ~= "table" and kind ~= "userdata" then return end
+      for _, name in ipairs({
+        "GetPackageName", "GetAppPackageName", "GetBundleId",
+        "GetApplicationId", "GetAppId", "GetLuaRootDir",
+      }) do
+        local fn = c[name]
+        if type(fn) == "function" then
+          local ok, value = pcall(fn)
+          if ok then consider(value) end
+        end
+      end
+    end)
+
+    -- Global yang biasa dipakai loader/plugin.
+    for _, name in ipairs({
+      "PackageName", "PACKAGE_NAME", "AppPackageName", "APP_PACKAGE_NAME",
+      "GamePackageName", "GAME_PACKAGE_NAME", "BundleId", "BUNDLE_ID",
+    }) do
+      consider(rawget(_G, name))
+    end
+
+    -- Role data kadang menyimpan paket/channel.
+    pcall(function()
+      local dm = rawget(_G, "DataMgr")
+      local rd = dm and dm.roleData
+      if type(rd) ~= "table" then return end
+      for _, key in ipairs({
+        "packageName", "package_name", "package", "bundleId", "bundle_id",
+        "appId", "app_id", "channelName", "channel_name",
+      }) do
+        consider(rd[key])
+      end
+    end)
+
+    -- Chunk 2.lua biasanya dimuat dari path aplikasi; path itu menyimpan
+    -- nama paket walau GetPublishRegion() mengembalikan GLOBAL.
+    pcall(function()
+      local info = debug and debug.getinfo and debug.getinfo(3, "S")
+      if info and info.source then consider(info.source) end
+    end)
+
+    -- Proses Android sendiri: /proc/self/cmdline = nama paket (atau paket:sub).
+    pcall(function()
+      local file = io.open("/proc/self/cmdline", "rb")
+      if file then
+        local data = file:read("*a")
+        file:close()
+        consider(data)
+      end
+    end)
+
+    -- HOME sering berisi /data/user/0/<paket>/files.
+    pcall(function()
+      if os and os.getenv then
+        consider(os.getenv("HOME"))
+        consider(os.getenv("ANDROID_DATA"))
+        consider(os.getenv("EXTERNAL_STORAGE"))
+      end
+    end)
+
+    -- Probe terakhir: hanya data dir milik proses sendiri yang bisa dibuka.
+    if found == nil then
+      for _, pkg in ipairs({
+        "com.tencent.igfit", "com.tencent.ig",
+        "com.pubg.imobile", "com.pubg.krmobile",
+        "com.vng.pubgmobile", "com.rekoo.pubgm",
+      }) do
+        for _, root in ipairs({"/data/data/", "/data/user/0/"}) do
+          local ok, file = pcall(io.open, root .. pkg, "r")
+          if ok and file then
+            file:close()
+            found = pkg
+            break
+          end
+        end
+        if found ~= nil then break end
+      end
+    end
+
+    cachedPackageName = found or false
+    return found
+  end
+
+  local SERVER_REGION_LABELS = {
+    AS = "Asia", ASIA = "Asia", SEA = "Southeast Asia",
+    SOUTHEASTASIA = "Southeast Asia", SOUTHASIA = "South Asia",
+    EU = "Europe", EUROPE = "Europe", EMEA = "Europe/Middle East",
+    NA = "North America", NORTHAMERICA = "North America",
+    US = "North America", USA = "North America", CA = "North America",
+    SA = "South America", SOUTHAMERICA = "South America",
+    LATAM = "Latin America", BR = "Brazil", BRAZIL = "Brazil",
+    MX = "Mexico", MEXICO = "Mexico",
+    ME = "Middle East", MIDDLEEAST = "Middle East", MENA = "Middle East",
+    TR = "Turkey", TURKEY = "Turkey",
+    KRJP = "Korea/Japan", KOREAJAPAN = "Korea/Japan", JPKR = "Korea/Japan",
+    KR = "Korea", KOREA = "Korea",
+    JP = "Japan", JAPAN = "Japan",
+    VN = "Vietnam", VIETNAM = "Vietnam",
+    TW = "Taiwan/HK/MO", TAIWAN = "Taiwan/HK/MO", TWHKMO = "Taiwan/HK/MO",
+    HK = "Taiwan/HK/MO", MO = "Taiwan/HK/MO",
+    IN = "India", INDIA = "India",
+    CIS = "CIS/Russia", RU = "CIS/Russia", RUSSIA = "CIS/Russia",
+    OC = "Oceania", OCEANIA = "Oceania", AU = "Oceania", AUSTRALIA = "Oceania",
+    AF = "Africa", AFRICA = "Africa",
+    PK = "Pakistan", PAKISTAN = "Pakistan",
+    BD = "Bangladesh", BANGLADESH = "Bangladesh",
+    ID = "Indonesia", INDONESIA = "Indonesia",
+    TH = "Thailand", THAILAND = "Thailand",
+    PH = "Philippines", PHILIPPINES = "Philippines",
+    MY = "Malaysia", MALAYSIA = "Malaysia",
+    SG = "Singapore", SINGAPORE = "Singapore",
+  }
+
+  local function serverRegionLabel(value)
+    if value == nil then return nil end
+    local ok, raw = pcall(tostring, value)
+    if not ok or raw == nil then return nil end
+    local compact = raw:upper():gsub("[^A-Z0-9]", "")
+    if compact == "" or compact == "0" or compact == "NIL" then return nil end
+    if compact:match("^%d+$") then return nil end
+    for _ = 1, 2 do
+      local label = SERVER_REGION_LABELS[compact]
+      if label ~= nil then return label end
+      local stripped = compact
+      for _, prefix in ipairs({"ZONE", "AREA", "SERVER", "REGION", "RANK", "LOBBY", "MATCH"}) do
+        if compact:sub(1, #prefix) == prefix then
+          stripped = compact:sub(#prefix + 1)
+          break
+        end
+      end
+      if stripped ~= compact and stripped ~= "" then
+        compact = stripped
+      else
+        break
+      end
+    end
+    return nil
+  end
+
+  local function zoneConfigLabel(id)
+    local row = tableData("ZoneConfig", id)
+    if type(row) ~= "table" then return nil end
+    for _, key in ipairs({
+      "NameInEnglish", "EnglishName", "NameEn", "ZoneName", "AreaName",
+      "ShowName", "Name", "NameInChinese",
+    }) do
+      local value = row[key]
+      if value ~= nil and value ~= "" then
+        local label = serverRegionLabel(value)
+        if label ~= nil then return label end
+        local localized = locStr(value)
+        label = serverRegionLabel(localized)
+        if label ~= nil then return label end
+      end
+    end
+    for _, key in ipairs({
+      "Zone", "Area", "Code", "Region", "ZoneCode", "AreaCode", "ZoneId",
+    }) do
+      local label = serverRegionLabel(row[key])
+      if label ~= nil then return label end
+    end
+    return nil
+  end
+
+  local function detectServerRegion(result, sources, selfTm)
+    local zoneID = firstNumber(
+      g(result, "zone_id"), g(result, "zoneId"), g(result, "zoneid"),
+      g(result, "server_zone"), g(result, "serverZone"),
+      g(result, "area_id"), g(result, "areaId")
+    )
+    if zoneID == nil then
+      zoneID = firstNumber(valFrom(
+        sources, "zone_id", "zoneId", "zoneid", "server_zone", "serverZone",
+        "area_id", "areaId"
+      ))
+    end
+    if zoneID ~= nil then
+      local label = zoneConfigLabel(zoneID)
+      if label ~= nil then return label end
+    end
+
+    local zoneSystem = nil
+    pcall(function()
+      zoneSystem = mod("client.slua.logic.teamup.logic_zone")
+    end)
+    local zsKind = type(zoneSystem)
+    if zsKind == "table" or zsKind == "userdata" then
+      local code = nil
+      pcall(function()
+        if type(zoneSystem.GetChooseZone) == "function" then
+          code = zoneSystem.GetChooseZone()
+        end
+      end)
+      local label = serverRegionLabel(code)
+      if label ~= nil then return label end
+      local zid = tonumber(zoneSystem.nChooseZoneID)
+      if zid ~= nil then
+        label = zoneConfigLabel(zid)
+        if label ~= nil then return label end
+      end
+    end
+
+    for _, src in ipairs({result or false, selfTm or false}) do
+      if type(src) == "table" then
+        for _, key in ipairs({
+          "server_region", "serverRegion", "server_area", "serverArea",
+          "zone", "Zone", "area", "Area", "region", "Region",
+          "country", "Country",
+        }) do
+          local label = serverRegionLabel(g(src, key))
+          if label ~= nil then return label end
+        end
+      end
+    end
+
+    for _, key in ipairs({
+      "server_region", "serverRegion", "server_area", "serverArea",
+      "zone", "Zone", "area", "Area", "region", "Region",
+      "country", "Country",
+    }) do
+      local label = serverRegionLabel(valFrom(sources, key))
+      if label ~= nil then return label end
+    end
+
+    local found = nil
+    pcall(function()
+      local dm = rawget(_G, "DataMgr")
+      local rd = dm and dm.roleData
+      if type(rd) ~= "table" then return end
+      for _, key in ipairs({
+        "server_region", "serverRegion", "server_area", "serverArea",
+        "zone", "Zone", "area", "Area", "region", "Region",
+        "country", "Country", "zone_id", "zoneId", "area_id", "areaId",
+      }) do
+        local value = rd[key]
+        if type(value) == "number" then
+          local label = zoneConfigLabel(value)
+          if label ~= nil then found = label; return end
+        end
+        local label = serverRegionLabel(value)
+        if label ~= nil then found = label; return end
+      end
+    end)
+    if found ~= nil then return found end
+
+    -- Region publik hanya dipakai kalau bentuknya area rank (AS/EU/NA/...),
+    -- bukan GLOBAL/FIT yang merupakan variant, bukan server rank.
+    local label = serverRegionLabel(detectRegion())
+    if label ~= nil then return label end
+
+    return nil
+  end
+
   local function detectGameVariant()
+    local package = detectPackageName()
+    if package == "com.tencent.igfit" then
+      return "PUBGM: Flash"
+    elseif package == "com.tencent.ig" then
+      return "PUBGM: Global"
+    elseif package == "com.pubg.imobile" then
+      return "PUBGM: India"
+    elseif package == "com.pubg.krmobile" then
+      return "PUBGM: KR"
+    elseif package == "com.vng.pubgmobile" then
+      return "PUBGM: VN"
+    elseif package == "com.rekoo.pubgm" then
+      return "PUBGM: TW/HK/MO"
+    end
+
     local region = detectRegion()
     local regionMap = {
       JAPAN = "PUBGM: Japan",
@@ -13273,8 +13703,8 @@ _G.RapzhangAutoTextFeedback = (function()
       VNG = "PUBGM: VN",
       TW = "PUBGM: TW/HK/MO",
       GLOBAL = "PUBGM: Global",
-      FIT = "PUBGM: Global",
-      FITCE = "PUBGM: Global",
+      FIT = "PUBGM: Flash",
+      FITCE = "PUBGM: Flash",
       BGMILITE = "PUBGM: India",
       BLUEHOLE = "PUBGM: Global",
       CE = "PUBGM: CE",
@@ -13321,7 +13751,7 @@ _G.RapzhangAutoTextFeedback = (function()
           or text:match("[^%a]tw[^%a]") or text:match("^tw$") then
         return "PUBGM: TW/HK/MO"
       end
-      if text:find("com.tencent.igfit", 1, true) then
+      if text:find("com.tencent.igfit", 1, true) or text:find("igfit", 1, true) then
         return "PUBGM: Flash"
       end
       if text:find("com.pubg.imobile", 1, true) or text:find("bgmi", 1, true)
@@ -13636,6 +14066,7 @@ _G.RapzhangAutoTextFeedback = (function()
     end
     d.reporterUIDMasked = maskUID(d.myUID)
     d.variant = detectGameVariant()
+    d.serverRegion = detectServerRegion(result, sources, selfTm)
     d.region = detectRegion()
     d.clientVersion = clientVersion()
     local device = detectDevice()
@@ -13873,6 +14304,7 @@ _G.RapzhangAutoTextFeedback = (function()
     bullet("Player", "<code>" .. esc(clip(maskPlayerName(d.myName) or "Unknown", 48)) .. "</code>")
     bullet("UID", "<code>" .. esc(d.reporterUIDMasked or "unknown") .. "</code>")
     bullet("Variant", esc(d.variant or "PUBGM: Unknown"))
+    bullet("Server", esc(d.serverRegion or "Unknown"))
     if (d.variant == nil or d.variant == "PUBGM: Unknown") and d.region then
       bullet("Region", esc(d.region))
     end
@@ -14075,6 +14507,7 @@ _G.RapzhangAutoTextFeedback = (function()
     add("📊 <b>REPORTER</b>")
     bullet("Name", esc(clip(maskPlayerName(d.reporterName) or "Player", 48)))
     bullet("UID", esc(d.reporterUIDMasked or "unknown"))
+    bullet("Server", esc(d.serverRegion or "Unknown"))
     bullet("Kills", fmtInt(d.kills))
     if d.ur then
       bullet("Ladder", "Ultimate Royale")
@@ -14693,6 +15126,8 @@ local function MainLoop()
     end)
     -- Auto Parachute harus tetap jalan walau pawn belum siap (guard internal).
     if _G.RapzhangAutoParachuteTick then pcall(_G.RapzhangAutoParachuteTick) end
+    -- Ban + pak check bypass: pasang ulang setelah modul game selesai load.
+    if _G.RapzhangBanPakTick then pcall(_G.RapzhangBanPakTick) end
 
     if _G.RapzhangState.CustomTextData == nil then 
         _G.RapzhangState.CustomTextData = {OuterSpeed = 10, InnerSpeed = 10, HRecoil = 0.3, VRecoil = 0.3, MagicHead = 1.0, MagicBody = 1.0, MagicLegs = 1.0, IpadViewFOV = 120,
@@ -15400,13 +15835,18 @@ function X3ExtraRuntimeInit()
         "r.StaticMeshForceLODMaterialBias 2",
         "s.EnableOverrideVerySmoothMaterial 1",
         "r.DisableLensFlareWhenBeginPlay 1",
-        -- Tekstur benar-benar low: mip dipaksa turun, anisotropic dimatikan,
-        -- dan jarak streaming dikurangi. Efeknya tekstur jauh lebih blur
-        -- (hemat bandwidth/RAM) tetapi geometri dan jarak pandang tetap.
-        "r.Streaming.MipBias 2",
-        "r.MipMapLODBias 1",
+        -- SUPER POTATO TEXTURE: mip dipaksa turun jauh lebih agresif,
+        -- anisotropic dimatikan, pool tekstur dikecilkan, dan mip dibuang
+        -- saat melebihi pool. Efeknya tekstur mendekati PUBG Flash
+        -- "Super Potato": blur/blocky, tetapi geometri dan view distance
+        -- tidak disentuh.
+        "r.Streaming.MipBias 4",
+        "r.MipMapLODBias 3",
         "r.MaxAnisotropy 0",
-        "r.Streaming.Boost 0.5",
+        "r.Streaming.Boost 0.25",
+        "r.Streaming.PoolSize 256",
+        "r.Streaming.MaxEffectiveScreenSize 480",
+        "r.Streaming.DropMips 1",
     }
     local SuperDuper_OFF = {
         "r.Fog 1",
@@ -15441,6 +15881,9 @@ function X3ExtraRuntimeInit()
         "r.MipMapLODBias 0",
         "r.MaxAnisotropy 4",
         "r.Streaming.Boost 1",
+        "r.Streaming.PoolSize 1000",
+        "r.Streaming.MaxEffectiveScreenSize 0",
+        "r.Streaming.DropMips 0",
     }
     local function ApplySuperDuperCommands(gameInstance, commands)
         if not gameInstance or type(gameInstance.ExecuteCMD) ~= "function" then return end
@@ -15458,6 +15901,17 @@ function X3ExtraRuntimeInit()
             local Logic = require("client.slua.logic.setting.logic_setting_graphics")
             local Quality = import("ERenderQuality")
             if not DB or not Logic or not Quality then return false end
+
+            -- Kalau build Flash menyediakan enum Super Potato, pakai itu;
+            -- kalau tidak, VERYSMOOTH tetap kualitas terendah yang aman.
+            local lowestQuality = Quality.VERYSMOOTH
+            for _, enumName in ipairs({"SUPERPOTATO", "SUPER_POTATO", "POTATO"}) do
+                local okEnum, value = pcall(function() return Quality[enumName] end)
+                if okEnum and value ~= nil then
+                    lowestQuality = value
+                    break
+                end
+            end
 
             -- Simpan setting grafis asli sekali untuk pemulihan saat OFF.
             if not st.saved then
@@ -15491,7 +15945,7 @@ function X3ExtraRuntimeInit()
 
             if on then
                 -- Jalur asli Lua: kualitas terendah. FPS/view distance tidak disentuh.
-                if DB.UpdateSelectedQuality then DB:UpdateSelectedQuality(Quality.VERYSMOOTH, true) end
+                if DB.UpdateSelectedQuality then DB:UpdateSelectedQuality(lowestQuality, true) end
                 if DB.UpdateUIData then
                     DB:UpdateUIData(DB.SelectedShadow, false)
                     DB:UpdateUIData(DB.SelectedWaterReflection, false)
@@ -15500,7 +15954,7 @@ function X3ExtraRuntimeInit()
                     DB:UpdateUIData(DB.RenderMSAAValue, 0)
                 end
                 if DB.SaveChanges then DB:SaveChanges() end
-                if Logic.SetQuality then Logic.SetQuality(gi, Quality.VERYSMOOTH, style, false, 0) end
+                if Logic.SetQuality then Logic.SetQuality(gi, lowestQuality, style, false, 0) end
                 ApplySuperDuperCommands(gi, SuperDuper_ON)
             else
                 -- Pulihkan hanya nilai yang disimpan; FPS dan view distance tidak pernah diubah.
