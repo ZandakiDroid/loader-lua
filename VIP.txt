@@ -1,2 +1,2 @@
-anticheat_470.lua
+anticheat.lua
 2.lua
