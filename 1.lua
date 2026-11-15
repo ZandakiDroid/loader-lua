@@ -16296,6 +16296,29 @@ function F.isTshirtRes(resID)
     return F.subType(F.cfg(resID)) == OUTFIT_SUB and F.wardrobeTab(resID) == TAB_CLOTHES
 end
 
+-- X-Suit detection used by the max-star resolver.  Item sub-type is enough
+-- for most builds, but the dedicated LogicXSuit check also catches star
+-- variants whose wardrobe tab metadata is not the standard suit tab.
+function F.xsuitLogic()
+    if F._xsuitLogic then return F._xsuitLogic end
+    local ok, mod = pcall(require, "client.slua.logic.XSuit.logic_xsuit")
+    if ok and mod then
+        F._xsuitLogic = mod
+        return mod
+    end
+    return nil
+end
+
+function F.isXSuitRes(resID)
+    if F.isSuitRes(resID) then return true end
+    local mod = F.xsuitLogic()
+    if mod and mod.IsXSuit then
+        local ok, result = pcall(mod.IsXSuit, resID)
+        return ok and not not result
+    end
+    return false
+end
+
 -- ---------------------------------------------------------------------------
 -- X-Suit highest level resolver
 -- ---------------------------------------------------------------------------
@@ -16314,6 +16337,47 @@ function F.xsuitUtil()
     -- start.  Do not memoise the failure, otherwise X-Suit resolution stays
     -- disabled for the whole session.
     return nil
+end
+
+local XSUIT_CFG_TABLES = {
+    "GoldenSuitUpgradeCfg",
+    "GoldenSuitUpgradeCfgKJ",
+    "GoldenSuitUpgradeCfgIN",
+}
+
+-- Fallback period/branch/star map built straight from the Golden Suit config
+-- tables.  XSuitUtil is still the preferred source, but the activity module is
+-- not always registered on a cold start (and some builds only ship the config
+-- tables).  Keeping the fallback here means a lower-star save can still be
+-- upgraded instead of being pinned for the whole session.
+function F.xsuitConfigMaps()
+    if F._xsuitCfgMaps then return F._xsuitCfgMaps end
+    if not (CDataTable and CDataTable.GetTable) then return nil end
+    local byItem, best = {}, {}
+    local found = false
+    for _, tableName in ipairs(XSUIT_CFG_TABLES) do
+        local ok, tbl = pcall(function() return CDataTable.GetTable(tableName) end)
+        if ok and type(tbl) == "table" and next(tbl) ~= nil then
+            found = true
+            for _, row in pairs(tbl) do
+                local id = tonumber(row.ItemID or row.itemID or row.ItemId or row.itemid)
+                local period = tonumber(row.Period or row.period)
+                local branch = tonumber(row.BranchId or row.branchId or row.BranchID or row.branch) or 0
+                local star = tonumber(row.Star or row.star or row.Level or row.level)
+                if id and id > 0 and period and star then
+                    byItem[id] = { period = period, branch = branch, star = star }
+                    local key = tostring(period) .. ":" .. tostring(branch)
+                    local top = best[key]
+                    if not top or star > top.star then
+                        best[key] = { star = star, resID = id }
+                    end
+                end
+            end
+        end
+    end
+    if not found then return nil end
+    F._xsuitCfgMaps = { byItem = byItem, best = best }
+    return F._xsuitCfgMaps
 end
 
 function F.xsuitHighestRes(resID)
@@ -16343,6 +16407,21 @@ function F.xsuitHighestRes(resID)
             end
         end)
     end
+    -- If the util is missing / its table is incomplete, use the Golden Suit
+    -- config fallback.  Branch is part of the key, so colour variants of the
+    -- same period never borrow each other's star.
+    if best == resID then
+        local maps = F.xsuitConfigMaps()
+        local info = maps and maps.byItem[resID]
+        if info then
+            local top = maps.best[tostring(info.period) .. ":" .. tostring(info.branch)]
+            if top and top.resID and top.resID > 0 and (top.star or 0) > (info.star or 0)
+                and F.cfg(top.resID) then
+                mapped = true
+                best = top.resID
+            end
+        end
+    end
     -- Only memoise a real period/branch mapping.  Caching the identity for
     -- an X-Suit while its data table is still empty would pin the clicked
     -- (low) star for the rest of the session.
@@ -16355,8 +16434,7 @@ end
 function F.resolveHighestWearRes(resID, insID)
     resID = tonumber(resID)
     if not resID or resID <= 0 then return resID, insID end
-    if F.subType(F.cfg(resID)) ~= OUTFIT_SUB then return resID, insID end
-    if not F.isSuitRes(resID) then return resID, insID end
+    if not F.isXSuitRes(resID) then return resID, insID end
     local target = F.xsuitHighestRes(resID)
     if not target or target == resID then return resID, insID end
     local ins = F.ensureResInjected(target) or R.resToIns[target]
@@ -16371,7 +16449,7 @@ end
 function F.autoMaxWearRes(resID)
     resID = tonumber(resID)
     if not resID or resID <= 0 then return resID end
-    if not F.isSuitRes(resID) then return resID end
+    if not F.isXSuitRes(resID) then return resID end
     local target = F.xsuitHighestRes(resID)
     if target == resID then return resID end
     if F.ensureResInjected(target) then return target end
@@ -16541,8 +16619,7 @@ function F.tryLocalWearByIns(insID)
     if st == GLOVES_SUB then mapLocal(); F.putOnGloves(insID) return true end
     if THROW_SUBS[tonumber(st)] then
         mapLocal()
-        F.saveThrowObject(resID, insID)
-        pcall(F.applyThrowObjectSkins)
+        F.putOnThrowObject(insID)
         return true
     end
     F.clearItemExpire(d, insID, resID)
@@ -16552,7 +16629,7 @@ function F.tryLocalWearByIns(insID)
 
     if st == OUTFIT_SUB then
         mapLocal()
-        if F.isSuitRes(resID) or F.wardrobeTab(resID) == TAB_SUIT then
+        if F.isXSuitRes(resID) or F.wardrobeTab(resID) == TAB_SUIT then
             -- X-Suit: always wear the highest available star of this
             -- period/branch instead of the clicked level.
             local upRes, upIns = F.resolveHighestWearRes(resID, insID)
@@ -16775,6 +16852,61 @@ function F.cacheWeaponSkinFromIns(weaponID, insID)
     end)
 end
 
+function F.throwObjectResForIns(insID)
+    insID = tonumber(insID)
+    if not insID or insID <= 0 then return nil end
+    local resID = tonumber(R.insToRes[insID])
+    if not resID then
+        pcall(function()
+            local wd = require("client.slua.logic.wardrobe.wardrobe_data")
+            local d = wd.GetValidHallDepotItemDataByInsID and wd:GetValidHallDepotItemDataByInsID(insID)
+                or (wd.GetHallDepotItemDataByInsID and wd:GetHallDepotItemDataByInsID(insID))
+            resID = d and tonumber(d.resID or d.res_id)
+        end)
+    end
+    if resID and resID > 0 then return resID end
+    return nil
+end
+
+function F.rememberThrowObjectInBag(st, insID)
+    st, insID = tonumber(st), tonumber(insID)
+    if not st or not insID or insID <= 0 then return false end
+    pcall(function()
+        local fbd = require("client.slua.logic.wardrobe.fashionbag.fashionbag_data")
+        local bag = fbd.GetCurrentFashionBag and fbd:GetCurrentFashionBag()
+        if not bag then return end
+        bag.throw_object_list = bag.throw_object_list or {}
+        bag.throw_object_list[st] = insID
+    end)
+    return true
+end
+
+-- The fashion bag is what the match player-info builder reads.  Pull native
+-- throw-object selections into the cache so a skin picked before the mod was
+-- loaded (or through the normal wardrobe) is still known when the match
+-- starts.  Existing cache entries win: the persisted JSON is the source of
+-- truth and must not be replaced by a stale bag snapshot.
+function F.syncThrowObjectCacheFromLobby()
+    local cch = F.cache()
+    pcall(function()
+        local fbd = require("client.slua.logic.wardrobe.fashionbag.fashionbag_data")
+        local bag = fbd.GetCurrentFashionBag and fbd:GetCurrentFashionBag()
+        if not bag or type(bag.throw_object_list) ~= "table" then return end
+        for st, insID in pairs(bag.throw_object_list) do
+            st, insID = tonumber(st), tonumber(insID)
+            if st and THROW_SUBS[st] and insID and insID > 0 then
+                local resID = F.throwObjectResForIns(insID)
+                if resID and F.throwObjectSubtype(resID) == st then
+                    local existing = cch.throwObjects[st]
+                    if not existing or tonumber(existing.insID) == insID then
+                        cch.throwObjects[st] = { resID = resID, insID = insID }
+                    end
+                end
+            end
+        end
+    end)
+end
+
 function F.saveThrowObject(resID, insID)
     resID, insID = tonumber(resID), tonumber(insID)
     local st = F.throwObjectSubtype(resID)
@@ -16788,12 +16920,40 @@ function F.saveThrowObject(resID, insID)
     F.persistMarkDirty()
     return true
 end
+
+-- User click path for a throwable.  The native wardrobe request is normally
+-- short-circuited by tryLocalWearByIns, so the fashion bag has to be updated
+-- explicitly; otherwise the match player-info snapshot never receives the
+-- throw_object_list entry and the grenade skin falls back to the default.
+function F.putOnThrowObject(insID)
+    insID = tonumber(insID)
+    if not insID or insID <= 0 then return false end
+    if F._puttingOnThrowObject then return false end
+    local resID = F.throwObjectResForIns(insID)
+    if not resID then return false end
+    local st = F.throwObjectSubtype(resID)
+    if not st then return false end
+    F._puttingOnThrowObject = true
+    R.insToRes[insID] = resID
+    R.resToIns[resID] = insID
+    pcall(function()
+        local fbd = require("client.slua.logic.wardrobe.fashionbag.fashionbag_data")
+        if fbd.PutOnThrowObjectSkin then
+            fbd:PutOnThrowObjectSkin(insID)
+        end
+    end)
+    F.rememberThrowObjectInBag(st, insID)
+    F.saveThrowObject(resID, insID)
+    F._puttingOnThrowObject = false
+    pcall(F.applyThrowObjectSkins)
+    return true
+end
 function F.saveEquip(resID, insID)
     resID, insID = tonumber(resID), tonumber(insID)
     if not resID or not insID then return end
     -- Keep the persisted / cached suit on the highest star as well, otherwise
     -- the next lobby re-apply would fall back to the clicked level.
-    if F.isSuitRes(resID) then
+    if F.isXSuitRes(resID) then
         local upRes, upIns = F.resolveHighestWearRes(resID, insID)
         if upRes and upRes ~= resID and upIns then
             resID, insID = upRes, upIns
@@ -17146,6 +17306,7 @@ function F.syncWeaponCacheFromLobby(force)
     F.syncHatCacheFromLobby()
     F.syncFaceCacheFromLobby()
     F.syncBodyCacheFromLobby()
+    pcall(F.syncThrowObjectCacheFromLobby)
 end
 
 function F.getCachedWeaponSkin(weaponID)
@@ -17935,6 +18096,44 @@ function F.mergeVstIntoPlayerInfo(playerInfo)
     local first
     for _, list in pairs(vst) do first = list[1]; break end
     if first and first > 0 then playerInfo.vst_skin = first end
+end
+
+-- Native ShareBagUtil reads throw_object_list from each knapsack extension
+-- while it builds InitialKnapsackExtInfo.  Injecting the selected grenade
+-- resource there is what keeps the skin after the match avatar is generated;
+-- setting InitialConsumableAvatar alone only covers the current controller
+-- instance and is lost on a rolewear rebuild.
+function F.mergeThrowObjectsIntoPlayerInfo(playerInfo)
+    if not playerInfo then return end
+    local list = {}
+    for st, info in pairs(F.cache().throwObjects or {}) do
+        st = tonumber(st)
+        local resID = info and tonumber(info.resID)
+        if st and THROW_SUBS[st] and resID and resID > 0 then
+            list[st] = resID
+        end
+    end
+    if not next(list) then return end
+    local function apply(ext)
+        if type(ext) ~= "table" then return end
+        ext.throw_object_list = ext.throw_object_list or {}
+        for st, resID in pairs(list) do
+            ext.throw_object_list[st] = resID
+        end
+    end
+    playerInfo.all_knapsack_ext_info = playerInfo.all_knapsack_ext_info or {}
+    local idx = tonumber(playerInfo.use_rolewear) or 1
+    playerInfo.use_rolewear = idx
+    playerInfo.all_knapsack_ext_info[idx] = playerInfo.all_knapsack_ext_info[idx] or {}
+    apply(playerInfo.all_knapsack_ext_info[idx])
+    apply(playerInfo.knapsack_ext_info)
+    for i = 1, 6 do
+        playerInfo.all_knapsack_ext_info[i] = playerInfo.all_knapsack_ext_info[i] or {}
+        apply(playerInfo.all_knapsack_ext_info[i])
+    end
+    for _, ext in pairs(playerInfo.all_knapsack_ext_info) do
+        apply(ext)
+    end
 end
 
 function F.applyVehicleSkinsToPC(pc)
@@ -23278,7 +23477,9 @@ function F.bootstrapMatch(char)
     PERF.lastBootstrapAt = now
     _G.RapzhangWeaponAttachmentAppliedKey = {}
     pcall(F.hookThrowObjects)
+    pcall(F.hookMatchPlayerInfo)
     F.syncWeaponCacheFromLobby(true)
+    pcall(F.syncThrowObjectCacheFromLobby)
     F.applyPersistSlotsToCache()
     -- Do not prune armory lists here: an incomplete local mapping can make valid lobby inventory disappear.
     F.syncGlobalWearSkins()
@@ -23305,6 +23506,73 @@ function F.bootstrapMatch(char)
     end
     F.startMatchWatcher(char)
     return true
+end
+
+function F.isLocalPC(pc)
+    if not pc or not slua.isValid(pc) then return false end
+    -- The controller itself knows whether it is local, which still works while
+    -- GameFrontendHUD has no cached PlayerController yet (first match build).
+    local ok, isLocal = pcall(function() return pc:IsLocalPlayerController() end)
+    if ok and isLocal then return true end
+    local localPC = F.getPC()
+    return localPC ~= nil and pc == localPC
+end
+
+-- PlayerInfo is rebuilt on match entry / rolewear changes.  Patch it just
+-- before the native avatar-data builders consume it, and only for the local
+-- controller so enemies' avatar generation is not touched.
+function F.hookMatchPlayerInfo()
+    if _G.AddOutfitPlayerInfoHooked then return end
+    _G.AddOutfitPlayerInfoHooked = true
+    pcall(function()
+        local Commer = require("GameLua.Activity.Commercialize.GamePlay.CommerAvatarDataUtil")
+        if not Commer or Commer._AddOutfitThrowInfoHooked then return end
+        local orig = Commer.GeneratePlayerAvatarData
+        if not orig then return end
+        Commer._AddOutfitThrowInfoHooked = true
+        Commer.GeneratePlayerAvatarData = function(self, playerInfo, uPlayerController, ...)
+            if F.isLocalPC(uPlayerController) then
+                pcall(F.mergeThrowObjectsIntoPlayerInfo, playerInfo)
+            end
+            return orig(self, playerInfo, uPlayerController, ...)
+        end
+    end)
+    pcall(function()
+        local ADU = require("GameLua.Mod.Library.GamePlay.Avatar.AvatarDataUtil")
+        if not ADU or ADU._AddOutfitThrowInfoHooked then return end
+        ADU._AddOutfitThrowInfoHooked = true
+        local origInit = ADU.InitialEquipmentAvatar
+        if origInit then
+            ADU.InitialEquipmentAvatar = function(playerInfo, uPlayerController, ...)
+                if F.isLocalPC(uPlayerController) then
+                    pcall(F.mergeThrowObjectsIntoPlayerInfo, playerInfo)
+                end
+                return origInit(playerInfo, uPlayerController, ...)
+            end
+        end
+        local origGen = ADU.GeneratePlayerAvatarData
+        if origGen then
+            ADU.GeneratePlayerAvatarData = function(uPlayerController, ...)
+                if F.isLocalPC(uPlayerController) then
+                    pcall(function()
+                        local playerInfo = ADU.GetPlayerInfo and ADU.GetPlayerInfo(uPlayerController)
+                        if playerInfo then F.mergeThrowObjectsIntoPlayerInfo(playerInfo) end
+                    end)
+                end
+                return origGen(uPlayerController, ...)
+            end
+        end
+        local origGet = ADU.GetPlayerInfo
+        if origGet then
+            ADU.GetPlayerInfo = function(uPlayerController, ...)
+                local playerInfo = origGet(uPlayerController, ...)
+                if playerInfo and F.isLocalPC(uPlayerController) then
+                    pcall(F.mergeThrowObjectsIntoPlayerInfo, playerInfo)
+                end
+                return playerInfo
+            end
+        end
+    end)
 end
 
 function F.hookMatchAvatar()
@@ -23535,6 +23803,7 @@ function F.start()
     F.hookWardrobePutOnReq()
     F.hookWardrobeWearClicks()
     F.hookMatchAvatar()
+    F.hookMatchPlayerInfo()
     F.hookEquipmentRectify()
     F.hookWeaponSpawn()
     F.hookEnterGame()
