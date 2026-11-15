@@ -1,3 +1,2 @@
 anticheat.lua
 2.lua
-1.lua
