@@ -19,7 +19,7 @@
 
 local F = {}
 _G.AddOutfit = F
-F.version = "4.7-simple-r1"
+F.version = "4.7-simple-r2"
 
 local function log(...)
     if _G.RAPZHANG_DEBUG then print("[AddOutfit]", ...) end
@@ -2185,18 +2185,33 @@ function F.xsuitUtil()
     return nil
 end
 
+-- X-Suit dikenali dari tabel upgrade (Period/Branch/Star), modul X-Suit, atau
+-- util period/branch — bukan dari katalog Item.  Dua alasan:
+--   * login tidak perlu membaca tabel Item sama sekali;
+--   * hasilnya tetap benar walau tabel Item belum siap saat file di-load.
+-- Item suit biasa yang tidak ada di konfigurasi X-Suit cukup dianggap bukan
+-- X-Suit: satu-satunya efeknya adalah resolver bintang tidak dipanggil, dan
+-- resolver itu memang tidak punya pasangan period/branch untuk item tersebut.
 function F.isXSuitRes(resID)
     resID = tonumber(resID)
     if not resID or resID <= 0 then return false end
-    if not F.isSuitRes(resID) then return false end
+
     local mod = F.xsuitLogic()
     if mod and mod.IsXSuit then
         local ok, result = pcall(mod.IsXSuit, resID)
         if ok and result then return true end
     end
-    -- Item suit (bukan t-shirt) dianggap kandidat X-Suit; resolver tetap
-    -- memakai tabel period/branch sehingga resource non-X-Suit tidak berubah.
-    return true
+
+    local maps = F.xsuitConfigMaps()
+    if maps then return maps.byItem[resID] ~= nil end
+
+    -- Build tanpa tabel GoldenSuitUpgradeCfg: pakai util period/branch.
+    local util = F.xsuitUtil()
+    if util and util.GetPeriodByItemId then
+        local ok, period = pcall(function() return util:GetPeriodByItemId(resID) end)
+        if ok and period then return true end
+    end
+    return false
 end
 
 function F.xsuitConfigMaps()
@@ -3486,7 +3501,10 @@ function F.start()
     S.started = true
     pcall(F.installHooks)
     pcall(F.persistLoad)
-    pcall(F.normalizePersisted)
+    -- Normalisasi nilai tersimpan sengaja tidak dijalankan di sini: dia butuh
+    -- tabel upgrade + baris Item untuk membuat instance bintang/level
+    -- tertinggi, dan itu pekerjaan katalog.  Dijalankan di tick lobby di
+    -- bawah, setelah semua tabel dan depot siap.
     pcall(F.syncGlobalWearSkins)
     pcall(F.startMatchWatcher)
 
@@ -3498,10 +3516,13 @@ function F.start()
     F.later(20.0, function() pcall(F.installHooks) end)
 
     -- Pulihkan pilihan tersimpan setelah lobby siap (beberapa kali, karena
-    -- depot/avatar bisa di-init ulang oleh game saat login).
+    -- depot/avatar bisa di-init ulang oleh game saat login).  Normalisasi
+    -- ikut di sini supaya load pertama tetap nol akses katalog.
     for _, delay in ipairs({ 2.0, 6.0, 12.0 }) do
         F.later(delay, function()
-            if F.isInLobby() then pcall(F.restoreLobby) end
+            if not F.isInLobby() then return end
+            pcall(F.normalizePersisted)
+            pcall(F.restoreLobby)
         end)
     end
 end
