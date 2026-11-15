@@ -116,6 +116,7 @@ end
 
 -- [[ AddOutfit v7.5 — Integrates Skin selection via Wardrobe ]]
 local F = {}
+F.version = "4.7-dynamic-1"
 local DEBUG = false  
 function F.log(...)
     if DEBUG then print("[AddOutfit]", ...) end
@@ -148,24 +149,90 @@ local MATCH_CONFIG = {
 -- Dibaca lazily dari F.injectAll() saat WardrobeDataEntity:InitData, jadi tidak
 -- ada biaya katalog saat chunk di-load.
 -- ============================================================================
+-- ============================================================================
+-- Katalog item dinamis - pengganti daftar ID statis (15.957 baris).
+-- ----------------------------------------------------------------------------
+-- Logika dasar dari skinautoload, ditambah fallback pembacaan:
+--   * baca tabel "Item" (bentuk map, array, atau wrapper slua Num/Get);
+--   * filter baris wardrobe (BPID ~= 0 atau WardrobeMainTab ~= 0);
+--   * kalau hasilnya sedikit / tabel belum terbaca, coba GetTableByFilter dan
+--     GetTableDataByFilter per halaman/tab wardrobe;
+--   * tambah item yang dirujuk WeaponSkinMapping / BackpackMapping /
+--     GoldenSuitUpgradeCfg, hanya kalau barisnya ada di tabel Item;
+--   * buang Lv1/Lv2 yang punya Lv3, lalu urutkan supaya insID deterministik.
+-- Pencarian diulang setiap kali wardrobe dibuka sampai katalog terisi.
+-- ============================================================================
 local ITEMS = {}
 local _itemsLoaded = false
+local _scanAttempts = 0
+local _filterScans = 0
 
+-- entity yang sudah di-inject, supaya wardrobe tidak menjalankan loop 16 ribu
+-- item berulang kali. Weak key: entity lama boleh dibuang GC.
+F.injectedEntities = setmetatable({}, { __mode = "k" })
+
+local function _diag(msg)
+    F._diagCount = (F._diagCount or 0) + 1
+    if F._diagCount > 6 then return end
+    pcall(print, "[AddOutfit] katalog:", msg)
+end
+
+-- Terima bentuk tabel biasa, array, atau wrapper slua yang punya Num()/Get(i)
+-- atau Length()/Get(i). Mengembalikan nil kalau tidak ada data.
 local function _readTable(name)
     if not CDataTable or type(CDataTable.GetTable) ~= "function" then return nil end
     local ok, tbl = pcall(CDataTable.GetTable, name)
-    if ok and type(tbl) == "table" and next(tbl) ~= nil then return tbl end
+    if not ok or tbl == nil then return nil end
+    if type(tbl) == "table" then
+        if type(tbl.Num) == "function" or type(tbl.Length) == "function" then return tbl end
+        if next(tbl) == nil then return nil end
+        return tbl
+    end
+    if type(tbl) == "userdata" then return tbl end
     return nil
 end
 
+-- Iterasi tabel apa pun bentuknya. Callback menerima (key, row).
+local function _eachRow(tbl, fn)
+    local n = 0
+    if type(tbl.Num) == "function" then
+        pcall(function() n = tonumber(tbl:Num()) or 0 end)
+    elseif type(tbl.Length) == "function" then
+        pcall(function() n = tonumber(tbl:Length()) or 0 end)
+    end
+    if n > 0 and type(tbl.Get) == "function" then
+        local seen = 0
+        for i = 1, n do
+            local ok, v = pcall(function() return tbl:Get(i) end)
+            if ok and v ~= nil then fn(i, v); seen = seen + 1 end
+        end
+        if seen == 0 then
+            for i = 0, n - 1 do -- sebagian array slua 0-based
+                local ok, v = pcall(function() return tbl:Get(i) end)
+                if ok and v ~= nil then fn(i, v) end
+            end
+        end
+        return true
+    end
+    return (pcall(function() for k, v in pairs(tbl) do fn(k, v) end end))
+end
+
+local function _rowResID(key, row)
+    if type(row) == "table" then
+        local res = tonumber(row.ID or row.Id or row.id or row.ItemID or row.ItemId) or 0
+        if res <= 0 then res = tonumber(key) or 0 end
+        return res
+    end
+    return tonumber(row) or tonumber(key) or 0
+end
+
 -- Kumpulan ID level upgrade yang bukan level maksimum untuk tiap mapping tas.
--- Hanya dianggap non-maksimum kalau level maksimumnya (Lv3) benar-benar ada di
--- katalog, supaya item tanpa varian Lv3 tidak ikut terbuang.
+-- Hanya dianggap non-maksimum kalau Lv3 benar-benar ada di katalog.
 function F.buildNonMaxLevelSet(present, bpMap)
     local nonMax = {}
     bpMap = bpMap or _readTable("BackpackMapping")
     if not bpMap then return nonMax end
-    for _, m in pairs(bpMap) do
+    _eachRow(bpMap, function(_, m)
         if type(m) == "table" then
             local lv1 = tonumber(m.SkinItemIDLv1) or 0
             local lv2 = tonumber(m.SkinItemIDLv2) or 0
@@ -175,57 +242,118 @@ function F.buildNonMaxLevelSet(present, bpMap)
                 if lv2 > 0 and lv2 ~= lv3 then nonMax[lv2] = true end
             end
         end
-    end
+    end)
     return nonMax
 end
 
--- Isi ITEMS dari tabel Item. Return jumlah item (0 = tabel belum siap).
--- Kalau 0, injectAll mengembalikan false dan loop retry lobby akan memanggilnya lagi.
-function F.refreshItems()
-    if _itemsLoaded then return #ITEMS end
-    local itemTable = _readTable("Item")
-    if not itemTable then return 0 end
+-- Sumber cadangan: tanya langsung per halaman/tab wardrobe. Dipakai hanya
+-- kalau tabel Item tidak terbaca atau hasil filternya terlalu sedikit.
+local function _scanFiltered(present, list, allRows)
+    local sources = {}
+    if CDataTable then
+        if type(CDataTable.GetTableByFilter) == "function" then
+            sources[#sources + 1] = CDataTable.GetTableByFilter
+        end
+        if type(CDataTable.GetTableDataByFilter) == "function" then
+            sources[#sources + 1] = CDataTable.GetTableDataByFilter
+        end
+    end
+    if #sources == 0 then return 0 end
 
-    local present = {}
-    local list = {}
-    local allRows = {}
-    -- GetTable("Item") biasanya map ber-key ID. Kalau bentuknya array baris
-    -- (key = index 1..n), key TIDAK boleh dipakai sebagai resID; hanya kolom
-    -- ID di baris yang boleh. Tanpa pemisahan ini, item bisa ter-inject
-    -- dengan resID 1, 2, 3, ... yang bukan item.
-    local arrayLike = type(itemTable[1]) == "table"
-    for key, row in pairs(itemTable) do
-        if type(row) == "table" then
-            local resID = tonumber(row.ID or row.Id or row.id) or 0
-            if resID <= 0 and not arrayLike then resID = tonumber(key) or 0 end
-            if resID > 0 then
-                allRows[resID] = true
-                local bpID = tonumber(row.BPID or row.bpID or row.BpId) or 0
-                local mainTab = tonumber(row.WardrobeMainTab or row.wardrobeMainTab) or 0
-                if not present[resID] and (bpID ~= 0 or mainTab ~= 0) then
-                    present[resID] = true
-                    list[#list + 1] = resID
-                end
-            end
-        else
-            -- tabel bentuk array ID tanpa metadata: anggap item wardrobe
-            local resID = tonumber(key) or 0
-            if resID > 0 then
-                allRows[resID] = true
-                if not present[resID] then
-                    present[resID] = true
-                    list[#list + 1] = resID
+    local added = 0
+    for _, fn in ipairs(sources) do
+        for page = 1, 12 do
+            for sub = 0, 40 do
+                local ok, rows = pcall(fn, "Item", "WardrobeMainTab", page, "WardrobeTab", sub)
+                if ok and type(rows) == "table" then
+                    _eachRow(rows, function(key, row)
+                        local res = _rowResID(key, row)
+                        if res > 0 then
+                            allRows[res] = true
+                            -- Filter bisa longgar; baris tanpa BPID dan tanpa
+                            -- WardrobeMainTab tetap bukan item wardrobe.
+                            local okRow = true
+                            if type(row) == "table" then
+                                local bpID = tonumber(row.BPID or row.bpID or row.BpId) or 0
+                                local mainTab = tonumber(row.WardrobeMainTab or row.wardrobeMainTab) or 0
+                                if bpID == 0 and mainTab == 0 then okRow = false end
+                            end
+                            if okRow and not present[res] then
+                                present[res] = true
+                                list[#list + 1] = res
+                                added = added + 1
+                            end
+                        end
+                    end)
                 end
             end
         end
+        if #list >= 200 then break end -- sumber pertama sudah cukup
+    end
+    return added
+end
+
+-- Isi ITEMS dari tabel Item. Return jumlah item (0 = belum bisa; dicoba lagi
+-- saat wardrobe dibuka / loop retry lobby).
+function F.refreshItems()
+    if _itemsLoaded then return #ITEMS end
+
+    local present, list, allRows = {}, {}, {}
+    local scanned, rejected, scanOK = 0, 0, false
+    local itemTable = _readTable("Item")
+
+    if itemTable then
+        -- Baris array (key = index 1..n) tidak boleh memakai key sebagai resID.
+        local arrayLike = type(itemTable[1]) == "table"
+        scanOK = _eachRow(itemTable, function(key, row)
+            local res = 0
+            if type(row) == "table" then
+                res = tonumber(row.ID or row.Id or row.id or row.ItemID or row.ItemId) or 0
+                if res <= 0 and not arrayLike then res = tonumber(key) or 0 end
+            else
+                res = tonumber(row) or tonumber(key) or 0
+            end
+            if res > 0 then
+                scanned = scanned + 1
+                allRows[res] = true
+                local bpID = 0
+                local mainTab = 0
+                if type(row) == "table" then
+                    bpID = tonumber(row.BPID or row.bpID or row.BpId) or 0
+                    mainTab = tonumber(row.WardrobeMainTab or row.wardrobeMainTab) or 0
+                end
+                if not present[res] and (bpID ~= 0 or mainTab ~= 0 or type(row) ~= "table") then
+                    present[res] = true
+                    list[#list + 1] = res
+                else
+                    rejected = rejected + 1
+                end
+            end
+        end)
     end
 
-    -- Beberapa item kosmetik tidak punya BPID maupun WardrobeMainTab, tetapi
-    -- dirujuk tabel lain sebagai skin. Tambahkan hanya kalau barisnya memang
-    -- ada di tabel Item, supaya tidak ada resID tanpa konfigurasi.
+    -- Tabel tidak terbaca / filter menghasilkan sangat sedikit item: coba
+    -- sumber filter wardrobe. Ini yang menyelamatkan build 4.7 kalau
+    -- GetTable("Item") mengembalikan tabel kosong saat depot di-init.
+    local filtered = 0
+    -- Batasi pemindaian filter (492 panggilan native per putaran) supaya
+    -- login tidak tersendat kalau tabel memang tidak pernah tersedia.
+    if #list < 200 and _filterScans < 8 then
+        _filterScans = _filterScans + 1
+        filtered = _scanFiltered(present, list, allRows)
+    end
+
+    if #list == 0 then
+        _diag(("tabel=%s scan=%s baris=%d ditolak=%d filter=%d")
+            :format(tostring(itemTable ~= nil), tostring(scanOK), scanned, rejected, filtered))
+        return 0
+    end
+
+    -- Beberapa item kosmetik tidak punya BPID/WardrobeMainTab, tetapi dirujuk
+    -- tabel skin lain. Hanya diambil kalau barisnya ada di tabel Item.
     local function addReferenced(resID)
         resID = tonumber(resID) or 0
-        if resID > 0 and allRows[resID] and not present[resID] then
+        if resID > 0 and (allRows[resID] or not itemTable) and not present[resID] then
             present[resID] = true
             list[#list + 1] = resID
         end
@@ -234,35 +362,34 @@ function F.refreshItems()
     local wsMap = _readTable("WeaponSkinMapping")
     if wsMap then
         local wsArray = type(wsMap[1]) == "table"
-        for key, row in pairs(wsMap) do
+        _eachRow(wsMap, function(key, row)
             if type(row) == "table" then
                 addReferenced(row.ID or row.SkinID or row.SkinId or row.ResID)
                 if not wsArray and type(key) == "number" then addReferenced(key) end
             end
-        end
+        end)
     end
 
     local bpMap = _readTable("BackpackMapping")
     if bpMap then
-        for _, m in pairs(bpMap) do
+        _eachRow(bpMap, function(_, m)
             if type(m) == "table" then
                 addReferenced(m.SkinItemIDLv1)
                 addReferenced(m.SkinItemIDLv2)
                 addReferenced(m.SkinItemIDLv3)
             end
-        end
+        end)
     end
 
     for _, name in ipairs({ "GoldenSuitUpgradeCfg", "GoldenSuitUpgradeCfgKJ", "GoldenSuitUpgradeCfgIN" }) do
         local up = _readTable(name)
         if up then
-            for _, m in pairs(up) do
+            _eachRow(up, function(_, m)
                 if type(m) == "table" then addReferenced(m.ItemID or m.ItemId) end
-            end
+            end)
         end
     end
 
-    if #list == 0 then return 0 end
     local nonMax = F.buildNonMaxLevelSet(present, bpMap)
     local final = {}
     for _, resID in ipairs(list) do
@@ -270,20 +397,47 @@ function F.refreshItems()
     end
     table.sort(final)
 
-    ITEMS = final
-    _itemsLoaded = #ITEMS > 0
-    F.log(string.format(
-        "katalog item dinamis: %d item (%d kandidat, %d level non-maksimum dibuang)",
-        #ITEMS, #list, #list - #ITEMS))
-    -- Satu baris logcat (bukan popup) supaya jumlah katalog di device bisa
-    -- dicek tanpa menyalakan DEBUG.
-    pcall(print, "[AddOutfit] katalog item dinamis:", #ITEMS, "item")
+    if #final == 0 then
+        _diag(("kandidat=%d semuanya level non-maksimum"):format(#list))
+        return 0
+    end
+
+    -- Tabel Item bisa terisi bertahap. Item lama tidak diurutkan ulang supaya
+    -- insID = INS_BASE + index tidak berpindah; item baru ditempel di ekor.
+    local known = {}
+    for _, resID in ipairs(ITEMS) do known[resID] = true end
+    local before = #ITEMS
+    for _, resID in ipairs(final) do
+        if not known[resID] then
+            known[resID] = true
+            ITEMS[#ITEMS + 1] = resID
+        end
+    end
+    local added = #ITEMS - before
+
+    -- Kunci kalau katalog sudah jelas lengkap. Di bawah 200 item, biarkan
+    -- beberapa percobaan berikutnya menambah kekurangan (dibatasi 6 kali).
+    _scanAttempts = _scanAttempts + 1
+    if #ITEMS >= 200 or _scanAttempts >= 6 then _itemsLoaded = true end
+
+    if added > 0 then
+        pcall(print, "[AddOutfit] katalog item dinamis:", #ITEMS, "item",
+            ("(+%d baru; baris=%d ditolak=%d filter=%d nonmax=%d)"):format(
+                added, scanned, rejected, filtered, #list - #final))
+    end
     return #ITEMS
+end
+
+-- True kalau katalog tidak akan dipindai ulang (sudah >= 200 item atau sudah
+-- 6 kali percobaan). Dipakai hook buka wardrobe supaya tidak memindai terus.
+function F.itemsLocked()
+    return _itemsLoaded
 end
 
 function F.itemCount()
     return #ITEMS
 end
+
 
 local INS_BASE = 2000000000
 local PKG_SLOT = 3
@@ -3229,19 +3383,47 @@ function F.injectAll(entity)
         end
         return false
     end
-    local n, nNew = 0, 0
+    local n, nNew, nFail = 0, 0, 0
     for i, resID in ipairs(ITEMS) do
         local insID = INS_BASE + i
         local had = R.resToIns[resID] ~= nil
-        if F.injectOne(entity, resID, insID) then
+        -- Satu baris bermasalah tidak boleh membatalkan seluruh injeksi
+        -- (dulu satu error di AddData membuat depot kosong total).
+        local okOne, injected = pcall(F.injectOne, entity, resID, insID)
+        if okOne and injected then
             n = n + 1
             if not had then nNew = nNew + 1 end
-            local st = F.subType(F.cfg(resID))
-            if GUN_SUB[st] or st == MELEE_ID then
-                F.injectArmory(resID, insID)
-            end
+            pcall(function()
+                local st = F.subType(F.cfg(resID))
+                if GUN_SUB[st] or st == MELEE_ID then
+                    F.injectArmory(resID, insID)
+                end
+            end)
+        elseif not okOne then
+            nFail = nFail + 1
         end
     end
+    if nFail > 0 then
+        pcall(print, "[AddOutfit] injeksi:", nFail, "baris gagal, sisanya tetap masuk")
+    end
+    -- Diagnostik: baris yang masuk tetapi konfigurasinya belum terbaca tidak
+    -- akan muncul di tab wardrobe (mainTabType/itemType kosong). Dicek sekali
+    -- per entity supaya masalah di device bisa dibedakan dari katalog kosong.
+    if n > 0 and not F.injectedEntities[entity] and type(entity._data) == "table" then
+        local bad, sample = 0, nil
+        for i = 1, (entity._DataCount or #entity._data) do
+            local d = entity._data[i]
+            if d and d.bConfigLoaded == false then
+                bad = bad + 1
+                if not sample then sample = d.resID or d.res_id end
+            end
+        end
+        if bad > 0 then
+            pcall(print, "[AddOutfit] konfigurasi item belum ter-load:", bad,
+                "baris, contoh resID", tostring(sample))
+        end
+    end
+    if n > 0 then F.injectedEntities[entity] = true end
     if not _G.AddOutfitUnexpireDone then
         _G.AddOutfitUnexpireDone = true
         pcall(F.reviveExpiredOwned, entity)
@@ -3280,6 +3462,55 @@ function F.scheduleInjectRefresh()
     F.later(0.4, function()
         if gen ~= LOBBY.injectRefreshGen then return end
         F.refreshWardrobe()
+    end)
+end
+
+-- Wardrobe bisa dibuka sebelum tabel Item siap (InitData terjadi lebih dulu).
+-- Saat panel dibuka, kalau katalog masih kosong atau entity ini belum pernah
+-- di-inject, coba sekali lagi lalu segarkan daftar.
+function F.hookWardrobeOpen()
+    pcall(function()
+        local wl = require("client.slua.logic.wardrobe.logic_wardrobe_new")
+        if wl._AddOutfitOpenHooked then return end
+        wl._AddOutfitOpenHooked = true
+
+        local function ensure()
+            local e = F.getEntity()
+            if not e or not e.bInit then return end
+            -- Katalog besar yang sudah lengkap tidak perlu dipindai lagi.
+            if F.injectedEntities[e] and F.itemsLocked() then return end
+            local before = F.itemCount()
+            if F.injectAll(e) then
+                if before > 0 and F.itemCount() > before then
+                    pcall(print, "[AddOutfit] katalog bertambah saat wardrobe dibuka:",
+                        F.itemCount() - before, "item")
+                end
+                F.scheduleInjectRefresh()
+                F.scheduleLobbyReapplyOnce()
+            end
+        end
+
+        local lastShow = 0
+        local function wrap(name, throttle)
+            local orig = wl[name]
+            if type(orig) ~= "function" then return end
+            wl[name] = function(self, ...)
+                local a, b, c = orig(self, ...)
+                -- OnShow bisa dipanggil berkali-kali; batasi pemeriksaan
+                -- ulang supaya tidak memindai katalog tiap callback.
+                local run = true
+                if throttle then
+                    local now = os.time and os.time() or 0
+                    if now > 0 and now - lastShow < 2 then run = false end
+                    if run then lastShow = now end
+                end
+                if run then pcall(ensure) end
+                return a, b, c
+            end
+        end
+
+        wrap("Enter", false)
+        wrap("OnShow", true)
     end)
 end
 
@@ -7282,6 +7513,7 @@ end
 
 
 function F.start()
+    pcall(print, "[AddOutfit] build", F.version)
     F.restorePufferHooks()
     F.buildSkinMappings()
     if not _G.AddOutfitPersistLoaded then
@@ -7297,6 +7529,7 @@ function F.start()
     F.hookDepotInit()
     F.hookWardrobeData()
     F.hookPageFilter()
+    F.hookWardrobeOpen()
     F.hookArmory()
     F.hookGunSkinId()
     F.hookPutOn()
