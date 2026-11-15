@@ -19409,12 +19409,30 @@ function F.ensureResInjected(resID)
     return nil
 end
 
-function F.injectOne(entity, resID, insID, c, skipIndex)
+-- `meta` (optional) carries the six Item fields the wardrobe entity normally
+-- loads through LoadConfigForData.  The lazy page injector already has them
+-- from a batched GetTableRowFieldsByKeys call, so writing them directly saves
+-- one native table copy per row - the main source of the load-time freeze.
+function F.injectOne(entity, resID, insID, c, skipIndex, meta)
     local ownedIns = F.firstInsForRes(entity, resID)
     if ownedIns then
         F.ensureInjectedItemAlive(entity, resID, ownedIns)
         R.resToIns[resID] = ownedIns
         R.insToRes[ownedIns] = resID
+        if meta then
+            pcall(function()
+                local idx = entity.InsIDToIndexMap and entity.InsIDToIndexMap[ownedIns]
+                local d = idx and entity._data and entity._data[idx]
+                if d and not d.bConfigLoaded then
+                    d.itemType = meta.type
+                    d.itemSubType = meta.st
+                    d.mainTabType = meta.main
+                    d.subTabType = meta.sub
+                    d.itemQuality = meta.quality
+                    d.bConfigLoaded = true
+                end
+            end)
+        end
         if not skipIndex then F.indexWeaponSkin(resID, ownedIns, c) end
         return true
     end
@@ -19429,11 +19447,18 @@ function F.injectOne(entity, resID, insID, c, skipIndex)
     }
     entity:AddData(row)
     pcall(function()
-        if entity.LoadConfigForData and CDataTable and CDataTable.GetTableData then
-            local idx = entity._DataCount
-            if idx and entity._data[idx] then
-                entity:LoadConfigForData(entity._data[idx], CDataTable.GetTableData)
-            end
+        local idx = entity._DataCount
+        local d = idx and entity._data and entity._data[idx]
+        if not d then return end
+        if meta then
+            d.itemType = meta.type
+            d.itemSubType = meta.st
+            d.mainTabType = meta.main
+            d.subTabType = meta.sub
+            d.itemQuality = meta.quality
+            d.bConfigLoaded = true
+        elseif entity.LoadConfigForData and CDataTable and CDataTable.GetTableData then
+            entity:LoadConfigForData(d, CDataTable.GetTableData)
         end
     end)
     R.insToRes[insID] = resID
@@ -19665,13 +19690,460 @@ function F.refreshWardrobeOnce()
     F.refreshWardrobe()
 end
 
-function F.scheduleInjectRefresh()
-    LOBBY.injectRefreshGen = (LOBBY.injectRefreshGen or 0) + 1
-    local gen = LOBBY.injectRefreshGen
-    F.later(0.4, function()
-        if gen ~= LOBBY.injectRefreshGen then return end
-        F.refreshWardrobe()
+-- ============================================================================
+-- LAZY WARDROBE CATALOG (why the old load froze)
+-- ----------------------------------------------------------------------------
+-- Pushing the 15.9k catalogue into the depot at login meant:
+--   * 15.9k CDataTable.GetTableData("Item") calls, each returning a new Lua
+--     table copy, right while the lobby was still streaming in;
+--   * every wardrobe tab refresh walked all 15.9k rows and copied their Item
+--     config again before filtering, so the first wardrobe open stalled too;
+--   * the lazy config loader inside WardrobeDataEntity kept waking up and
+--     converting rows for several seconds.
+-- The depot is now filled per page, and only AFTER the player opens that
+-- page.  Page metadata is read in 512-id batches through
+-- GetTableRowFieldsByKeys, so classifying the whole catalogue costs ~32
+-- native calls instead of 15.9k.  Login does no catalogue work at all.
+-- ============================================================================
+local CATALOG_ITEM_FIELDS = {
+    "ItemType", "ItemSubType", "WardrobeMainTab", "WardrobeTab", "ItemQuality",
+}
+local CATALOG_CLASSIFY_CHUNK = 512
+local CATALOG_PAGE_BATCH      = 64
+local CATALOG_PAGE_MIN_BATCH  = 24
+local CATALOG_PAGE_MAX_BATCH  = 256
+local CATALOG_PAGE_INTERVAL   = 0.04
+
+F.wardrobePage = nil
+CATALOG.mainOf, CATALOG.subOf = {}, {}
+CATALOG.typeOf, CATALOG.stOf, CATALOG.qOf = {}, {}, {}
+CATALOG.buckets = {}       -- page -> flat positions
+CATALOG.subBuckets = {}    -- page -> sub -> positions
+CATALOG.hallOf = {}        -- resID -> true for hall-theme items
+CATALOG.pageCursor = {}
+CATALOG.pageDone = {}
+CATALOG.classifyCursor = 1
+CATALOG.classified = false
+CATALOG.classifyAPI = nil      -- nil = not probed, false = missing
+CATALOG.activePage = nil
+CATALOG.activeSub = nil
+CATALOG.pageTimer = false
+CATALOG.pageGen = 0
+
+function F.catalogClassified()
+    return CATALOG.classified
+end
+
+-- Wardrobe sub-tab ids are numbers in the UI config, but a few host paths use
+-- strings ("Gun", "Vehicle").  Bucket/done keys are normalised so a numeric id
+-- and its string form resolve to the same slot.
+local function catSubKey(v)
+    if v == nil then return "0" end
+    local n = tonumber(v)
+    return n and tostring(n) or tostring(v)
+end
+
+local function catalogStoreMeta(pos, main, sub, st, itype, quality)
+    CATALOG.mainOf[pos] = main or 0
+    CATALOG.subOf[pos] = sub or 0
+    CATALOG.stOf[pos] = st or 0
+    CATALOG.typeOf[pos] = itype or 0
+    CATALOG.qOf[pos] = quality or 0
+    if (main or 0) > 0 then
+        local bucket = CATALOG.buckets[main]
+        if not bucket then bucket = {}; CATALOG.buckets[main] = bucket end
+        bucket[#bucket + 1] = pos
+        local subs = CATALOG.subBuckets[main]
+        if not subs then subs = {}; CATALOG.subBuckets[main] = subs end
+        local sk = catSubKey(sub)
+        local list = subs[sk]
+        if not list then list = {}; subs[sk] = list end
+        list[#list + 1] = pos
+    end
+end
+
+-- Probe once; builds without this native API fall back to per-id lookups.
+local function catalogBatchAPI()
+    if CATALOG.classifyAPI ~= nil then return CATALOG.classifyAPI or nil end
+    local fn = nil
+    pcall(function()
+        if CDataTable then fn = CDataTable.GetTableRowFieldsByKeys end
     end)
+    CATALOG.classifyAPI = fn or false
+    return fn
+end
+
+function F.classifyCatalogBatch(maxChunks)
+    if CATALOG.classified then return true end
+    local ids = F.catalogIds()
+    local total = #ids
+    local i = CATALOG.classifyCursor
+    if i > total then CATALOG.classified = true; return true end
+    local t0 = 0
+    pcall(function() t0 = os.clock() end)
+    local api = catalogBatchAPI()
+    local chunks = 0
+    local scratch = {}
+    maxChunks = maxChunks or 2
+    while i <= total and chunks < maxChunks do
+        if api then
+            local last = math.min(i + CATALOG_CLASSIFY_CHUNK - 1, total)
+            local n = 0
+            for k = i, last do n = n + 1; scratch[n] = ids[k] end
+            for k = n + 1, #scratch do scratch[k] = nil end
+            local ok, map = pcall(api, "Item", scratch, CATALOG_ITEM_FIELDS)
+            if ok and type(map) == "table" then
+                for k = i, last do
+                    local row = map[ids[k]]
+                    if row then
+                        local itype = tonumber(row.ItemType) or 0
+                        catalogStoreMeta(k,
+                            tonumber(row.WardrobeMainTab) or 0,
+                            tonumber(row.WardrobeTab) or 0,
+                            tonumber(row.ItemSubType) or 0,
+                            itype,
+                            tonumber(row.ItemQuality) or 0)
+                        if itype == HALL_THEME_TYPE then CATALOG.hallOf[ids[k]] = true end
+                    else
+                        CATALOG.mainOf[k] = -1
+                    end
+                end
+                i = last + 1
+                chunks = chunks + 1
+                -- Never spend more than ~10 ms of a frame on classification;
+                -- the pump will come back on the next tick.
+                if (os.clock() - t0) > 0.010 then break end
+            else
+                -- The batch API exists but rejected this call (older build,
+                -- wrong field list...).  Drop to the per-id path for the rest.
+                CATALOG.classifyAPI = false
+                api = nil
+            end
+        else
+            -- Per-id fallback: strictly time budgeted so a slow native call
+            -- can never stall a frame for long.
+            while i <= total do
+                local c = F.cfg(ids[i])
+                if c then
+                    local itype = tonumber(c.ItemType) or 0
+                    catalogStoreMeta(i,
+                        tonumber(c.WardrobeMainTab) or 0,
+                        tonumber(c.WardrobeTab) or 0,
+                        tonumber(c.ItemSubType) or 0,
+                        itype,
+                        tonumber(c.ItemQuality) or 0)
+                    if itype == HALL_THEME_TYPE then CATALOG.hallOf[ids[i]] = true end
+                else
+                    CATALOG.mainOf[i] = -1
+                end
+                i = i + 1
+                if (os.clock() - t0) > 0.006 then break end
+            end
+            chunks = chunks + 1
+        end
+        if not api and (os.clock() - t0) > 0.006 then break end
+    end
+    CATALOG.classifyCursor = i
+    if i > total then CATALOG.classified = true end
+    return CATALOG.classified
+end
+
+function F.catalogSchedulePage(delay)
+    if CATALOG.pageTimer then return end
+    CATALOG.pageTimer = true
+    F.later(delay or CATALOG_PAGE_INTERVAL, function()
+        CATALOG.pageTimer = false
+        F.catalogPagePump()
+    end)
+end
+
+function F.catalogRequestPage(page, sub)
+    page = tonumber(page)
+    if sub ~= nil then sub = tonumber(sub) or sub end
+    if not page or page <= 0 then
+        CATALOG.activePage = nil
+        CATALOG.activeSub = nil
+        return false
+    end
+    CATALOG.activePage = page
+    CATALOG.activeSub = sub
+    if sub then
+        -- A subtab already told us what it needs; the page-level fallback is
+        -- no longer necessary.
+        CATALOG.fallbackGen = (CATALOG.fallbackGen or 0) + 1
+    end
+    local key = sub and (tostring(page) .. ":" .. catSubKey(sub)) or tostring(page)
+    if CATALOG.pageDone[key] then return true end
+    F.catalogSchedulePage()
+    return true
+end
+
+-- Safety net for builds/paths where the subtab list never reports its
+-- page/sub pair (e.g. the wardrobe was re-opened on a cached page).  It only
+-- runs when no subtab requested anything for this page in the meantime.
+function F.catalogFallbackPage(page, delay)
+    page = tonumber(page)
+    if not page or page <= 0 then return end
+    CATALOG.fallbackGen = (CATALOG.fallbackGen or 0) + 1
+    local gen = CATALOG.fallbackGen
+    F.later(delay or 0.3, function()
+        if gen ~= CATALOG.fallbackGen then return end
+        if F.wardrobePage ~= page then return end
+        if CATALOG.activeSub and CATALOG.activePage == page then return end
+        if CATALOG.pageDone[tostring(page)] then return end
+        F.catalogRequestPage(page)
+    end)
+end
+
+function F.catalogPageFinished(page, key)
+    CATALOG.pageGen = CATALOG.pageGen + 1
+    pcall(F.mergeInjectedArmorySkins)
+    if F.wardrobePage == page then pcall(F.refreshWardrobe) end
+end
+
+function F.catalogPageDone(page, sub)
+    page = tonumber(page) or -1
+    if sub ~= nil then sub = tonumber(sub) or sub end
+    local key = sub and (tostring(page) .. ":" .. catSubKey(sub)) or tostring(page)
+    return CATALOG.pageDone[key] == true
+end
+
+function F.catalogPagePump()
+    local page, sub = CATALOG.activePage, CATALOG.activeSub
+    if not page then return end
+    if not CATALOG.classified then
+        F.classifyCatalogBatch(4)
+        if not CATALOG.classified then
+            F.catalogSchedulePage()
+            return
+        end
+    end
+    local entity = F.getEntity()
+    if not entity or not entity.bInit then
+        F.catalogSchedulePage(0.2)
+        return
+    end
+    if CATALOG.entity ~= entity then
+        F.resetLazyCatalog(entity)
+        -- Keep pumping the request that woke us up; the reset only drops the
+        -- stale cursors/done flags of the previous data tables.
+        CATALOG.activePage, CATALOG.activeSub = page, sub
+    end
+    local key = sub and (tostring(page) .. ":" .. catSubKey(sub)) or tostring(page)
+    local bucket
+    if sub then
+        local subs = CATALOG.subBuckets[page]
+        -- An empty/unknown subtab has nothing to inject; do not fall back to
+        -- the whole page bucket, that would defeat the scoping.
+        if subs then bucket = subs[catSubKey(sub)] or {} end
+    end
+    if not bucket then bucket = CATALOG.buckets[page] end
+    if not bucket or #bucket == 0 then
+        CATALOG.pageDone[key] = true
+        F.catalogPageFinished(page, key)
+        return
+    end
+    local cursor = CATALOG.pageCursor[key] or 1
+    if cursor > #bucket then
+        CATALOG.pageDone[key] = true
+        F.catalogPageFinished(page, key)
+        return
+    end
+    local ids = F.catalogIds()
+    local meta = {}
+    local done, t0 = 0, 0
+    pcall(function() t0 = os.clock() end)
+    local batchLimit = CATALOG.pageBatch or CATALOG_PAGE_BATCH
+    while cursor <= #bucket and done < batchLimit do
+        local pos = bucket[cursor]
+        cursor = cursor + 1
+        if pos then
+            local st = CATALOG.stOf[pos] or 0
+            meta.main = CATALOG.mainOf[pos] or 0
+            meta.sub = CATALOG.subOf[pos] or 0
+            meta.st = st
+            meta.type = CATALOG.typeOf[pos] or 0
+            meta.quality = CATALOG.qOf[pos] or 0
+            F.injectOne(entity, ids[pos], INS_BASE + pos, nil, nil, meta)
+            done = done + 1
+            if (os.clock() - t0) > 0.008 then break end
+        end
+    end
+    local spent = 0
+    pcall(function() spent = (os.clock() - t0) * 1000 end)
+    if spent > 7 and batchLimit > CATALOG_PAGE_MIN_BATCH then
+        CATALOG.pageBatch = math.max(CATALOG_PAGE_MIN_BATCH, math.floor(batchLimit / 2))
+    elseif spent < 2 and batchLimit < CATALOG_PAGE_MAX_BATCH then
+        CATALOG.pageBatch = math.min(CATALOG_PAGE_MAX_BATCH, batchLimit + 16)
+    end
+    CATALOG.pageCursor[key] = cursor
+    if cursor > #bucket then
+        CATALOG.pageDone[key] = true
+        F.catalogPageFinished(page, key)
+    elseif done > 0 and F.wardrobePage == page then
+        -- Fill the open list progressively instead of waiting for the whole
+        -- page; without this the grid stayed empty while the pass ran.
+        CATALOG.refreshAccum = (CATALOG.refreshAccum or 0) + done
+        if CATALOG.refreshAccum >= 160 then
+            CATALOG.refreshAccum = 0
+            pcall(F.refreshWardrobe)
+        end
+    end
+    if CATALOG.activePage == page and not CATALOG.pageDone[key] then
+        F.catalogSchedulePage()
+    end
+end
+
+-- Reset for a brand new depot entity (lobby reload re-initialises the data in
+-- place).  Existing mappings are stale from this point on; owned rows are
+-- rediscovered by firstInsForRes when a page is injected again.
+function F.resetLazyCatalog(entity)
+    CATALOG.entity = entity
+    CATALOG.pageCursor = {}
+    CATALOG.pageDone = {}
+    CATALOG.pageGen = CATALOG.pageGen + 1
+    CATALOG.activePage = F.wardrobePage
+    CATALOG.fallbackGen = (CATALOG.fallbackGen or 0) + 1
+    CATALOG.refreshAccum = 0
+end
+
+function F.isWardrobePageOpen(page)
+    return page ~= nil and F.wardrobePage == page
+end
+
+-- Hook the wardrobe open / page switch.  Injection starts only here, never at
+-- script load.  The subtab list is the primary trigger (it knows both the page
+-- and the tab); the page setter only arms a short fallback for paths that do
+-- not reach it.
+function F.hookWardrobeCatalog()
+    local ok, wl = pcall(require, "client.slua.logic.wardrobe.logic_wardrobe_new")
+    if not ok or not wl or wl._AddOutfitLazyCatalogHooked then return end
+    wl._AddOutfitLazyCatalogHooked = true
+    local oEnter = wl.Enter
+    if oEnter then
+        wl.Enter = function(self, page, sub, ...)
+            -- Install the list-scope hook before oEnter builds the UI; loading
+            -- the subtab module at script load would add startup cost for a
+            -- module that is only needed once the wardrobe opens.
+            pcall(F.hookWardrobeListScope)
+            local r = oEnter(self, page, sub, ...)
+            pcall(function()
+                local p = tonumber(page)
+                if not p or p <= 0 then
+                    p = tonumber(self.GetCurrentPageId and self:GetCurrentPageId())
+                end
+                if not p or p <= 0 then p = 1 end   -- default wardrobe page
+                F.wardrobePage = p
+                if sub then
+                    F.catalogRequestPage(p, sub)
+                else
+                    -- The subtab list reports page+tab right after the UI is
+                    -- built; only fill the whole page if it never does.
+                    F.catalogFallbackPage(p, 0.3)
+                end
+            end)
+            return r
+        end
+    end
+    local oSetPage = wl.SetCurrentPageId
+    if oSetPage then
+        wl.SetCurrentPageId = function(self, page)
+            oSetPage(self, page)
+            local p = tonumber(page)
+            if not p or p <= 0 then
+                F.wardrobePage = nil
+                CATALOG.activePage = nil
+                CATALOG.activeSub = nil
+                CATALOG.fallbackGen = (CATALOG.fallbackGen or 0) + 1
+                return
+            end
+            F.wardrobePage = p
+            -- Drop the previous page's request; the subtab that is about to be
+            -- shown will ask for its own slice.
+            CATALOG.activePage = nil
+            CATALOG.activeSub = nil
+            pcall(F.catalogFallbackPage, p, 0.3)
+        end
+    end
+end
+
+-- Returning every depot row to a subtab made the UI copy an Item config for
+-- each of the 15.9k rows before the tab filter even ran.  The subtab only ever
+-- uses rows of its own page/tab, so hand it that slice directly and cache it
+-- until the next injection pass.
+function F.hookWardrobeListScope()
+    local ok, Sub = pcall(require, "client.slua.umg.Wardrobe.subtab_item_list_base")
+    if not ok or not Sub or Sub._AddOutfitListScopeHooked then return end
+    Sub._AddOutfitListScopeHooked = true
+    -- The subtab knows its page id even when the wardrobe is opened on the
+    -- default page (no explicit page argument), so this is the most reliable
+    -- trigger for the lazy fill.
+    local oShow = Sub.OnShow
+    if oShow then
+        Sub.OnShow = function(self, ...)
+            pcall(function()
+                local cfg = self.subTabConfig
+                local page = cfg and tonumber(cfg.pageId)
+                local sub = cfg and cfg.subTabId
+                if sub ~= nil then sub = tonumber(sub) or sub end
+                if page and page > 0 then
+                    F.wardrobePage = page
+                    F.catalogRequestPage(page, sub)
+                end
+            end)
+            return oShow(self, ...)
+        end
+    end
+    local orig = Sub.GetArrayHallDepotItemInfo
+    if not orig then return end
+    local cache, cacheGen = {}, -1
+    Sub.GetArrayHallDepotItemInfo = function(self)
+        local cfg = self.subTabConfig
+        local page = cfg and tonumber(cfg.pageId)
+        local sub = cfg and cfg.subTabId
+        if sub ~= nil then sub = tonumber(sub) or sub end
+        if not page then return orig(self) end
+        local fpage = F.wardrobePage
+        if fpage == page then pcall(F.catalogRequestPage, page, sub) end
+        local entity
+        pcall(function() entity = self:GetDataEntity() end)
+        if not entity then return orig(self) end
+        if cacheGen ~= CATALOG.pageGen then cache, cacheGen = {}, CATALOG.pageGen end
+        local count = tonumber(entity._DataCount) or 0
+        local key = tostring(page) .. ":" .. catSubKey(sub) .. ":" .. tostring(count)
+        local hit = cache[key]
+        if hit then return hit end
+        -- bIgnoreItemConfig = true is essential: the stock call runs
+        -- EnsureAllConfigLoaded, which copies the Item config of every depot
+        -- row synchronously (the wardrobe-open freeze).
+        local data
+        pcall(function() data = entity:GetData(true) end)
+        if type(data) ~= "table" then return orig(self) end
+        local out = {}
+        local n = count > 0 and count or #data
+        local widePage = (page == PAGE_AVATAR or page == PAGE_VEHICLE)
+        local hallPage = (page == PAGE_PARACHUTE)
+        local subK = sub ~= nil and catSubKey(sub) or nil
+        for i = 1, n do
+            local v = data[i]
+            if v then
+                local mt, st = v.mainTabType, v.subTabType
+                -- Same rules as the native tab filter (mirrors hookPageFilter).
+                -- Rows whose config is not converted yet are kept so native
+                -- owned items never disappear from the list.
+                if mt == nil or st == nil then
+                    out[#out + 1] = v
+                elseif subK == nil or catSubKey(st) == subK then
+                    if mt == page or widePage
+                        or (hallPage and CATALOG.hallOf[tonumber(v.resID) or tonumber(v.res_id)]) then
+                        out[#out + 1] = v
+                    end
+                end
+            end
+        end
+        cache[key] = out
+        return out
+    end
 end
 
 function F.putOnOutfit(insID)
@@ -21148,14 +21620,18 @@ function F.hookDepotInit()
             orig(self, pkg)
             _G.AddOutfitUnexpireDone = false
             pcall(function()
-                -- Same object, brand new data tables: restart the batched push.
+                -- Same object, brand new data tables.  Do not fill the depot
+                -- here: login must stay free of catalogue work.  Only resume
+                -- the page/subtab the player is currently looking at.
+                local page, sub = F.wardrobePage, CATALOG.activeSub
                 F.resetCatalog(self)
-                if F.injectAll(self) then
-                    F.scheduleInjectRefresh()
-                    LOBBY.reapplyDone = false
-                    LOBBY.reapplyScheduled = false
-                    F.scheduleLobbyReapplyOnce()
+                F.resetLazyCatalog(self)
+                LOBBY.reapplyDone = false
+                LOBBY.reapplyScheduled = false
+                if page and page > 0 then
+                    F.catalogRequestPage(page, sub)
                 end
+                F.scheduleLobbyReapplyOnce()
             end)
         end
     end)
@@ -23750,7 +24226,10 @@ function F.afterInjectApply(firstTime)
     F.mergeInjectedArmorySkins()
     -- Keep the original armory response intact; do not prune lobby inventory entries.
     if firstTime then
-        F.refreshWardrobeOnce()
+        -- No wardrobe refresh here.  The visible list is rebuilt by the lazy
+        -- page injector once the player actually opens the wardrobe; doing it
+        -- during login forced the UI to scan the whole depot while the lobby
+        -- was still loading.
         F.persistApplyLoaded()
         -- Do not wait for the scheduled lobby/social refresh for the suit.
         -- Weapon and suit now share the same first-load application phase.
@@ -23763,6 +24242,18 @@ function F.afterInjectApply(firstTime)
     else
         F.reapplyWeaponsFromConfig()
     end
+end
+
+-- First-lobby apply that does not depend on the catalogue being present.
+-- Persisted selections are injected one by one through ensureResInjected,
+-- so the depot can stay empty until the wardrobe asks for a page.
+function F.startupApply(firstTime)
+    if _G.AddOutfitStartupApplied and not firstTime then
+        F.reapplyWeaponsFromConfig()
+        return
+    end
+    _G.AddOutfitStartupApplied = true
+    F.afterInjectApply(firstTime)
 end
 
 
@@ -23802,6 +24293,7 @@ function F.start()
     F.hookLobbySwipePersistence()
     F.hookWardrobePutOnReq()
     F.hookWardrobeWearClicks()
+    F.hookWardrobeCatalog()
     F.hookMatchAvatar()
     F.hookMatchPlayerInfo()
     F.hookEquipmentRectify()
@@ -24240,18 +24732,25 @@ end)
     end)
 
     local firstLobby = not _G.AddOutfitLobbyInitDone
-    if F.injectAll() then
-        if firstLobby then _G.AddOutfitLobbyInitDone = true end
-        F.afterInjectApply(firstLobby)
+    if firstLobby then _G.AddOutfitLobbyInitDone = true end
+    -- Do not inject the catalogue here.  Only the persisted outfit is applied,
+    -- and that path injects the handful of resources it actually needs.
+    local applied = false
+    pcall(function()
+        local entity = F.getEntity()
+        if entity and entity.bInit then applied = true end
+    end)
+    if applied then
+        F.startupApply(firstLobby)
         return
     end
     local tries = 0
     local function retry()
         tries = tries + 1
-        if F.injectAll() then
-            local ft = not _G.AddOutfitLobbyInitDone
-            if ft then _G.AddOutfitLobbyInitDone = true end
-            F.afterInjectApply(ft)
+        local entity = nil
+        pcall(function() entity = F.getEntity() end)
+        if entity and entity.bInit then
+            F.startupApply(firstLobby)
             return
         end
         if tries < INJECT_RETRY_MAX then F.later(INJECT_RETRY_SEC, retry) end
