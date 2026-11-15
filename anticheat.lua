@@ -1,8 +1,9 @@
 
 --[[============================================================================
-  AntiCheatUnified.lua — FULL MERGE (tanpa hapus, tanpa ganti)
+  AntiCheatUnified.lua — FULL MERGE v2 (dedup + bypass 4.7)
   ----------------------------------------------------------------------------
-  Berisi 7 file asli yang dibungkus utuh dalam fungsi terisolasi:
+  Berisi 10 blok (7 file asli + bypass ban/pak + pak guard + security 4.7.0)
+  dalam fungsi terisolasi:
     Part A: rapzhang8  — GameSafeCallbacks (source asli, dijalankan paling awal)
     Part B: rapzhang7  — stub Server.security.*
     Part C: rapzhang5  — ClientPatch
@@ -10,10 +11,18 @@
     Part E: rapzhang10 — DisableKillReport
     Part F: rapzhang11 — AntiCheatBypass_Unified
     Part G: rapzhang12 — AntiCheatBlock_Full
+    Part H: bypass ban + observation warning (build 4.7.0.21759)
+    Part I: pak guard 4.7.0.21760 (signature/hash native + laporan pak)
+    Part J: security 4.7.0 (hook native, TSS, SoundMonitor, crew auth, replay)
 
-  Urutan eksekusi: A -> B -> C -> D -> E -> F -> G
+  Urutan eksekusi: A -> B -> C -> D -> E -> F -> G -> H -> I -> J
   Setiap blok dibungkus pcall agar error di satu file tidak menghentikan file lain.
-  Isi asli setiap file TIDAK diubah.
+
+  DEDUP: semua patch lewat ACU.Patch registry (PatchOnce / PatchForce /
+  WrapOnce / SetOnce / BlockMethodsOnce). Satu target+method hanya dipasang
+  sekali; retry hanya menambah target baru. Filter NetUtil/SendRPC digabung
+  jadi satu ACU.NetGuard (Part C/D/E/F/G tidak lagi membuat wrapper berlapis).
+  Audit: print(_G.ACU.PatchStats()).
 
   LOAD   : require("AntiCheatUnified")
   STATUS : print(_G.ACU.Stats())
@@ -41,6 +50,421 @@ local function _recordPart(name, ok, err)
   else
     print("[ACU] part " .. name .. " OK")
   end
+end
+
+-- ============================================================================
+-- PATCH REGISTRY — satu target+method hanya dipasang sekali
+-- ----------------------------------------------------------------------------
+-- Part C/D/E/F/G saling menimpa method yang sama dan masing-masing punya
+-- retry timer. Tanpa registry, setiap retry menambah wrapper baru di atas
+-- wrapper lama (NetUtil.SendPacket bisa 5 lapis) dan stub yang sama ditulis
+-- berulang kali.
+--
+--   ACU.PatchOnce        : first-wins, dipakai untuk stub/no-op.
+--   ACU.PatchForce       : ganti sekali kalau blok baru memang lebih kuat.
+--   ACU.WrapOnce         : bungkus fungsi asli tepat satu kali.
+--   ACU.SetOnce          : nilai non-fungsi (entry config, flag).
+--   ACU.BlockMethodsOnce : blok method yang belum pernah dipatch.
+--   ACU.Pin              : pilih PatchOnce/SetOnce sesuai tipe nilai lama.
+--   ACU.Once(key)        : guard untuk aksi sekali jalan (bukan patch fungsi).
+-- ============================================================================
+ACU.CurrentPart = "init"
+ACU.VerbosePatches = false
+ACU.NOOP = function() end
+ACU.Patch = {
+  applied   = 0,
+  skipped   = 0,
+  forced    = 0,
+  installed = {},
+  skippedTags = {},
+}
+
+local _patchRegistry = setmetatable({}, { __mode = "k" })
+local _onceKeys = {}
+
+local function _regFor(target)
+  local r = _patchRegistry[target]
+  if not r then
+    r = {}
+    _patchRegistry[target] = r
+  end
+  return r
+end
+
+local function _patchId(target, key, tag)
+  return tostring(tag or (tostring(key) .. "@" .. tostring(target)))
+end
+
+local function _notePatch(id, entry)
+  ACU.Patch.applied = ACU.Patch.applied + 1
+  ACU.Patch.installed[#ACU.Patch.installed + 1] = {
+    tag  = id,
+    part = ACU.CurrentPart,
+    key  = entry.key,
+  }
+  if ACU.VerbosePatches then
+    print("[ACU-Patch] + " .. id .. " (" .. tostring(ACU.CurrentPart) .. ")")
+  end
+end
+
+local function _noteSkip(target, key, tag)
+  ACU.Patch.skipped = ACU.Patch.skipped + 1
+  local id = _patchId(target, key, tag)
+  ACU.Patch.skippedTags[id] = (ACU.Patch.skippedTags[id] or 0) + 1
+end
+
+function ACU.IsPatched(target, key)
+  local r = _patchRegistry[target]
+  return r ~= nil and r[key] ~= nil
+end
+
+function ACU.PatchOwner(target, key)
+  local r = _patchRegistry[target]
+  local e = r and r[key]
+  return e and e.part or nil
+end
+
+function ACU.Once(key)
+  key = tostring(key)
+  if _onceKeys[key] then return false end
+  _onceKeys[key] = true
+  return true
+end
+
+function ACU.PatchOnce(target, key, newFn, tag)
+  if type(target) ~= "table" then return false end
+  if type(target[key]) ~= "function" then return false end
+  local r = _regFor(target)
+  if r[key] then
+    _noteSkip(target, key, tag)
+    return false
+  end
+  local id = _patchId(target, key, tag)
+  r[key] = {
+    tag = id, part = ACU.CurrentPart, key = tostring(key),
+    original = target[key],
+  }
+  target[key] = newFn
+  _notePatch(id, r[key])
+  return true
+end
+
+function ACU.PatchForce(target, key, newFn, tag)
+  if type(target) ~= "table" then return false end
+  if type(target[key]) ~= "function" then return false end
+  local r = _regFor(target)
+  local prev = r[key]
+  if prev and prev.forced then
+    _noteSkip(target, key, tag)
+    return false
+  end
+  local id = _patchId(target, key, tag)
+  r[key] = {
+    tag = id, part = ACU.CurrentPart, key = tostring(key),
+    original = prev and prev.original or target[key],
+    forced = true,
+  }
+  target[key] = newFn
+  ACU.Patch.forced = ACU.Patch.forced + 1
+  _notePatch(id, r[key])
+  return true
+end
+
+function ACU.WrapOnce(target, key, factory, tag)
+  if type(target) ~= "table" then return false end
+  local current = target[key]
+  if type(current) ~= "function" then return false end
+  local r = _regFor(target)
+  if r[key] then
+    _noteSkip(target, key, tag)
+    return false
+  end
+  local ok, wrapper = pcall(factory, current)
+  if not ok or type(wrapper) ~= "function" then return false end
+  local id = _patchId(target, key, tag)
+  r[key] = {
+    tag = id, part = ACU.CurrentPart, key = tostring(key),
+    original = current, wrapper = true,
+  }
+  target[key] = wrapper
+  _notePatch(id, r[key])
+  return true
+end
+
+function ACU.SetOnce(target, key, value, tag)
+  if type(target) ~= "table" then return false end
+  local r = _regFor(target)
+  if r[key] then
+    _noteSkip(target, key, tag)
+    return false
+  end
+  local id = _patchId(target, key, tag)
+  r[key] = { tag = id, part = ACU.CurrentPart, key = tostring(key) }
+  target[key] = value
+  _notePatch(id, r[key])
+  return true
+end
+
+function ACU.Pin(target, key, value, tag)
+  if type(target) ~= "table" then return false end
+  if type(target[key]) == "function" then
+    return ACU.PatchOnce(target, key, value, tag)
+  end
+  if target[key] ~= nil then
+    return ACU.SetOnce(target, key, value, tag)
+  end
+  return false
+end
+
+function ACU.BlockMethodsOnce(target, whitelist, tagPrefix)
+  if type(target) ~= "table" then return 0 end
+  local r = _regFor(target)
+  local names = {}
+  for key, value in pairs(target) do
+    if type(key) == "string" and type(value) == "function"
+       and not (whitelist and whitelist[key]) and not r[key] then
+      names[#names + 1] = key
+    end
+  end
+  for i = 1, #names do
+    local key = names[i]
+    local id = tostring(tagPrefix or "block") .. "." .. key
+    r[key] = { tag = id, part = ACU.CurrentPart, key = key }
+    target[key] = ACU.NOOP
+    _notePatch(id, r[key])
+  end
+  return #names
+end
+
+function ACU.PatchStats()
+  return {
+    applied     = ACU.Patch.applied,
+    skipped     = ACU.Patch.skipped,
+    forced      = ACU.Patch.forced,
+    installed   = #ACU.Patch.installed,
+    skippedTags = ACU.Patch.skippedTags,
+  }
+end
+
+-- ============================================================================
+-- NETGUARD — filter per-kanal untuk NetUtil.SendPacket / SendPkg / _G.SendRPC
+-- ----------------------------------------------------------------------------
+-- Part C/E/F/G hanya MENDAFTARKAN aturan; wrapper dipasang sekali di sini,
+-- jadi tidak ada filter berlapis. Aturan disimpan per fungsi supaya
+-- perilakunya sama dengan file asli:
+--   SendPacket : C exact + prefix + keyword broad, E exact, F exact,
+--                G keyword + whitelist
+--   SendPkg    : C exact + prefix, F exact, G keyword + whitelist
+--   SendRPC    : C BLOCKED_RPC exact + keyword sempit
+-- Tabel exact/prefixes/keywords/whitelist di level atas hanya agregat untuk
+-- audit; pencocokan memakai NETG.rules[kanal].
+-- Part D tetap memakai wrapper sendiri karena ia men-sanitize payload
+-- (on_tss_sdk_anti_data / hisar), bukan sekadar memblokir.
+-- ============================================================================
+local function _newRuleSet()
+  return {
+    exact = {}, prefixes = {}, prefixSet = {},
+    keywords = {}, keywordSet = {},          -- hard: selalu blokir
+    softKeywords = {}, softKeywordSet = {},  -- soft: whitelist G menang
+    whitelist = {},
+  }
+end
+
+ACU.NetGuard = {
+  exact      = {},
+  prefixes   = {},
+  prefixSet  = {},
+  keywords   = {},
+  keywordSet = {},
+  whitelist  = {},
+  rules      = {
+    SendPacket = _newRuleSet(),
+    SendPkg    = _newRuleSet(),
+    SendRPC    = _newRuleSet(),
+  },
+  hooked     = {},
+  dropped    = 0,
+  installed  = false,
+}
+
+local NETG = ACU.NetGuard
+
+local function _channels(spec, fallback)
+  if spec == nil then return fallback end
+  if type(spec) == "string" then return { spec } end
+  return spec
+end
+
+local function _rulesFor(channel)
+  return NETG.rules[channel]
+end
+
+function NETG.AddExact(map, channels)
+  if type(map) ~= "table" then return end
+  local list = _channels(channels, { "SendPacket", "SendPkg" })
+  for name, on in pairs(map) do
+    -- daftar lama memakai nilai 1, daftar baru memakai true
+    if type(name) == "string" and on then
+      NETG.exact[name] = true
+      for i = 1, #list do
+        local rs = _rulesFor(list[i])
+        if rs then rs.exact[name] = true end
+      end
+    end
+  end
+end
+
+function NETG.AddPrefixes(list, channels)
+  if type(list) ~= "table" then return end
+  local chans = _channels(channels, { "SendPacket", "SendPkg" })
+  for i = 1, #list do
+    local p = list[i]
+    if type(p) == "string" and p ~= "" then
+      local low = string.lower(p)
+      if not NETG.prefixSet[low] then
+        NETG.prefixSet[low] = true
+        NETG.prefixes[#NETG.prefixes + 1] = low
+      end
+      for j = 1, #chans do
+        local rs = _rulesFor(chans[j])
+        if rs and not rs.prefixSet[low] then
+          rs.prefixSet[low] = true
+          rs.prefixes[#rs.prefixes + 1] = low
+        end
+      end
+    end
+  end
+end
+
+function NETG.AddKeywords(list, channels)
+  if type(list) ~= "table" then return end
+  local chans = _channels(channels, { "SendPacket" })
+  for i = 1, #list do
+    local kw = list[i]
+    if type(kw) == "string" and kw ~= "" then
+      local low = string.lower(kw)
+      if not NETG.keywordSet[low] then
+        NETG.keywordSet[low] = true
+        NETG.keywords[#NETG.keywords + 1] = low
+      end
+      for j = 1, #chans do
+        local rs = _rulesFor(chans[j])
+        if rs and not rs.keywordSet[low] then
+          rs.keywordSet[low] = true
+          rs.keywords[#rs.keywords + 1] = low
+        end
+      end
+    end
+  end
+end
+
+function NETG.AddSoftKeywords(list, channels)
+  if type(list) ~= "table" then return end
+  local chans = _channels(channels, { "SendPacket" })
+  for i = 1, #list do
+    local kw = list[i]
+    if type(kw) == "string" and kw ~= "" then
+      local low = string.lower(kw)
+      if not NETG.keywordSet[low] then
+        NETG.keywordSet[low] = true
+        NETG.keywords[#NETG.keywords + 1] = low
+      end
+      for j = 1, #chans do
+        local rs = _rulesFor(chans[j])
+        if rs and not rs.softKeywordSet[low] then
+          rs.softKeywordSet[low] = true
+          rs.softKeywords[#rs.softKeywords + 1] = low
+        end
+      end
+    end
+  end
+end
+
+function NETG.Allow(map, channels)
+  if type(map) ~= "table" then return end
+  local list = _channels(channels, { "SendPacket", "SendPkg" })
+  for name, on in pairs(map) do
+    if type(name) == "string" and on then
+      NETG.whitelist[name] = true
+      for i = 1, #list do
+        local rs = _rulesFor(list[i])
+        if rs then rs.whitelist[name] = true end
+      end
+    end
+  end
+end
+
+function NETG.ShouldDrop(name, channel)
+  if type(name) ~= "string" then return false end
+  local rs = _rulesFor(channel or "SendPacket")
+  if not rs then return false end
+  if rs.exact[name] then return true, "exact" end
+  local low = string.lower(name)
+  for i = 1, #rs.prefixes do
+    local p = rs.prefixes[i]
+    if string.sub(low, 1, #p) == p then return true, "prefix:" .. p end
+  end
+  -- Hard keyword (Part C) dievaluasi lebih dulu, sama seperti wrapper C
+  -- yang berada di dalam wrapper G pada file merge asli: whitelist G tidak
+  -- bisa membatalkan blokir C (mis. "heartbeat").
+  for i = 1, #rs.keywords do
+    local kw = rs.keywords[i]
+    if string.find(low, kw, 1, true) then return true, kw end
+  end
+  if rs.whitelist[name] then return false end
+  for i = 1, #rs.softKeywords do
+    local kw = rs.softKeywords[i]
+    if string.find(low, kw, 1, true) then return true, kw end
+  end
+  return false, nil
+end
+
+function NETG.Hook()
+  local ok = false
+  local NU = rawget(_G, "NetUtil")
+  if type(NU) == "table" then
+    if not NETG.hooked.SendPacket and type(NU.SendPacket) == "function"
+       and not ACU.IsPatched(NU, "SendPacket") then
+      NETG.hooked.SendPacket = ACU.WrapOnce(NU, "SendPacket", function(orig)
+        return function(name, ...)
+          if NETG.ShouldDrop(name, "SendPacket") then
+            NETG.dropped = NETG.dropped + 1
+            return nil
+          end
+          return orig(name, ...)
+        end
+      end, "NetGuard.SendPacket")
+      ok = ok or NETG.hooked.SendPacket
+    end
+    if not NETG.hooked.SendPkg and type(NU.SendPkg) == "function"
+       and not ACU.IsPatched(NU, "SendPkg") then
+      NETG.hooked.SendPkg = ACU.WrapOnce(NU, "SendPkg", function(orig)
+        return function(name, ...)
+          if NETG.ShouldDrop(name, "SendPkg") then
+            NETG.dropped = NETG.dropped + 1
+            return nil
+          end
+          return orig(name, ...)
+        end
+      end, "NetGuard.SendPkg")
+      ok = ok or NETG.hooked.SendPkg
+    end
+  end
+  if not NETG.hooked.SendRPC and type(_G.SendRPC) == "function"
+     and not ACU.IsPatched(_G, "SendRPC") then
+    NETG.hooked.SendRPC = ACU.WrapOnce(_G, "SendRPC", function(orig)
+      return function(rpc, ...)
+        if NETG.ShouldDrop(rpc, "SendRPC") then
+          NETG.dropped = NETG.dropped + 1
+          return nil
+        end
+        return orig(rpc, ...)
+      end
+    end, "NetGuard.SendRPC")
+    ok = ok or NETG.hooked.SendRPC
+  end
+  NETG.installed = NETG.hooked.SendPacket or NETG.hooked.SendPkg or NETG.hooked.SendRPC
+  return ok
 end
 
 -- ============================================================================
@@ -3765,7 +4189,7 @@ local function _partC_rapzhang5()
       if type(v) == "function" and type(k) == "string" then
         for i = 1, #keywords do
           if string.find(k, keywords[i], 1, true) then
-            pcall(function() tbl[k] = Noop end)
+            pcall(function() ACU.PatchOnce(tbl, k, Noop, "Silence." .. tostring(k)) end)
             break
           end
         end
@@ -3942,64 +4366,23 @@ local function _partC_rapzhang5()
   function CP.InstallPacketFilter()
     if CP.State.PacketFilter then return end
     pcall(function()
-      if NetUtil and type(NetUtil.SendPacket) == "function" then
-        local orig = NetUtil.SendPacket
-        NetUtil.SendPacket = function(name, ...)
-          if ShouldDropPacket(name) then return nil end
-          if type(name) == "string" then
-            local low = string.lower(name)
-            if string.find(low, "report", 1, true)
-               or string.find(low, "tlog", 1, true)
-               or string.find(low, "cheat", 1, true)
-               or string.find(low, "security", 1, true)
-               or string.find(low, "verify", 1, true)
-               or string.find(low, "ban", 1, true)
-               or string.find(low, "swifthawk", 1, true)
-               or string.find(low, "hawkeye", 1, true)
-               or string.find(low, "integrity", 1, true)
-               or string.find(low, "heartbeat", 1, true)
-               or string.find(low, "coronalab", 1, true)
-               or string.find(low, "higgs", 1, true)
-               or string.find(low, "punish", 1, true)
-               or string.find(low, "flow", 1, true) then
-              return nil
-            end
-          end
-          return orig(name, ...)
-        end
-        NetUtil.IsBypassed = true
-      end
-    end)
-    pcall(function()
-      if NetUtil and type(NetUtil.SendPkg) == "function" then
-        local orig = NetUtil.SendPkg
-        NetUtil.SendPkg = function(name, ...)
-          if ShouldDropPacket(name) then return end
-          return orig(name, ...)
-        end
-      end
-    end)
-    pcall(function()
-      if type(_G.SendRPC) == "function" then
-        local orig = _G.SendRPC
-        _G.SendRPC = function(rpc, ...)
-          if BLOCKED_RPC[rpc] then return nil end
-          if type(rpc) == "string" then
-            local low = string.lower(rpc)
-            if string.find(low, "report", 1, true)
-               or string.find(low, "cheat", 1, true)
-               or string.find(low, "ban", 1, true)
-               or string.find(low, "verify", 1, true)
-               or string.find(low, "heartbeat", 1, true) then
-              return nil
-            end
-          end
-          return orig(rpc, ...)
-        end
-      end
+      local NG = ACU and ACU.NetGuard
+      if not NG then return end
+      -- C: exact+prefix berlaku untuk SendPacket & SendPkg; keyword broad
+      -- hanya SendPacket; SendRPC memakai BLOCKED_RPC + keyword sempit.
+      NG.AddExact(BLOCKED_PACKETS)
+      NG.AddPrefixes(BLOCKED_PREFIXES)
+      NG.AddKeywords({
+        "report","tlog","cheat","security","verify","ban","swifthawk",
+        "hawkeye","integrity","heartbeat","coronalab","higgs","punish","flow",
+      }, {"SendPacket"})
+      NG.AddExact(BLOCKED_RPC, {"SendRPC"})
+      NG.AddKeywords({"report","cheat","ban","verify","heartbeat"}, {"SendRPC"})
+      NG.Hook()
+      if NetUtil then NetUtil.IsBypassed = true end
     end)
     CP.State.PacketFilter = true
-    print("[ClientPatch] Packet filter installed")
+    print("[ClientPatch] Packet filter installed (shared NetGuard)")
   end
 
   -- ============================================================
@@ -4143,7 +4526,9 @@ local function _partC_rapzhang5()
 
       for i = 1, #TSS_KILL_METHODS do
         local m = TSS_KILL_METHODS[i]
-        if tss[m] then pcall(function() tss[m] = Noop end) end
+        if type(tss[m]) == "function" then
+          pcall(function() ACU.PatchOnce(tss, m, Noop, "TSS." .. m) end)
+        end
       end
 
       tss.GetFileMD5           = function() return "00000000000000000000000000000000" end
@@ -4517,8 +4902,11 @@ local function _partC_rapzhang5()
       end
       local gc = _G.GameplayCallbacks
       for i = 1, #CALLBACK_NAMES do
-        gc[CALLBACK_NAMES[i]] = Noop
-        if _G[CALLBACK_NAMES[i]] then _G[CALLBACK_NAMES[i]] = Noop end
+        local name = CALLBACK_NAMES[i]
+        ACU.Pin(gc, name, Noop, "CALLBACK." .. name)
+        if _G[name] ~= nil then
+          ACU.Pin(_G, name, Noop, "CALLBACK._G." .. name)
+        end
       end
       gc.CheckReportSecAttackFlowWithAttackFlow = RetFalse
       gc.CheckReportSecAttackFlow              = RetFalse
@@ -4528,10 +4916,12 @@ local function _partC_rapzhang5()
         "IsEnableReportHitFlow","IsEnableReportCircleFlow",
       }
       for i = 1, #flags do
-        if _G[flags[i]] then _G[flags[i]] = RetFalse end
+        if _G[flags[i]] ~= nil then
+          ACU.Pin(_G, flags[i], RetFalse, "FLAG." .. flags[i])
+        end
       end
-      gc.GetWeaponReport    = RetEmpty
-      gc.GetOneWeaponReport = RetEmpty
+      ACU.Pin(gc, "GetWeaponReport", RetEmpty, "CALLBACK.GetWeaponReport")
+      ACU.Pin(gc, "GetOneWeaponReport", RetEmpty, "CALLBACK.GetOneWeaponReport")
 
       local origStateChanged = gc.OnDSPlayerStateChanged
       gc.OnDSPlayerStateChanged = function(uid, state, bPure, bSafe, param)
@@ -5760,17 +6150,11 @@ local function _partE_rapzhang10()
   local DisableKillReport = {}
 
   local function _safePatch(target, key, newFn, tag)
-    if type(target) ~= "table" then
-      print("[DisableKillReport] skip " .. tostring(tag) .. " (target not table)")
-      return false
-    end
-    if type(target[key]) ~= "function" then
-      print("[DisableKillReport] skip " .. tostring(tag) .. " (method not function)")
-      return false
-    end
-    target[key] = newFn
-    print("[DisableKillReport] patched " .. tostring(tag))
-    return true
+    if type(target) ~= "table" then return false end
+    if type(target[key]) ~= "function" then return false end
+    local ok = ACU.PatchOnce(target, key, newFn, tag)
+    if ok then print("[DisableKillReport] patched " .. tostring(tag)) end
+    return ok
   end
 
   local function _safePatchNested(target, key, nestedKey, newFn, tag)
@@ -5850,13 +6234,7 @@ local function _partE_rapzhang10()
       print("[DisableKillReport] blocked WeaponRecordSubSystem:OnHandleKill weaponId=" .. tostring(weaponId))
     end, "WeaponRecordSubSystem.OnHandleKill")
 
-    local _origOnOtherHit = WRS.OnOtherHit
-    if type(_origOnOtherHit) == "function" then
-      WRS.OnOtherHit = function(self, _, _, attackerId, weaponId, aimType, distance, damage, isKill, bFallOnGround, States, HitPos, VictimType, IsAddHitFlow, shootID, VictimPlayerKey)
-        return _origOnOtherHit(self, nil, nil, attackerId, weaponId, aimType, distance, damage, 0, bFallOnGround, States, HitPos, VictimType, false, shootID, VictimPlayerKey)
-      end
-      print("[DisableKillReport] patched WeaponRecordSubSystem.OnOtherHit (isKill forced 0)")
-    end
+    _safePatch(WRS, "OnOtherHit", function() end, "WeaponRecordSubSystem.OnOtherHit")
 
     _safePatch(WRS, "OnHit", function() end, "WeaponRecordSubSystem.OnHit")
     _safePatch(WRS, "OnHitMonster", function() end, "WeaponRecordSubSystem.OnHitMonster")
@@ -5999,22 +6377,14 @@ local function _partE_rapzhang10()
       return false
     end
 
-    GC.SendGameOver = function(Reason)
-      print("[DisableKillReport] blocked GameplayCallbacks:SendGameOver Reason=" .. tostring(Reason))
-    end
-    print("[DisableKillReport] patched GameplayCallbacks.SendGameOver")
+    _safePatch(GC, "SendGameOver", function() end, "GameplayCallbacks.SendGameOver")
 
     return true
   end
 
   local function _PatchNetUtilSendPacket()
-    local NU = rawget(_G, "NetUtil")
-    if type(NU) ~= "table" or type(NU.SendPacket) ~= "function" then
-      print("[DisableKillReport] NetUtil.SendPacket not available, skip")
-      return false
-    end
-
-    local _origSendPacket = NU.SendPacket
+    local NG = rawget(_G, "ACU") and _G.ACU.NetGuard
+    if not NG then return false end
     local _blockedProtocols = {
       ["report_kill_and_knockdown_flow"] = true,
       ["ReportHitFlow"] = true,
@@ -6030,23 +6400,13 @@ local function _partE_rapzhang10()
       ["report_vehicle_move_drag_detail"] = true,
       ["report_character_all_drag"] = true,
       ["report_parachute_all_drag"] = true,
-      ["report_players_ping"] = false,
       ["game_over"] = true,
-      ["game_result"] = false,
-      ["game_team_result"] = false,
-      ["report_ds_match_room_data"] = false,
       ["log_shooting_miss"] = true,
       ["report_vehicle_correction"] = true,
     }
-
-    NU.SendPacket = function(protocol, ...)
-      if _blockedProtocols[protocol] == true then
-        print("[DisableKillReport] NetUtil.SendPacket BLOCKED protocol=" .. tostring(protocol))
-        return
-      end
-      return _origSendPacket(protocol, ...)
-    end
-    print("[DisableKillReport] patched NetUtil.SendPacket (filter enabled)")
+    NG.AddExact(_blockedProtocols, {"SendPacket"})
+    NG.Hook()
+    print("[DisableKillReport] NetUtil rules registered (shared NetGuard)")
     return true
   end
 
@@ -6119,16 +6479,24 @@ local function _partF_rapzhang11()
   local function _safePatch(target, key, newFn, tag)
     if type(target) ~= "table" then return false end
     if type(target[key]) ~= "function" then return false end
-    target[key] = newFn
-    print("[AC-Unified] patched " .. tostring(tag))
-    return true
+    -- Part E memasang wrapper yang mencetak tiap event. Stub no-op dari F
+    -- menggantikannya SEKALI supaya hasil akhirnya sama seperti sebelumnya
+    -- (F/G jalan setelah E) tanpa menyisakan wrapper berlapis.
+    if ACU.PatchOwner(target, key) == "E_rapzhang10" then
+      local forced = ACU.PatchForce(target, key, newFn, tag)
+      if forced then print("[AC-Unified] patched " .. tostring(tag) .. " (override E)") end
+      return forced
+    end
+    local ok = ACU.PatchOnce(target, key, newFn, tag)
+    if ok then print("[AC-Unified] patched " .. tostring(tag)) end
+    return ok
   end
 
   local function _safePatchTable(target, key, newVal, tag)
     if type(target) ~= "table" then return false end
-    target[key] = newVal
-    print("[AC-Unified] patched table " .. tostring(tag))
-    return true
+    local ok = ACU.SetOnce(target, key, newVal, tag)
+    if ok then print("[AC-Unified] patched table " .. tostring(tag)) end
+    return ok
   end
 
   local function _safeRequire(path)
@@ -6338,9 +6706,8 @@ local function _partF_rapzhang11()
     _safePatch(GC, "SendPlayerBattleResultToObserver", function() end, "GC.SendPlayerBattleResultToObserver")
     _safePatch(GC, "SendTeamBattleResultToObserver", function() end, "GC.SendTeamBattleResultToObserver")
 
-    if type(GC.GetPlayerBattleResultData) == "function" then
-      local _orig = GC.GetPlayerBattleResultData
-      GC.GetPlayerBattleResultData = function(nUID, sReason)
+    local _wrapped = ACU.WrapOnce(GC, "GetPlayerBattleResultData", function(_orig)
+      return function(nUID, sReason)
         local result = _orig(nUID, sReason)
         if type(result) == "table" then
           result.WeaponReport = nil
@@ -6357,6 +6724,8 @@ local function _partF_rapzhang11()
         end
         return result
       end
+    end, "GC.GetPlayerBattleResultData")
+    if _wrapped then
       print("[AC-Unified] patched GC.GetPlayerBattleResultData (falsify)")
     end
 
@@ -6496,13 +6865,6 @@ local function _partF_rapzhang11()
     _safePatch(WRS, "RetrieveWeaponRecord", function() return {BattleId="0",BattleMode=0,TotalWeaponRecord={}} end, "WeaponRecord.RetrieveWeaponRecord")
     _safePatch(WRS, "RetrieveOneWeaponRecord", function() return {} end, "WeaponRecord.RetrieveOneWeaponRecord")
 
-    local _origOnOtherHit = WRS.OnOtherHit
-    if type(_origOnOtherHit) == "function" then
-      WRS.OnOtherHit = function(self, _, _, attackerId, weaponId, aimType, distance, damage, isKill, bFallOnGround, States, HitPos, VictimType, IsAddHitFlow, shootID, VictimPlayerKey)
-        return _origOnOtherHit(self, nil, nil, attackerId, weaponId, aimType, distance, damage, 0, bFallOnGround, States, HitPos, VictimType, false, shootID, VictimPlayerKey)
-      end
-      print("[AC-Unified] patched WeaponRecord.OnOtherHit (isKill=0)")
-    end
 
     local WKCF = _safeRequire("GameLua.Activity.Commercialize.GamePlay.WeaponKillCounter.WeaponKillCounterFeature")
     if WKCF then
@@ -6563,24 +6925,24 @@ local function _partF_rapzhang11()
     for _, name in ipairs(_names) do
       if cfg[name] then
         local orig = cfg[name]
-        cfg[name] = { module = "GameLua.Mod.BaseMod.Common.Security.EmptyStub", side = orig.side or "DS" }
-        print("[AC-Unified] SubsystemConfig: disabled " .. name)
+        local ok = ACU.SetOnce(cfg, name,
+          { module = "GameLua.Mod.BaseMod.Common.Security.EmptyStub", side = orig.side or "DS" },
+          "SubsystemConfig." .. name)
+        if ok then print("[AC-Unified] SubsystemConfig: disabled " .. name) end
       end
     end
 
-    package.loaded["GameLua.Mod.BaseMod.Common.Security.EmptyStub"] = {
+    ACU.SetOnce(package.loaded, "GameLua.Mod.BaseMod.Common.Security.EmptyStub", {
       OnInit = function() end, OnUninit = function() end,
       ReceiveBeginPlay = function() end, ReceiveEndPlay = function() end,
-    }
+    }, "SubsystemConfig.EmptyStub")
     print("[AC-Unified] installed stub module")
 
     return true
   end
 
   local function _PatchNetUtil()
-    local NU = rawget(_G, "NetUtil")
-    if type(NU) ~= "table" then print("[AC-Unified] NetUtil not found") return false end
-
+    local NG = ACU.NetGuard
     local _blocked = {
       ["report_kill_and_knockdown_flow"]=true, ["ReportHitFlow"]=true, ["ReportFireArms"]=true,
       ["ReportSecAttackFlow"]=true, ["ReportAttackFlow"]=true, ["ReportHurtFlow"]=true,
@@ -6609,31 +6971,9 @@ local function _partF_rapzhang11()
       ["ReportAITLog"]=true, ["ReportWeaponFlow"]=true, ["ReportShootFlow"]=true,
       ["ReportMLAITLog"]=true, ["ReportTaskFlow"]=true, ["ReportAFK"]=true, ["ReportICTLog"]=true,
     }
-
-    if type(NU.SendPacket) == "function" then
-      local _orig = NU.SendPacket
-      NU.SendPacket = function(protocol, ...)
-        if _blocked[protocol] == true then
-          print("[AC-Unified] NetUtil.SendPacket BLOCKED: " .. tostring(protocol))
-          return
-        end
-        return _orig(protocol, ...)
-      end
-      print("[AC-Unified] patched NetUtil.SendPacket")
-    end
-
-    if type(NU.SendPkg) == "function" then
-      local _orig = NU.SendPkg
-      NU.SendPkg = function(protocol, ...)
-        if _blocked[protocol] == true then
-          print("[AC-Unified] NetUtil.SendPkg BLOCKED: " .. tostring(protocol))
-          return
-        end
-        return _orig(protocol, ...)
-      end
-      print("[AC-Unified] patched NetUtil.SendPkg")
-    end
-
+    NG.AddExact(_blocked)
+    NG.Hook()
+    print("[AC-Unified] NetUtil rules registered (shared NetGuard)")
     return true
   end
 
@@ -6687,9 +7027,11 @@ local function _partG_rapzhang12()
   local function _safePatch(target, key, newFn, tag)
     if type(target) ~= "table" then return false end
     if type(target[key]) ~= "function" then return false end
-    target[key] = newFn
-    print("[AC-Full] patched " .. tostring(tag))
-    return true
+    -- G adalah blok terakhir: sekali ganti stub F/E/C, lalu retry berikutnya
+    -- dilewati registry (prev.forced) sehingga tidak ada patch berulang.
+    local ok = ACU.PatchForce(target, key, newFn, tag)
+    if ok then print("[AC-Full] patched " .. tostring(tag)) end
+    return ok
   end
 
   local function _safeRequire(path)
@@ -6812,18 +7154,7 @@ local function _partG_rapzhang12()
 
   local function _BlockAllMethods(cls, name)
     if type(cls) ~= "table" then return 0 end
-    local blocked = 0
-    local toBlock = {}
-    for m, fn in pairs(cls) do
-      if type(m) == "string" and type(fn) == "function" and not _WHITELIST_METHODS[m] then
-        table.insert(toBlock, m)
-      end
-    end
-    for _, m in ipairs(toBlock) do
-      if pcall(function() cls[m] = function() end end) then
-        blocked = blocked + 1
-      end
-    end
+    local blocked = ACU.BlockMethodsOnce(cls, _WHITELIST_METHODS, "block." .. tostring(name))
     if blocked > 0 then
       print(string.format("[AC-Full] %s: blocked %d methods", name, blocked))
     end
@@ -6903,9 +7234,8 @@ local function _partG_rapzhang12()
     _safePatch(GC, "SendPlayerBattleResultToObserver", function() end, "GC.SendPlayerBattleResultToObserver")
     _safePatch(GC, "SendTeamBattleResultToObserver", function() end, "GC.SendTeamBattleResultToObserver")
 
-    if type(GC.GetPlayerBattleResultData) == "function" then
-      local _orig = GC.GetPlayerBattleResultData
-      GC.GetPlayerBattleResultData = function(nUID, sReason)
+    ACU.WrapOnce(GC, "GetPlayerBattleResultData", function(_orig)
+      return function(nUID, sReason)
         local result = _orig(nUID, sReason)
         if type(result) == "table" then
           result.WeaponReport = nil
@@ -6922,7 +7252,7 @@ local function _partG_rapzhang12()
         end
         return result
       end
-    end
+    end, "GC.GetPlayerBattleResultData")
     return true
   end
 
@@ -6937,13 +7267,8 @@ local function _partG_rapzhang12()
   local function _PatchWeaponRecord()
     local WRS = _safeRequire("GameLua.Mod.BaseMod.DS.BattleResult.WeaponRecordSubSystem") or _getSubsystem("WeaponRecordSubSystem")
     if type(WRS) == "table" then
+      -- OnOtherHit sudah di-noop oleh Part E/F lewat registry.
       _BlockAllMethods(WRS, "WeaponRecordSubSystem")
-      local _orig = WRS.OnOtherHit
-      if type(_orig) == "function" then
-        WRS.OnOtherHit = function(self, _, _, attackerId, weaponId, aimType, distance, damage, isKill, bFallOnGround, States, HitPos, VictimType, IsAddHitFlow, shootID, VictimPlayerKey)
-          return _orig(self, nil, nil, attackerId, weaponId, aimType, distance, damage, 0, bFallOnGround, States, HitPos, VictimType, false, shootID, VictimPlayerKey)
-        end
-      end
     end
     _PatchSubsystemByName("WeaponKillCounterSubsystem", "GameLua.Mod.BaseMod.GamePlay.WeaponKillCounter.WeaponKillCounterSubsystem")
     local WKCF = _safeRequire("GameLua.Activity.Commercialize.GamePlay.WeaponKillCounter.WeaponKillCounterFeature")
@@ -6990,21 +7315,27 @@ local function _partG_rapzhang12()
       "GameArchiveDataSystem","DSPlayerDataReportSubsystem",
     }
     local stubName = "GameLua.Mod.BaseMod.Common.Security.EmptyStub"
-    package.loaded[stubName] = { OnInit=function() end, OnUninit=function() end, ReceiveBeginPlay=function() end, ReceiveEndPlay=function() end }
+    ACU.SetOnce(package.loaded, stubName,
+      { OnInit=function() end, OnUninit=function() end, ReceiveBeginPlay=function() end, ReceiveEndPlay=function() end },
+      "SubsystemConfig.EmptyStub")
+    local stubbed = 0
     for _, name in ipairs(_names) do
       if cfg[name] then
         local orig = cfg[name]
-        cfg[name] = { module = stubName, side = orig.side or "DS" }
+        if ACU.SetOnce(cfg, name, { module = stubName, side = orig.side or "DS" },
+            "SubsystemConfig." .. name) then
+          stubbed = stubbed + 1
+        end
       end
     end
-    print("[AC-Full] stubbed " .. #_names .. " config entries")
+    if stubbed > 0 then
+      print("[AC-Full] stubbed " .. stubbed .. " config entries")
+    end
     return true
   end
 
   local function _PatchNetUtil()
-    local NU = rawget(_G, "NetUtil")
-    if type(NU) ~= "table" then print("[AC-Full] NetUtil not found") return false end
-
+    local NG = ACU.NetGuard
     local PROTOCOL_BLOCK_KEYWORDS = {
       "kill","knock","death","died","murder","fatal","damage","hurt","attack",
       "shoot","fire","hit","aim","recoil","spread","accuracy",
@@ -7023,119 +7354,112 @@ local function _partG_rapzhang12()
       ["game_team_result"]=true,["heartbeat"]=true,["player_exit"]=true,
       ["load_player_info"]=true,["after_result_confirm"]=true,
     }
-
-    local function _shouldBlock(protocol)
-      if type(protocol) ~= "string" then return false end
-      if PROTOCOL_WHITELIST[protocol] then return false end
-      local lower = _lower(protocol)
-      for _, kw in ipairs(PROTOCOL_BLOCK_KEYWORDS) do
-        if string.find(lower, kw, 1, true) then return true, kw end
-      end
-      return false, nil
-    end
-
-    if type(NU.SendPacket) == "function" then
-      local _orig = NU.SendPacket
-      NU.SendPacket = function(protocol, ...)
-        local block, kw = _shouldBlock(protocol)
-        if block then
-          print("[AC-Full] BLOCKED SendPacket: " .. tostring(protocol) .. " (kw=" .. tostring(kw) .. ")")
-          return
-        end
-        return _orig(protocol, ...)
-      end
-    end
-    if type(NU.SendPkg) == "function" then
-      local _orig = NU.SendPkg
-      NU.SendPkg = function(protocol, ...)
-        local block, kw = _shouldBlock(protocol)
-        if block then
-          print("[AC-Full] BLOCKED SendPkg: " .. tostring(protocol) .. " (kw=" .. tostring(kw) .. ")")
-          return
-        end
-        return _orig(protocol, ...)
-      end
-    end
-    print("[AC-Full] patched NetUtil.SendPacket / SendPkg")
+    NG.AddSoftKeywords(PROTOCOL_BLOCK_KEYWORDS, {"SendPacket", "SendPkg"})
+    NG.Allow(PROTOCOL_WHITELIST, {"SendPacket", "SendPkg"})
+    NG.Hook()
+    print("[AC-Full] NetUtil rules registered (shared NetGuard)")
     return true
   end
 
   local ALERT_KEYWORDS = {
     "securityalert","security alert","anti-cheat","anticheat","anti cheat",
     "cheat detected","cheatdetected","suspicious","violation","warning",
+    -- pesan observation 4.7: server mengirim teks ini lewat ban_reason/tips
+    "abnormal match","abnormal behavior","closely monitored","stringent security",
+    "no match rewards","zero profit","zero-profit","observation","monitored",
+    "securitynotify","warningpenalty",
     "异常","作弊","外挂","检测到","违规","封号","禁止",
     "banned","ban","kick","kicked","disconnect","terminated",
   }
 
+  local POPUP_BLOCK_UI_NAMES = {
+    securitynotifynormaltips = true,
+    securitynotifystrongtips = true,
+    warningpenalty = true,
+    lowmatchbanitem = true,
+    bannotice = true,
+    kicknotice = true,
+  }
+
+  local function _isBlockedUiName(name)
+    if type(name) ~= "string" or name == "" then return false end
+    local low = string.lower(name)
+    local compact = low:gsub("[%s_%-]", "")
+    if POPUP_BLOCK_UI_NAMES[compact] then return true end
+    return _containsAny(name, ALERT_KEYWORDS)
+  end
+
   local function _PatchPopup()
     local IngameTipsTools = _safeRequire("GameLua.Mod.BaseMod.Common.UI.InGameTipsTools")
     if IngameTipsTools then
-      if type(IngameTipsTools.ShowMsgBox) == "function" then
-        local _orig = IngameTipsTools.ShowMsgBox
-        IngameTipsTools.ShowMsgBox = function(showType, title, msg, ...)
+      local okMsg = ACU.WrapOnce(IngameTipsTools, "ShowMsgBox", function(_orig)
+        return function(showType, title, msg, ...)
           if _containsAny(msg, ALERT_KEYWORDS) or _containsAny(title, ALERT_KEYWORDS) then
             print("[AC-Full] blocked ShowMsgBox: " .. tostring(title))
             return
           end
           return _orig(showType, title, msg, ...)
         end
-        print("[AC-Full] patched IngameTipsTools.ShowMsgBox")
-      end
-      if type(IngameTipsTools.ShowNotice) == "function" then
-        local _orig = IngameTipsTools.ShowNotice
-        IngameTipsTools.ShowNotice = function(msg, ...)
+      end, "Popup.IngameTipsTools.ShowMsgBox")
+      if okMsg then print("[AC-Full] patched IngameTipsTools.ShowMsgBox") end
+
+      local okNotice = ACU.WrapOnce(IngameTipsTools, "ShowNotice", function(_orig)
+        return function(msg, ...)
           if _containsAny(msg, ALERT_KEYWORDS) then
             print("[AC-Full] blocked ShowNotice")
             return
           end
           return _orig(msg, ...)
         end
-        print("[AC-Full] patched IngameTipsTools.ShowNotice")
-      end
-      if type(IngameTipsTools.BattleGeneralTip) == "function" then
-        local _orig = IngameTipsTools.BattleGeneralTip
-        IngameTipsTools.BattleGeneralTip = function(tipID, ...)
-          return _orig(tipID, ...)
-        end
-      end
+      end, "Popup.IngameTipsTools.ShowNotice")
+      if okNotice then print("[AC-Full] patched IngameTipsTools.ShowNotice") end
     end
 
-    if type(UIManager) == "table" and type(UIManager.ShowUI) == "function" then
-      local _orig = UIManager.ShowUI
-      UIManager.ShowUI = function(uiConfig, ...)
-        local name = type(uiConfig) == "table" and tostring(uiConfig.UIName or uiConfig.Name or "") or tostring(uiConfig or "")
-        if _containsAny(name, ALERT_KEYWORDS) then
-          print("[AC-Full] blocked UIManager.ShowUI: " .. name)
-          return
+    if type(UIManager) == "table" then
+      local okUI = ACU.WrapOnce(UIManager, "ShowUI", function(_orig)
+        return function(uiConfig, ...)
+          local name = ""
+          if type(uiConfig) == "table" then
+            name = tostring(uiConfig.UIName or uiConfig.Name or uiConfig.keyName
+              or uiConfig.moduleName or uiConfig.path or "")
+          else
+            name = tostring(uiConfig or "")
+          end
+          if _isBlockedUiName(name) then
+            print("[AC-Full] blocked UIManager.ShowUI: " .. name)
+            return
+          end
+          return _orig(uiConfig, ...)
         end
-        return _orig(uiConfig, ...)
-      end
-      print("[AC-Full] patched UIManager.ShowUI")
+      end, "Popup.UIManager.ShowUI")
+      if okUI then print("[AC-Full] patched UIManager.ShowUI") end
     end
 
     if type(_G.ShowNotice) == "function" then
-      local _orig = _G.ShowNotice
-      _G.ShowNotice = function(msg, ...)
-        if _containsAny(msg, ALERT_KEYWORDS) then
-          print("[AC-Full] blocked global ShowNotice")
-          return
+      local okGlobal = ACU.WrapOnce(_G, "ShowNotice", function(_orig)
+        return function(msg, ...)
+          if _containsAny(msg, ALERT_KEYWORDS) then
+            print("[AC-Full] blocked global ShowNotice")
+            return
+          end
+          return _orig(msg, ...)
         end
-        return _orig(msg, ...)
-      end
-      print("[AC-Full] patched global ShowNotice")
+      end, "Popup._G.ShowNotice")
+      if okGlobal then print("[AC-Full] patched global ShowNotice") end
     end
 
     local MsgBox = _safeRequire("client.slua.logic.common.logic_common_msg_box")
     if MsgBox and type(MsgBox.Show) == "function" then
-      local _orig = MsgBox.Show
-      MsgBox.Show = function(msgType, title, msg, ...)
-        if _containsAny(msg, ALERT_KEYWORDS) or _containsAny(title, ALERT_KEYWORDS) then
-          print("[AC-Full] blocked MsgBox.Show: " .. tostring(title))
-          return
+      local okBox = ACU.WrapOnce(MsgBox, "Show", function(_orig)
+        return function(msgType, title, msg, ...)
+          if _containsAny(msg, ALERT_KEYWORDS) or _containsAny(title, ALERT_KEYWORDS) then
+            print("[AC-Full] blocked MsgBox.Show: " .. tostring(title))
+            return
+          end
+          return _orig(msgType, title, msg, ...)
         end
-        return _orig(msgType, title, msg, ...)
-      end
-      print("[AC-Full] patched logic_common_msg_box.Show")
+      end, "Popup.MsgBox.Show")
+      if okBox then print("[AC-Full] patched logic_common_msg_box.Show") end
     end
 
     for _, path in ipairs({
@@ -7148,14 +7472,16 @@ local function _partG_rapzhang12()
       if M then
         for _, m in ipairs({"Show","ShowMessage","ShowAlert","ShowDialog","Alert","Confirm"}) do
           if type(M[m]) == "function" then
-            local _orig = M[m]
-            M[m] = function(title, msg, ...)
-              if _containsAny(msg, ALERT_KEYWORDS) or _containsAny(title, ALERT_KEYWORDS) then
-                print("[AC-Full] blocked " .. path .. "." .. m)
-                return
+            local okMod = ACU.WrapOnce(M, m, function(_orig)
+              return function(title, msg, ...)
+                if _containsAny(msg, ALERT_KEYWORDS) or _containsAny(title, ALERT_KEYWORDS) then
+                  print("[AC-Full] blocked " .. path .. "." .. m)
+                  return
+                end
+                return _orig(title, msg, ...)
               end
-              return _orig(title, msg, ...)
-            end
+            end, "Popup." .. path .. "." .. m)
+            if okMod then print("[AC-Full] patched " .. path .. "." .. m) end
           end
         end
       end
@@ -7230,6 +7556,8 @@ local function _partG_rapzhang12()
     local ok, GI = pcall(import, "STExtraGameInstance")
     if not ok then return false end
     local ok2, inst = pcall(GI.GetInstance)
+    if not (ok2 and inst) then return false end
+    if not ACU.Once("G.consoleVars") then return true end
     if ok2 and inst then
       pcall(function() inst:ExecuteCMD("higgs.EnableClientShowSecurityAlert", 0) end)
       pcall(function() inst:ExecuteCMD("higgs.EnableServerAlert", 0) end)
@@ -7253,12 +7581,15 @@ local function _partG_rapzhang12()
         if string.find(modulePath, "GameLua", 1, true) then
           local matched = _containsAny(modulePath, PATH_KEYWORDS)
           if matched then
-            count = count + _BlockAllMethods(mod, modulePath)
+            count = count + ACU.BlockMethodsOnce(mod, _WHITELIST_METHODS,
+              "nuclear." .. modulePath)
           end
         end
       end
     end
-    print("[AC-Full] nuclear auto-detect: " .. count .. " methods blocked")
+    if count > 0 then
+      print("[AC-Full] nuclear auto-detect: " .. count .. " methods blocked")
+    end
     return count
   end
 
@@ -7318,10 +7649,1678 @@ local function _partG_rapzhang12()
 end  -- END _partG_rapzhang12
 
 -- ============================================================================
+-- PART H: bypass ban + pak check (build 4.7.0.21759)
+-- ----------------------------------------------------------------------------
+-- Ban-related:
+--   SecurityNotifyPCFeature:Notify / SyncBanInfo / ClientRPC_WeakTips /
+--   ClientRPC_NormalTips / ClientRPC_StrongTips / ClientRPC_SyncBanID
+--   TxMissionHandler.ShowErrorTips: 100251031 / 100251051 di-skip
+--   PlayerStateBase:SetSuspiciousFlag
+-- Pak/map check: DEFAULT OFF. Saat boot Part H tidak menyentuh apa pun
+-- yang berhubungan dengan puffer/remote config, jadi login aman.
+-- Nyalakan setelah masuk lobby:
+--   _G.AntiCheatBypass.EnablePakBypass()
+-- Yang dipasang saat enabled:
+--   HDmpveRemoteConfigGetBool("MapPakFileBinDiffCheck") -> false
+--   (InitMapPaks menganggap pak map_pakfilebindiff sudah ada, state Done,
+--    tanpa cek/download bin-diff)
+-- Hook pak tambahan di _G.AntiCheatPakConfig, semuanya default OFF:
+--   fakeFileExists  : Client.IsFileExistInCSCWithCheckRaw("PakFileBinDiff")
+--                     -> true (hanya file bin-diff, bukan semua path)
+--   banDownload     : PufferSwitch.BanDownload = true / false
+--   checkCorrupted  : PufferMapManager.CheckCorrupted -> false
+--
+-- Diekspor ke _G.AntiCheatBypass supaya loader 2.lua bisa memanggil Install().
+-- ============================================================================
+local BANPAK_VERSION = "4.7.0.21759"
+local BANPAK_TICK_INTERVAL = 2.0
+local BANPAK_TIP_IDS = { [100251031] = true, [100251051] = true }
+
+local BanPakHooked = {
+  ban = false,
+  tips = false,
+  observation = false,
+  suspicious = false,
+  csc = false,
+  remoteSwitch = false,
+  pufferSwitch = false,
+  corrupted = false,
+}
+local BanPakNextTick = 0.0
+local BanPakAnnounced = false
+local BanPakPakAnnounced = false
+local BanPakRetryScheduled = false
+
+local function BanPakNop() return true end
+local function BanPakRetTrue() return true end
+local function BanPakRetFalse() return false end
+
+-- Patch lewat registry ACU kalau ada (supaya tidak dobel dengan Part C/G),
+-- dan tetap jalan sendiri saat blok ini dieksekusi tanpa ACU (harness).
+local function BanPakPatch(target, key, newFn, tag)
+  if type(target) ~= "table" then return false end
+  if type(target[key]) ~= "function" then return false end
+  local acu = rawget(_G, "ACU")
+  if type(acu) == "table" and type(acu.PatchOnce) == "function" then
+    return acu.PatchOnce(target, key, newFn, tag)
+  end
+  target[key] = newFn
+  return true
+end
+
+local function BanPakSetOnce(target, key, value, tag)
+  if type(target) ~= "table" then return false end
+  local acu = rawget(_G, "ACU")
+  if type(acu) == "table" and type(acu.SetOnce) == "function" then
+    return acu.SetOnce(target, key, value, tag)
+  end
+  if target[key] ~= nil then return false end
+  target[key] = value
+  return true
+end
+
+local BANPAK_OBSERVATION_KEYWORDS = {
+  "abnormal match", "abnormal behavior", "closely monitored",
+  "stringent security", "no match rewards", "zero profit",
+  "zero-profit", "observation", "monitored",
+}
+
+local function BanPakLooksLikeObservation(text)
+  if type(text) ~= "string" or text == "" then return false end
+  local low = string.lower(text)
+  for i = 1, #BANPAK_OBSERVATION_KEYWORDS do
+    if string.find(low, BANPAK_OBSERVATION_KEYWORDS[i], 1, true) then return true end
+  end
+  return false
+end
+
+local function BanPakSafeLoadModule(name)
+  local m = package.loaded[name]
+  if m ~= nil then return m end
+  local ok, r = pcall(require, name)
+  if ok then return r end
+  return nil
+end
+
+local function BanPakNow()
+  if type(os) == "table" then
+    if type(os.clock) == "function" then
+      local ok, v = pcall(os.clock)
+      if ok and type(v) == "number" then return v end
+    end
+    if type(os.time) == "function" then
+      local ok, v = pcall(os.time)
+      if ok and type(v) == "number" then return v end
+    end
+  end
+  return 0
+end
+
+local function BanPakApplySecurityNotify()
+  local SecurityNotify = BanPakSafeLoadModule("GameLua.Mod.BaseMod.Common.Security.SecurityNotifyPCFeature")
+  if type(SecurityNotify) ~= "table" then return false end
+  local hit = false
+  for _, key in ipairs({
+    "Notify", "SyncBanInfo", "ClientRPC_WeakTips",
+    "ClientRPC_NormalTips", "ClientRPC_StrongTips", "ClientRPC_SyncBanID",
+  }) do
+    if BanPakPatch(SecurityNotify, key, BanPakNop, "BanS." .. key) then
+      hit = true
+    end
+  end
+  if hit then
+    if not BanPakHooked.ban then
+      print("[ACU-Ban] SecurityNotifyPCFeature dimatikan")
+    end
+    BanPakHooked.ban = true
+  end
+  return hit
+end
+
+-- ClientBanLogic 4.7 (path yang benar; Part C memakai path lama yang tidak ada).
+local function BanPakApplyClientBanLogic()
+  local BL = BanPakSafeLoadModule("GameLua.Mod.BaseMod.Client.Ban.ClientBanLogic")
+  if type(BL) ~= "table" then return false end
+  local hit = false
+  for _, key in ipairs({
+    "OnSyncBanInfo", "OnNotifyWarningTips", "OnSyncMicSuspicious",
+    "OnSyncMicPreFilter", "PostBannedNotif", "OnVoiceBanNotify",
+    "OnRealTimeVoiceBanNotify", "ReqBanInfo",
+  }) do
+    if BanPakPatch(BL, key, BanPakNop, "BanL." .. key) then
+      hit = true
+    end
+  end
+  if hit then
+    BanPakHooked.ban = true
+    print("[ACU-Ban] ClientBanLogic notification dimatikan")
+  end
+  return hit
+end
+
+local function BanPakApplyBanTips()
+  local TxMissionHandler = BanPakSafeLoadModule("client.network.Protocol.TxMissionHandler")
+  if type(TxMissionHandler) ~= "table" then return false end
+  local hit = false
+  local current = TxMissionHandler.ShowErrorTips
+  if type(current) == "function" then
+    local origTips = current
+    local wrapper = function(error_id, ext_info, invalid_members)
+      if BANPAK_TIP_IDS[tonumber(error_id)] then
+        print("[ACU-Ban] ban tip dilewati id=" .. tostring(error_id))
+        return
+      end
+      return origTips(error_id, ext_info, invalid_members)
+    end
+    if BanPakPatch(TxMissionHandler, "ShowErrorTips", wrapper, "BanTips.ShowErrorTips") then
+      BanPakHooked.tipsWrapper = wrapper
+      hit = true
+    end
+    BanPakHooked.tips = true
+  end
+
+  -- Popup "abnormal match behavior / closely monitored / no match rewards"
+  -- datang dari ShowErrorPopUpWindows (banInfo + remainTime DHMS). Fungsi ini
+  -- khusus popup ban/TPlan, jadi aman dimatikan seluruhnya.
+  if BanPakPatch(TxMissionHandler, "ShowErrorPopUpWindows", BanPakNop, "BanTips.ShowErrorPopUpWindows") then
+    hit = true
+  end
+  if BanPakHooked.tips and not BanPakHooked.tipsHooked then
+    BanPakHooked.tipsHooked = true
+    print("[ACU-Ban] popup ban/observation dimatikan")
+  end
+  return hit
+end
+
+-- Observation / warning-penalty UI: mail face, IDIP tips, dan teks tips.
+local function BanPakApplyObservation()
+  local hit = false
+
+  local SecuritySystem = BanPakSafeLoadModule("client.slua.logic.security.logic_security")
+  if type(SecuritySystem) == "table" then
+    for _, key in ipairs({
+      "CheckShowReportSucceedWarningFace", "ShowReportSucceedWarningFace",
+      "CanShowWarningFace", "CheckIsSlapWarningPenalty",
+    }) do
+      if BanPakPatch(SecuritySystem, key, BanPakNop, "Obs.SecSys." .. key) then
+        hit = true
+      end
+    end
+  end
+
+  local BanLogin = BanPakSafeLoadModule("client.slua.logic.login.ban_login_module")
+  if type(BanLogin) == "table" then
+    if BanPakPatch(BanLogin, "ShowIDIPBanTips", BanPakNop, "Obs.LoginBanTips") then
+      hit = true
+    end
+  end
+
+  local NormalTips = BanPakSafeLoadModule("GameLua.Mod.BaseMod.Client.Security.UI.SecurityNotifyNormalTips")
+  if type(NormalTips) == "table" then
+    if BanPakPatch(NormalTips, "SetTipsText", BanPakNop, "Obs.NormalTips") then
+      hit = true
+    end
+  end
+
+  local TipsTools = BanPakSafeLoadModule("GameLua.Mod.BaseMod.Common.UI.InGameTipsTools")
+  if type(TipsTools) == "table" and type(TipsTools.BattleGeneralTip) == "function"
+     and BanPakHooked.observationTipWrapper ~= TipsTools.BattleGeneralTip then
+    local origTip = TipsTools.BattleGeneralTip
+    local wrapper = function(tipID, text, ...)
+      if BanPakLooksLikeObservation(text) then
+        print("[ACU-Ban] tips observation dilewati")
+        return
+      end
+      return origTip(tipID, text, ...)
+    end
+    if BanPakPatch(TipsTools, "BattleGeneralTip", wrapper, "Obs.BattleGeneralTip") then
+      BanPakHooked.observationTipWrapper = wrapper
+      hit = true
+    end
+  end
+
+  -- Indikator HUD "closely monitored" (autoCreate, tidak lewat ShowUI).
+  -- Kalau CheckIsLowMatch() true, item ini muncul di CanvasPanel_42.
+  local LowMatch = BanPakSafeLoadModule("GameLua.Mod.BaseMod.Client.InGameUI.LowMatchBanItem")
+  if type(LowMatch) == "table" then
+    local function _closeLowMatch(self)
+      if type(self) == "table" and type(self.CloseSelf) == "function" then
+        pcall(self.CloseSelf, self)
+      end
+    end
+    if BanPakPatch(LowMatch, "CheckShowLowMatch", _closeLowMatch,
+        "Obs.LowMatchBanItem.CheckShowLowMatch") then
+      hit = true
+    end
+    if BanPakPatch(LowMatch, "PostShowUIEnd", _closeLowMatch,
+        "Obs.LowMatchBanItem.PostShowUIEnd") then
+      hit = true
+    end
+  end
+
+  -- Jangan biarkan UI yang sama dibuat otomatis saat match start.
+  local UICfg = BanPakSafeLoadModule("GameLua.Mod.BaseMod.Client.Config.UIConfig.UIConfig_Security")
+  if type(UICfg) == "table" and type(UICfg.LowMatchBanItem) == "table" then
+    if BanPakSetOnce(UICfg.LowMatchBanItem, "autoCreate", false,
+        "Obs.LowMatchBanItem.autoCreate") then
+      hit = true
+    end
+  end
+
+  if hit then
+    BanPakHooked.observation = true
+    print("[ACU-Ban] observation/warning-penalty UI dimatikan")
+  end
+  return hit
+end
+
+local function BanPakApplySuspiciousFlag()
+  local PlayerStateBase = BanPakSafeLoadModule("GameLua.GameCore.Framework.PlayerStateBase")
+  if type(PlayerStateBase) ~= "table" then return false end
+  if type(PlayerStateBase.SetSuspiciousFlag) ~= "function" then return false end
+  PlayerStateBase.SetSuspiciousFlag = BanPakNop
+  BanPakHooked.suspicious = true
+  return true
+end
+
+-- Konfigurasi hook pak. Bisa diubah kapan saja lalu panggil
+-- _G.AntiCheatBypass.PakCheck() untuk menerapkan ulang.
+--
+-- fakeFileExists / banDownload / checkCorrupted sengaja OFF secara default:
+-- memaksa Client.* -> true membuat game mengira pak ada padahal tidak, dan
+-- memaksa BanDownload = false justru MENGAKTIFKAN alur download puffer
+-- (lihat InitMapPaks: defaultComplete = (not bSkipDepends) or BanDownload).
+-- Keduanya pernah membuat koneksi tidak masuk.
+-- enabled = false -> Part H HANYA memasang hook ban. Tidak ada satu pun
+-- hook pak/puffer yang dipasang saat boot, jadi login tidak tersentuh.
+-- Nyalakan setelah berhasil masuk lobby:
+--   _G.AntiCheatBypass.EnablePakBypass()
+local BanPakConfig = _G.AntiCheatPakConfig or {
+  enabled        = false,   -- master switch bypass pak (default OFF)
+  binDiffCheck   = true,    -- paksa MapPakFileBinDiffCheck = false (cek pak 21759)
+  fakeFileExists = false,   -- Client.IsFileExistInCSCWithCheckRaw("PakFileBinDiff") -> true
+  banDownload    = "keep",  -- "keep" | true (matikan download) | false (aktifkan download)
+  checkCorrupted = "keep",  -- "keep" | false (jangan hapus file *.corrupted)
+}
+BanPakConfig.enabled = BanPakConfig.enabled == true
+_G.AntiCheatPakConfig = BanPakConfig
+
+local function BanPakApplyClientPakCheck()
+  if BanPakConfig.fakeFileExists ~= true then return false end
+  local ClientTbl = rawget(_G, "Client")
+  if type(ClientTbl) ~= "table" then return false end
+  -- Hanya cek file bin-diff yang dipalsukan. IsFileExistsWithOutPakCheck
+  -- sengaja TIDAK disentuh: kalau semua path dianggap ada, game bisa mencari
+  -- pak di folder puffer padahal file-nya ada di obb.
+  local orig = ClientTbl.IsFileExistInCSCWithCheckRaw
+  if type(orig) ~= "function" then return false end
+  if BanPakHooked.cscWrapper and ClientTbl.IsFileExistInCSCWithCheckRaw == BanPakHooked.cscWrapper then
+    BanPakHooked.csc = true
+    return true
+  end
+  local wrapper = function(name, ...)
+    if type(name) == "string" and name:find("PakFileBinDiff", 1, true) then return true end
+    return orig(name, ...)
+  end
+  local ok = pcall(function() ClientTbl.IsFileExistInCSCWithCheckRaw = wrapper end)
+  if not ok then return false end
+  BanPakHooked.cscWrapper = wrapper
+  BanPakHooked.csc = true
+  return true
+end
+
+local function BanPakApplyRemoteSwitch()
+  if BanPakConfig.binDiffCheck == false then return false end
+  local RemoteCfg = rawget(_G, "HDmpveRemote")
+  if type(RemoteCfg) ~= "table" then return false end
+  if type(RemoteCfg.HDmpveRemoteConfigGetBool) ~= "function" then return false end
+  if RemoteCfg.__rzPakSwitchHook then
+    BanPakHooked.remoteSwitch = true
+    return true
+  end
+  if BanPakHooked.remoteWrapper and RemoteCfg.HDmpveRemoteConfigGetBool == BanPakHooked.remoteWrapper then
+    BanPakHooked.remoteSwitch = true
+    return true
+  end
+  local origGet = RemoteCfg.HDmpveRemoteConfigGetBool
+  local wrapper = function(key, def)
+    if key == "MapPakFileBinDiffCheck" then return false end
+    return origGet(key, def)
+  end
+  local ok = pcall(function() RemoteCfg.HDmpveRemoteConfigGetBool = wrapper end)
+  if not ok then return false end
+  BanPakHooked.origRemoteGet = origGet
+  BanPakHooked.remoteWrapper = wrapper
+  pcall(function() RemoteCfg.__rzPakSwitchHook = true end)
+  BanPakHooked.remoteSwitch = true
+  return true
+end
+
+local function BanPakApplyPufferSwitch()
+  local mode = BanPakConfig.banDownload
+  if mode ~= true and mode ~= false then return false end
+  local PufferSwitch = BanPakSafeLoadModule("client.slua.logic.download.puffer_switch")
+  if type(PufferSwitch) ~= "table" then return false end
+  PufferSwitch.BanDownload = mode
+  BanPakHooked.pufferSwitch = true
+  return true
+end
+
+local function BanPakApplyCheckCorrupted()
+  if BanPakConfig.checkCorrupted ~= false then return false end
+  local MapManager = BanPakSafeLoadModule("client.slua.logic.download.puffer.map.puffer_map_manager")
+  if type(MapManager) ~= "table" then return false end
+  if type(MapManager.CheckCorrupted) ~= "function" then return false end
+  MapManager.CheckCorrupted = BanPakRetFalse
+  BanPakHooked.corrupted = true
+  return true
+end
+
+local BanPak = {
+  __rzModule = "anticheat",
+  Version = BANPAK_VERSION,
+  TickInterval = BANPAK_TICK_INTERVAL,
+  BanTipIds = { 100251031, 100251051 },
+  Config = BanPakConfig,
+}
+
+function BanPak.BanLogic()
+  local ok = false
+  pcall(function() ok = BanPakApplySecurityNotify() or ok end)
+  pcall(function() ok = BanPakApplyClientBanLogic() or ok end)
+  pcall(function() ok = BanPakApplyBanTips() or ok end)
+  pcall(function() ok = BanPakApplyObservation() or ok end)
+  pcall(function() ok = BanPakApplySuspiciousFlag() or ok end)
+  pcall(function()
+    -- GameplayCallbacks.OnDSPlayerStateChanged di 2.lua sudah memfilter
+    -- state banned/cheatdetected/violationdetected/integrityfailure.
+    if _G.GameplayCallbacks and type(_G.GameplayCallbacks.OnDSPlayerStateChanged) == "function" then
+      BanPakHooked.ban = true
+      ok = true
+    end
+  end)
+  return ok
+end
+
+function BanPak.PakCheck()
+  local ok = false
+  pcall(function() ok = BanPakApplyClientPakCheck() or ok end)
+  pcall(function() ok = BanPakApplyRemoteSwitch() or ok end)
+  pcall(function() ok = BanPakApplyPufferSwitch() or ok end)
+  pcall(function() ok = BanPakApplyCheckCorrupted() or ok end)
+  return ok
+end
+
+function BanPak.EnablePakBypass()
+  BanPakConfig.enabled = true
+  local ok = false
+  pcall(function() ok = BanPak.PakCheck() end)
+  if not BanPakPakAnnounced then
+    BanPakPakAnnounced = true
+    print("[ACU-Ban] bypass pak aktif (build " .. BANPAK_VERSION .. ")")
+  end
+  return ok
+end
+
+function BanPak.DisablePakBypass()
+  BanPakConfig.enabled = false
+  local RemoteCfg = rawget(_G, "HDmpveRemote")
+  if type(RemoteCfg) == "table" and BanPakHooked.origRemoteGet then
+    pcall(function()
+      if RemoteCfg.HDmpveRemoteConfigGetBool == BanPakHooked.remoteWrapper then
+        RemoteCfg.HDmpveRemoteConfigGetBool = BanPakHooked.origRemoteGet
+      end
+    end)
+    pcall(function() RemoteCfg.__rzPakSwitchHook = nil end)
+  end
+  BanPakHooked.remoteSwitch = false
+  BanPakHooked.remoteWrapper = nil
+  BanPakHooked.origRemoteGet = nil
+  return true
+end
+
+function BanPak.Install()
+  local okBan = false
+  pcall(function() okBan = BanPak.BanLogic() end)
+  local okPak = false
+  if BanPakConfig.enabled == true then
+    pcall(function() okPak = BanPak.PakCheck() end)
+  end
+  if okBan and not BanPakAnnounced then
+    BanPakAnnounced = true
+    print("[ACU-Ban] bypass ban aktif (build " .. BANPAK_VERSION .. "); bypass pak " ..
+      (BanPakConfig.enabled and "AKTIF" or "OFF"))
+  end
+  return okBan or okPak
+end
+
+function BanPak.Tick(force)
+  local now = BanPakNow()
+  if not force and now < BanPakNextTick then return end
+  BanPakNextTick = now + BANPAK_TICK_INTERVAL
+  BanPak.Install()
+end
+
+function BanPak.Status()
+  local copy = {}
+  for k, v in pairs(BanPakHooked) do
+    if type(v) ~= "function" then copy[k] = v end
+  end
+  copy.config = {}
+  for k, v in pairs(BanPakConfig) do copy.config[k] = v end
+  return copy
+end
+
+_G.AntiCheatBypass = BanPak
+if ACU then ACU.BanPak = BanPak end
+_G.BanLogicBypass = BanPak.BanLogic
+_G.PakCheckBypass = BanPak.PakCheck
+_G.EnablePakBypass = BanPak.EnablePakBypass
+_G.DisablePakBypass = BanPak.DisablePakBypass
+_G.RapzhangBanPakTick = function() BanPak.Tick() end
+
+local function _partH_ban_pak_check()
+  BanPak.Install()
+  -- Retry mandiri kalau file ini dipakai tanpa tick dari 2.lua.
+  if not BanPakRetryScheduled and type(Game) == "table" and type(Game.SetTimer) == "function" then
+    BanPakRetryScheduled = true
+    for _, delay in ipairs({1, 3, 5, 10, 20, 30}) do
+      pcall(Game.SetTimer, delay, false, function()
+        pcall(BanPak.Install)
+      end)
+    end
+  end
+  return BanPak
+end
+
+-- ============================================================================
+-- PART I: pak guard bypass (build 4.7.0.21760)
+-- ----------------------------------------------------------------------------
+-- Latar belakang (hasil decode pak 4.7.0.21760):
+--   Pak ini adalah build pertama yang footer-nya membawa signature index RSA
+--   yang VALID (`pak verify` -> "signature ok"). Di 4.7.0.21756 signature-nya
+--   dummy: blob-nya sama persis antara pak original dan pak hasil repack, dan
+--   tidak cocok dengan index hash. Artinya mulai 21760 pak punya segel.
+--
+--   Pemeriksaan paknya sendiri TIDAK ada di Lua pak ini. 19/19 file Lua sudah
+--   di-decode, dan satu-satunya API pak yang dipakai cuma:
+--     Client.IsFileExistsWithOutPakCheck, Client.IsMounted, Client.MountPakFile,
+--     Client.ProjectSavedDir, PufferMapManager:GetDependMapFiles/MountFeaturesODPak
+--   Itu fungsi mount, bukan verifikasi. Verifikasinya native, di libUE4:
+--     SecurityPak.cpp -> CheckLocalPakContentHash, pakHashList,
+--     CheckFilesInPakLite, RPC_ServerAddInvalidFilesInPakLite,
+--     OnServerReceiveInvalidFilesInPakLite, OnPakFileCRCCheck
+--
+-- Karena itu Part I tidak "menghapus" pemeriksaan native (tidak mungkin dari
+-- Lua). Yang dikerjakan: menutup semua jalur yang masih bisa disentuh Lua
+-- supaya pak modifikasi tidak dilaporkan/dihapus/di-replace, plus diagnosis
+-- untuk memastikan jalur mana yang benar-benar dipakai di device.
+--
+-- DEFAULT OFF. Nyalakan dengan:
+--   _G.AntiCheatBypass.EnablePakGuard()      (atau _G.EnablePakGuard())
+-- Matikan:
+--   _G.AntiCheatBypass.DisablePakGuard()
+--
+-- Konfigurasi ada di _G.AntiCheatPakGuard. Kalau login bermasalah, cukup
+-- DisablePakGuard(); semuanya kembali ke fungsi asli.
+-- ============================================================================
+local PAKGUARD_VERSION = "4.7.0.21760"
+
+local PakGuardConfig = _G.AntiCheatPakGuard or {
+  enabled           = false, -- master switch
+  blockReports      = true,  -- blokir RPC laporan pak tidak valid
+  hookMount         = true,  -- MountPakFile: catat + retry sekali
+  hookChecks        = true,  -- CheckLocalPakContentHash / CheckFilesInPak*: catat
+  forceChecksPass   = false, -- paksa boolean/number/table hasil check jadi "bersih"
+                             -- (string hash TIDAK diubah, tidak bisa dipalsukan)
+  forceFileExist    = false, -- IsFileExistsWithPakCheck -> true saat false
+  clearHashList     = true,  -- kosongkan pakHashList di GameFrontendHUD
+  extraPaks         = {},    -- nama pak di Saved/Paks yang dipaksa mount
+  verbose           = true,
+}
+PakGuardConfig.enabled = PakGuardConfig.enabled == true
+_G.AntiCheatPakGuard = PakGuardConfig
+
+local PakGuardHooked = {
+  mount = false,
+  checks = 0,
+  reports = false,
+  hashList = false,
+  extra = false,
+}
+local PakGuardWrappers = {}
+local PakGuardOrig = {}
+local PakGuardTraceLog = {}
+local PakGuardTraceMax = 48
+local PakGuardAnnounced = false
+local PakGuardRetryScheduled = false
+local PakGuardNextTick = 0.0
+
+-- RPC/nama paket yang dipakai client untuk melaporkan pak tidak valid.
+-- Dicek case-insensitive dan substring, karena nama final bisa dibungkus
+-- prefix/suffix oleh NetUtil.
+local PAKGUARD_REPORT_NAMES = {
+  "rpc_serveraddinvalidfilesinpaklite",
+  "on_pak_file_crc_check",
+  "report_invalid_pak",
+  "report_pak_invalid",
+  "report_pak_hash",
+  "report_pakfile",
+  "report_missing_pak",
+}
+
+local function PakGuardNow()
+  if type(os) == "table" and type(os.clock) == "function" then
+    local ok, v = pcall(os.clock)
+    if ok and type(v) == "number" then return v end
+  end
+  if type(os) == "table" and type(os.time) == "function" then
+    local ok, v = pcall(os.time)
+    if ok and type(v) == "number" then return v end
+  end
+  return 0
+end
+
+local function PakGuardShort(v)
+  local t = type(v)
+  if t == "string" then
+    if #v > 96 then return v:sub(1, 96) .. "..." end
+    return v
+  end
+  if t == "number" or t == "boolean" or t == "nil" then return tostring(v) end
+  if t == "table" then return "table(" .. tostring(#v) .. ")" end
+  return "<" .. t .. ">"
+end
+
+local function PakGuardTrace(tag, a, b)
+  local line = string.format("%s | %s | %s", tostring(tag),
+    PakGuardShort(a), PakGuardShort(b))
+  PakGuardTraceLog[#PakGuardTraceLog + 1] = line
+  if #PakGuardTraceLog > PakGuardTraceMax then
+    table.remove(PakGuardTraceLog, 1)
+  end
+  if PakGuardConfig.verbose then
+    print("[ACU-Pak] " .. line)
+  end
+end
+
+local function PakGuardIsReportName(name)
+  if type(name) ~= "string" then return false end
+  local lower = name:lower()
+  for _, needle in ipairs(PAKGUARD_REPORT_NAMES) do
+    if lower:find(needle, 1, true) then return true end
+  end
+  return false
+end
+
+-- Bungkus satu fungsi Client.*; simpan aslinya supaya bisa dikembalikan.
+local function PakGuardWrapClient(key, factory)
+  local ClientTbl = rawget(_G, "Client")
+  if type(ClientTbl) ~= "table" then return false end
+  local current = ClientTbl[key]
+  if type(current) ~= "function" then return false end
+  if PakGuardWrappers[key] and current == PakGuardWrappers[key] then
+    return true
+  end
+  local orig = current
+  local ok, wrapper = pcall(factory, orig, key)
+  if not ok or type(wrapper) ~= "function" then return false end
+  local applied = pcall(function() ClientTbl[key] = wrapper end)
+  if not applied then return false end
+  PakGuardOrig[key] = orig
+  PakGuardWrappers[key] = wrapper
+  return true
+end
+
+local function PakGuardApplyMountHook()
+  if PakGuardConfig.hookMount ~= true then return false end
+  local ok = PakGuardWrapClient("MountPakFile", function(orig, key)
+    return function(path, ...)
+      local result = orig(path, ...)
+      PakGuardTrace("MountPakFile", path, result)
+      if result == false then
+        local retryOk, retryResult = pcall(orig, path, ...)
+        PakGuardTrace("MountPakFile.retry", path, retryOk and retryResult or retryResult)
+        if retryOk then
+          PakGuardHooked.mount = true
+          return retryResult
+        end
+      end
+      PakGuardHooked.mount = true
+      return result
+    end
+  end)
+  return ok
+end
+
+local function PakGuardApplyCheckHooks()
+  if PakGuardConfig.hookChecks ~= true then return false end
+  local ok = false
+  for _, key in ipairs({
+    "CheckLocalPakContentHash", "CheckFilesInPak", "CheckFilesInPakLite",
+    "CheckFilesInPakWithResult",
+  }) do
+    local applied = PakGuardWrapClient(key, function(orig, name)
+      return function(...)
+        local result = orig(...)
+        PakGuardHooked.checks = PakGuardHooked.checks + 1
+        PakGuardTrace(name, select(1, ...), result)
+        if PakGuardConfig.forceChecksPass == true then
+          local t = type(result)
+          if t == "boolean" then return true end
+          if t == "number" then return 0 end
+          if t == "table" then return {} end
+        end
+        return result
+      end
+    end)
+    ok = applied or ok
+  end
+  return ok
+end
+
+local function PakGuardApplyFileExistHooks()
+  if PakGuardConfig.forceFileExist ~= true then return false end
+  local ok = false
+  for _, key in ipairs({ "IsFileExistsWithPakCheck", "IsGameFileExistsWithPakCheck" }) do
+    local applied = PakGuardWrapClient(key, function(orig, name)
+      return function(...)
+        local result = orig(...)
+        if result == false then
+          PakGuardTrace(name .. ".force", select(1, ...), true)
+          return true
+        end
+        return result
+      end
+    end)
+    ok = applied or ok
+  end
+  return ok
+end
+
+local function PakGuardApplyReportFilter()
+  if PakGuardConfig.blockReports ~= true then return false end
+  local NetUtil = rawget(_G, "NetUtil")
+  if type(NetUtil) ~= "table" then return false end
+  local ok = false
+  for _, key in ipairs({ "SendPacket", "SendPkg", "SendRPC" }) do
+    local orig = NetUtil[key]
+    if type(orig) == "function" and not NetUtil["__rzPakGuard_" .. key] then
+      local wrapper = function(name, ...)
+        if PakGuardIsReportName(name) then
+          PakGuardTrace("blokir " .. key, name, nil)
+          return nil
+        end
+        return orig(name, ...)
+      end
+      local applied = pcall(function() NetUtil[key] = wrapper end)
+      if applied then
+        pcall(function() NetUtil["__rzPakGuard_" .. key] = true end)
+        PakGuardOrig[key] = orig
+        PakGuardWrappers[key] = wrapper
+        ok = true
+      end
+    elseif NetUtil["__rzPakGuard_" .. key] then
+      ok = true
+    end
+  end
+  PakGuardHooked.reports = ok
+  return ok
+end
+
+-- pakHashList adalah daftar hash yang dijadikan pembanding oleh
+-- CheckLocalPakContentHash. Kalau daftarnya kosong, tidak ada mismatch.
+local function PakGuardApplyHashList()
+  if PakGuardConfig.clearHashList ~= true then return false end
+  local hud = rawget(_G, "slua_GameFrontendHUD")
+  if hud == nil then return false end
+  local cleared = false
+  pcall(function()
+    local current = hud.pakHashList
+    if type(current) == "table" then
+      for k in pairs(current) do current[k] = nil end
+      cleared = true
+    end
+  end)
+  pcall(function()
+    if hud.pakHashList ~= nil then
+      hud.pakHashList = {}
+      cleared = true
+    end
+  end)
+  if cleared then
+    PakGuardTrace("pakHashList dibersihkan", nil, nil)
+  end
+  PakGuardHooked.hashList = cleared
+  return cleared
+end
+
+local function PakGuardMountExtraPaks()
+  local list = PakGuardConfig.extraPaks
+  if type(list) ~= "table" or #list == 0 then return false end
+  local ClientTbl = rawget(_G, "Client")
+  if type(ClientTbl) ~= "table" then return false end
+  local mount = ClientTbl.MountPakFile
+  local isMounted = ClientTbl.IsMounted
+  local savedDir = ClientTbl.ProjectSavedDir
+  if type(mount) ~= "function" then return false end
+  local base = ""
+  if type(savedDir) == "function" then
+    local ok, dir = pcall(savedDir)
+    if ok and type(dir) == "string" then base = dir end
+  end
+  local any = false
+  for _, name in ipairs(list) do
+    if type(name) == "string" and name ~= "" then
+      local path = name
+      if not name:find("/", 1, true) then
+        path = base .. "Paks/" .. name
+      end
+      local mounted = false
+      if type(isMounted) == "function" then
+        local ok, v = pcall(isMounted, path)
+        mounted = ok and v == true
+      end
+      if not mounted then
+        local ok, result = pcall(mount, path, "")
+        PakGuardTrace("extraPak " .. name, path, ok and result or "error")
+        any = true
+      end
+    end
+  end
+  PakGuardHooked.extra = any
+  return any
+end
+
+local PakGuard = {
+  __rzModule = "anticheat",
+  Version = PAKGUARD_VERSION,
+  TickInterval = 5.0,
+  Config = PakGuardConfig,
+  ReportNames = PAKGUARD_REPORT_NAMES,
+}
+
+function PakGuard.Apply()
+  local ok = false
+  pcall(function() ok = PakGuardApplyMountHook() or ok end)
+  pcall(function() ok = PakGuardApplyCheckHooks() or ok end)
+  pcall(function() ok = PakGuardApplyFileExistHooks() or ok end)
+  pcall(function() ok = PakGuardApplyReportFilter() or ok end)
+  pcall(function() ok = PakGuardApplyHashList() or ok end)
+  pcall(function() ok = PakGuardMountExtraPaks() or ok end)
+  return ok
+end
+
+-- Install dipanggil dari controller/tick. Hanya memasang kalau enabled,
+-- supaya boot tetap bersih seperti Part H.
+function PakGuard.Install()
+  if PakGuardConfig.enabled ~= true then return false end
+  return PakGuard.Apply()
+end
+
+function PakGuard.Enable()
+  PakGuardConfig.enabled = true
+  local ok = PakGuard.Apply()
+  if not PakGuardAnnounced then
+    PakGuardAnnounced = true
+    print("[ACU-Pak] pak guard aktif (build " .. PAKGUARD_VERSION .. ")")
+  end
+  return ok
+end
+
+function PakGuard.Disable()
+  PakGuardConfig.enabled = false
+  local ClientTbl = rawget(_G, "Client")
+  if type(ClientTbl) == "table" then
+    for key, wrapper in pairs(PakGuardWrappers) do
+      if PakGuardOrig[key] and ClientTbl[key] == wrapper then
+        pcall(function() ClientTbl[key] = PakGuardOrig[key] end)
+      end
+    end
+  end
+  local NetUtil = rawget(_G, "NetUtil")
+  if type(NetUtil) == "table" then
+    for _, key in ipairs({ "SendPacket", "SendPkg", "SendRPC" }) do
+      if PakGuardOrig[key] and NetUtil[key] == PakGuardWrappers[key] then
+        pcall(function() NetUtil[key] = PakGuardOrig[key] end)
+      end
+      pcall(function() NetUtil["__rzPakGuard_" .. key] = nil end)
+    end
+  end
+  PakGuardWrappers = {}
+  PakGuardOrig = {}
+  PakGuardHooked.mount = false
+  PakGuardHooked.checks = 0
+  PakGuardHooked.reports = false
+  PakGuardHooked.hashList = false
+  PakGuardHooked.extra = false
+  return true
+end
+
+function PakGuard.Status()
+  local copy = {}
+  for k, v in pairs(PakGuardHooked) do copy[k] = v end
+  copy.enabled = PakGuardConfig.enabled
+  copy.version = PAKGUARD_VERSION
+  copy.traceCount = #PakGuardTraceLog
+  copy.config = {}
+  for k, v in pairs(PakGuardConfig) do
+    if type(v) ~= "table" then copy.config[k] = v end
+  end
+  return copy
+end
+
+function PakGuard.Trace()
+  local copy = {}
+  for i, line in ipairs(PakGuardTraceLog) do copy[i] = line end
+  return copy
+end
+
+function PakGuard.Report()
+  local st = PakGuard.Status()
+  print(string.format(
+    "[ACU-Pak] enabled=%s mount=%s checks=%d reports=%s hashList=%s extra=%s",
+    tostring(st.enabled), tostring(st.mount), st.checks,
+    tostring(st.reports), tostring(st.hashList), tostring(st.extra)))
+  for _, line in ipairs(PakGuardTraceLog) do
+    print("  " .. line)
+  end
+end
+
+function PakGuard.Tick(force)
+  local now = PakGuardNow()
+  if not force and now < PakGuardNextTick then return end
+  PakGuardNextTick = now + PakGuard.TickInterval
+  if PakGuardConfig.enabled then
+    pcall(PakGuard.Apply)
+  end
+end
+
+_G.AntiCheatPakGuardModule = PakGuard
+if ACU then ACU.PakGuard = PakGuard end
+-- Jembatan ke tabel utama supaya cukup satu pintu:
+--   _G.AntiCheatBypass.EnablePakGuard()
+pcall(function()
+  local main = _G.AntiCheatBypass
+  if type(main) == "table" then
+    main.EnablePakGuard = PakGuard.Enable
+    main.DisablePakGuard = PakGuard.Disable
+    main.PakGuardStatus = PakGuard.Status
+  end
+end)
+_G.EnablePakGuard = PakGuard.Enable
+_G.DisablePakGuard = PakGuard.Disable
+_G.RapzhangPakGuardTick = function() PakGuard.Tick() end
+
+local function _partI_pak_guard()
+  if PakGuardConfig.enabled == true then
+    PakGuard.Install()
+  else
+    print("[ACU-Pak] pak guard siap (build " .. PAKGUARD_VERSION ..
+      ", default OFF) — EnablePakGuard() untuk aktif")
+  end
+  if not PakGuardRetryScheduled and type(Game) == "table" and type(Game.SetTimer) == "function" then
+    PakGuardRetryScheduled = true
+    for _, delay in ipairs({ 5, 15, 30, 60 }) do
+      pcall(Game.SetTimer, delay, false, function()
+        if PakGuardConfig.enabled then pcall(PakGuard.Apply) end
+      end)
+    end
+  end
+  return PakGuard
+end
+
+-- ============================================================================
+-- PART J: security 4.7.0 (mini_obb.pak) — surface baru + gap TSS/TLog
+--
+-- Sumber (Lua 4.7.0 asli di mini_obb.pak, sudah didekode ke mini470/dec_all):
+--   common/hook_lua_native_func.lua
+--     -> load() hanya mode "t" + env bukan _G; pcall/xpcall rethrow timeout.
+--   client/client_entry.lua
+--     -> NetUtil.OnTick memanggil NetUtil.SendTss() tiap detik;
+--        Tss.SendSkdData(...) dan Tss.OnRecvData(...) jalur data TSS.
+--   GameLua/Mod/BaseMod/Client/SoundMonitorSubsystem.lua
+--     -> CheckAudioNumberAbnormal() baru di 4.7 (dipanggil saat battle result)
+--        + ClientTlogHandler.send_report_lobby_common_tlog("SoundAbnormalFlow").
+--   client/slua/umg/crew/crew_safety_detection_*.lua
+--     -> PerformCheckWithObfuscation pakai Tss.GetDeviceFeature(authCode);
+--        PerformCheckWithoutObfuscation pakai Tss.GetUserTag4Lua();
+--        hasil dikirim lewat CrewHandler/PeakGameHandler/NationEsportHandler.
+--   GameLua/Mod/BaseMod/Client/Replay/ReplayReportHandler.lua
+--     -> OnReportMiniMapIconJump / OnReportAvatarMeshLoaded baru di 4.7.
+--
+-- Catatan: modul DIAMALKAN kalau belum ada. require-hook + retry memasang
+-- patch begitu game memuat modulnya, jadi tidak ada require paksa saat boot.
+-- Semua patch idempotent (marker __acuJ) dan tidak menyentuh Part A-I.
+-- ============================================================================
+local function _partJ_470_security()
+  local J = {
+    version = "4.7.0-J1",
+    config = {
+      blockHookModule   = true,
+      restoreNativeLoad = true,
+      tssTransport      = true,
+      soundMonitor      = true,
+      crewAuth          = true,
+      replayReport      = true,
+      crashKit          = true,
+      fppAnim           = true,
+      spectatorScope    = true,
+      reportSink        = true,
+      tlogFilter        = true,
+      lateRequireHook   = true,
+    },
+    hooked = {},
+    saved  = {},
+    tlogDropped = 0,
+  }
+  -- Escape hatch: preset dari chunk/loader sebelum anticheat.lua dimuat,
+  -- mis. _G.ACU_PART_J_CONFIG = { tssTransport = false }.
+  local preset = rawget(_G, "ACU_PART_J_CONFIG")
+  if type(preset) == "table" then
+    for k, v in pairs(preset) do
+      if J.config[k] ~= nil then J.config[k] = v end
+    end
+  end
+  _G.ACU_PART_J_470 = J
+  local acu = rawget(_G, "ACU")
+  if type(acu) == "table" then acu.Security470 = J end
+
+  -- --------------------------------------------------------------------------
+  -- helper
+  -- --------------------------------------------------------------------------
+  local function _debugLib()
+    local d = rawget(_G, "debug")
+    if type(d) == "table"
+       and type(d.getinfo) == "function"
+       and type(d.getupvalue) == "function" then
+      return d
+    end
+    return nil
+  end
+
+  local function _what(fn)
+    local d = _debugLib()
+    if not d then return nil end
+    local ok, info = pcall(d.getinfo, fn, "S")
+    if ok and type(info) == "table" then return info.what end
+    return nil
+  end
+
+  -- Ambil fungsi C pertama dari upvalue sebuah closure. Dipakai untuk
+  -- mengembalikan load/pcall/xpcall asli dari hook_lua_native_func.lua.
+  local function _findNativeUpvalue(fn)
+    local d = _debugLib()
+    if not d then return nil end
+    if _what(fn) == "C" then return nil end
+    local i = 1
+    while true do
+      local name, value = d.getupvalue(fn, i)
+      if not name then break end
+      if type(value) == "function" and _what(value) == "C" then
+        return value, name
+      end
+      i = i + 1
+    end
+    return nil
+  end
+
+  local function _restoreNativeOn(tbl, key)
+    if type(tbl) ~= "table" then return false end
+    local cur = rawget(tbl, key)
+    if type(cur) ~= "function" then return false end
+    if _what(cur) == "C" then return false end
+    local orig = _findNativeUpvalue(cur)
+    if not orig then return false end
+    rawset(tbl, key, orig)
+    return true
+  end
+
+  local function _mark(tbl, tag)
+    if type(tbl) ~= "table" then return false end
+    local m = rawget(tbl, "__acuJ")
+    if type(m) ~= "table" then
+      m = {}
+      rawset(tbl, "__acuJ", m)
+    end
+    if m[tag] then return false end
+    m[tag] = true
+    return true
+  end
+
+  -- return (adaFungsi, baruDipatch)
+  local function _patchFn(tbl, key, replacement, tag)
+    if type(tbl) ~= "table" then return false, false end
+    local cur = rawget(tbl, key)
+    if type(cur) ~= "function" then return false, false end
+    if not _mark(tbl, tag or key) then return true, false end
+    J.saved[tag or key] = cur
+    rawset(tbl, key, replacement)
+    J.hooked[tag or key] = true
+    return true, true
+  end
+
+  local function _killMethods(tbl, names, tagPrefix)
+    if type(tbl) ~= "table" then return 0 end
+    local n = 0
+    for i = 1, #names do
+      local key = names[i]
+      local cur = rawget(tbl, key)
+      if type(cur) == "function" then
+        local tag = tagPrefix .. "." .. key
+        local applied = false
+        -- Part C sudah men-noop method TSS. Force sekali di sini supaya
+        -- hasil akhirnya tetap return nil (perilaku Part J), bukan Noop
+        -- yang mengembalikan true, dan retry berikutnya dilewati registry.
+        if ACU and type(ACU.PatchForce) == "function" then
+          applied = ACU.PatchForce(tbl, key, function() return nil end, tag)
+        elseif _mark(tbl, tag) then
+          J.saved[tag] = cur
+          rawset(tbl, key, function() return nil end)
+          applied = true
+        end
+        if applied then
+          J.hooked[tag] = true
+          n = n + 1
+        end
+      end
+    end
+    return n
+  end
+
+  local function _methodTable(obj)
+    if type(obj) == "table" then return obj end
+    local mt = getmetatable(obj)
+    if type(mt) == "table" and type(rawget(mt, "__index")) == "table" then
+      return rawget(mt, "__index")
+    end
+    return nil
+  end
+
+  local function _loaded(path)
+    local mod = package.loaded[path]
+    if type(mod) == "table" then return mod end
+    return nil
+  end
+
+  -- Handler crew dipakai saat check berjalan. Original juga me-require di
+  -- dalam SendCheckResult, jadi aman me-require di sini — bukan saat boot.
+  local function _handler(path)
+    local mod = _loaded(path)
+    if mod then return mod end
+    local ok, m = pcall(require, path)
+    if ok and type(m) == "table" then return m end
+    return nil
+  end
+
+  local function _getSubsystem(name)
+    local mgr = rawget(_G, "SubsystemMgr")
+    if type(mgr) ~= "table" then return nil end
+    local ok, inst = pcall(function() return mgr:Get(name) end)
+    if ok and type(inst) == "table" then return inst end
+    local get = rawget(mgr, "Get")
+    if type(get) == "function" then
+      ok, inst = pcall(get, mgr, name)
+      if ok and type(inst) == "table" then return inst end
+    end
+    return nil
+  end
+
+  -- --------------------------------------------------------------------------
+  -- J1. hook_lua_native_func.lua (4.7): pulihkan load / pcall / xpcall
+  -- --------------------------------------------------------------------------
+  function J.RestoreNativeLoad()
+    local n = 0
+    if _restoreNativeOn(_G, "load")   then n = n + 1 end
+    if _restoreNativeOn(_G, "pcall")  then n = n + 1 end
+    if _restoreNativeOn(_G, "xpcall") then n = n + 1 end
+
+    local sluaTbl = rawget(_G, "slua")
+    if type(sluaTbl) == "table" then
+      if _restoreNativeOn(sluaTbl, "TimeoutIgnoreHookFlagIncrement") then n = n + 1 end
+      if _restoreNativeOn(sluaTbl, "TimeoutIgnoreHookFlagDecrement") then n = n + 1 end
+    end
+
+    if n > 0 then
+      print(string.format("[ACU-470] native load/pcall/xpcall dipulihkan (%d)", n))
+    end
+    return n
+  end
+
+  local function _blockHookModule()
+    if J.config.blockHookModule ~= true then return false end
+    local names = { "common.hook_lua_native_func", "hook_lua_native_func" }
+    local did = false
+    for i = 1, #names do
+      local name = names[i]
+      if package.loaded[name] == nil then
+        package.loaded[name] = true
+        did = true
+      end
+    end
+    if did then
+      J.hooked.hookModuleBlocked = true
+      print("[ACU-470] hook_lua_native_func di-skip (pre-mark)")
+    end
+    return did
+  end
+
+  -- --------------------------------------------------------------------------
+  -- J2. TSS transport (client_entry 4.7): NetUtil.OnTick -> SendTss tiap detik
+  -- --------------------------------------------------------------------------
+  local TSS_KILL = {
+    "SendSkdData", "OnRecvData", "SendSdkData", "SendAntiData",
+    "ReportAntiData", "SendReportInfo", "ReportSdkData",
+    "GetAntiData3", "DelAntiData3",
+  }
+
+  local function _patchTss()
+    if J.config.tssTransport ~= true then return 0 end
+    local seen = {}
+    local n = 0
+    local function apply(tbl, prefix)
+      local target = _methodTable(tbl)
+      if type(target) ~= "table" or seen[target] then return end
+      seen[target] = true
+      n = n + _killMethods(target, TSS_KILL, prefix)
+    end
+
+    apply(rawget(_G, "Tss"), "Tss")
+    apply(rawget(_G, "TssSdk"), "TssSdk")
+    apply(rawget(_G, "TssManager"), "TssManager")
+    apply(package.loaded["TssSdk"], "pkg.TssSdk")
+
+    if n > 0 then
+      print("[ACU-470] TSS transport dimatikan (" .. n .. " method)")
+    end
+    return n
+  end
+
+  local function _patchNetUtil()
+    if J.config.tssTransport ~= true then return 0 end
+    local NU = rawget(_G, "NetUtil")
+    if type(NU) ~= "table" then return 0 end
+    local n = 0
+    local _, a = _patchFn(NU, "SendTss", function() end, "NetUtil.SendTss")
+    local _, b = _patchFn(NU, "OnTssRsp", function() end, "NetUtil.OnTssRsp")
+    if a then n = n + 1 end
+    if b then n = n + 1 end
+    if n > 0 then
+      print("[ACU-470] NetUtil.SendTss/OnTssRsp dimatikan")
+    end
+    return n
+  end
+
+  -- --------------------------------------------------------------------------
+  -- J3. SoundMonitorSubsystem (4.7): AudioNumberTooMuch + SoundAbnormalFlow
+  -- --------------------------------------------------------------------------
+  local function _patchSoundMonitor(mod)
+    if type(mod) ~= "table" then return false end
+    local did = false
+    local _, a = _patchFn(mod, "InitSwitches", function(self)
+      if type(self) == "table" then
+        self.bEnable = false
+        self.GraySwitch = false
+      end
+    end, "SoundMonitor.InitSwitches")
+    local _, b = _patchFn(mod, "OnCollectMonitorData", function() end, "SoundMonitor.Collect")
+    local _, c = _patchFn(mod, "CheckAudioNumberAbnormal", function() end, "SoundMonitor.AudioAbnormal")
+    local _, d = _patchFn(mod, "SendSoundMonitorTlog", function() end, "SoundMonitor.Tlog")
+    local _, e = _patchFn(mod, "HandleNotEnoughMemoryToAlloc", function() end, "SoundMonitor.Memory")
+    did = a or b or c or d or e
+
+    local inst = _getSubsystem("SoundMonitorSubsystem")
+    if type(inst) == "table" then
+      inst.bEnable = false
+      inst.GraySwitch = false
+      inst.bHasSent = true
+    end
+
+    if did then
+      print("[ACU-470] SoundMonitor dimatikan (audio anomaly + SoundAbnormalFlow)")
+    end
+    return did
+  end
+
+  -- --------------------------------------------------------------------------
+  -- J4. crew safety auth (4.7): paksa hasil clean, lewati jalur obfuscation
+  -- --------------------------------------------------------------------------
+  local function _cleanFeatureTable()
+    -- ENUM_FeatureType: Root=1, Malware=2, Cdn=3, CS=4, Permission=5
+    return { 0, 0, 0, 0, 0 }
+  end
+
+  local function _crewSendAllstar(_)
+    local H = _handler("client.network.Protocol.CrewHandler")
+    if H and type(H.send_sync_allstar_auth_check_result_req) == "function" then
+      H.send_sync_allstar_auth_check_result_req(_cleanFeatureTable(), nil)
+    end
+  end
+
+  local function _crewSendPug(self)
+    local H = _handler("client.network.Protocol.CrewHandler")
+    if H and type(H.send_pug_auth_check_result_req) == "function" then
+      H.send_pug_auth_check_result_req(self and self.pug_id, _cleanFeatureTable(), nil)
+    end
+  end
+
+  local function _crewSendTournament(self)
+    local H = _handler("client.network.Protocol.CrewHandler")
+    if H and type(H.send_tournament_auth_check_result_req) == "function" then
+      H.send_tournament_auth_check_result_req(self and self.tournament_id, _cleanFeatureTable(), nil)
+    end
+  end
+
+  local function _crewSendPeak(_)
+    local H = _handler("client.network.Protocol.PeakGameHandler")
+    if H and type(H.send_sync_peak_game_auth_check_result_req) == "function" then
+      H.send_sync_peak_game_auth_check_result_req(_cleanFeatureTable(), nil)
+    end
+  end
+
+  local function _crewSendNation(_)
+    local H = _handler("client.network.Protocol.NationEsportHandler")
+    if H and type(H.send_sync_nation_esports_auth_check_req) == "function" then
+      H.send_sync_nation_esports_auth_check_req(_cleanFeatureTable(), nil)
+    end
+  end
+
+  local function _patchCrewBase(mod)
+    if type(mod) ~= "table" then return false end
+    local _, a = _patchFn(mod, "PerformCheck", function(self)
+      if type(self) == "table" and type(self.PerformCheckWithoutObfuscation) == "function" then
+        return self:PerformCheckWithoutObfuscation()
+      end
+    end, "Crew.PerformCheck")
+
+    local _, b = _patchFn(mod, "StartCheckNilTimer", function(self)
+      if type(self) ~= "table" then return end
+      self.hasUseCheckNil = true
+      if type(self.SendCheckResult) == "function" then
+        pcall(self.SendCheckResult, self, _cleanFeatureTable(), nil)
+      end
+      if type(self.RemoveCheckNilTimer) == "function" then
+        pcall(self.RemoveCheckNilTimer, self)
+      end
+    end, "Crew.StartCheckNilTimer")
+
+    return a or b
+  end
+
+  local function _patchCrewResult(mod, tag, sender)
+    if type(mod) ~= "table" then return false end
+    local _, did = _patchFn(mod, "SendCheckResult", function(self)
+      pcall(sender, self)
+    end, tag)
+    return did
+  end
+
+  local function _patchCrew()
+    if J.config.crewAuth ~= true then return false end
+    local did = _patchCrewBase(_loaded("client.slua.umg.crew.crew_safety_detection_base"))
+    did = _patchCrewResult(_loaded("client.slua.umg.crew.crew_safety_detection_allstar"),
+      "Crew.Allstar", _crewSendAllstar) or did
+    did = _patchCrewResult(_loaded("client.slua.umg.crew.crew_safety_detection_peak"),
+      "Crew.Peak", _crewSendPeak) or did
+    did = _patchCrewResult(_loaded("client.slua.umg.crew.crew_safety_detection_pug"),
+      "Crew.Pug", _crewSendPug) or did
+    did = _patchCrewResult(_loaded("client.slua.umg.crew.crew_safety_detection_tournament"),
+      "Crew.Tournament", _crewSendTournament) or did
+    did = _patchCrewResult(_loaded("client.slua.umg.crew.crew_safety_detection_nationesport"),
+      "Crew.Nation", _crewSendNation) or did
+    if did then
+      print("[ACU-470] crew safety auth dipaksa clean (tanpa obfuscation)")
+    end
+    return did
+  end
+
+  -- --------------------------------------------------------------------------
+  -- J5. ReplayReportHandler (4.7): semua handler anomali replay
+  -- Handler ini menulis metadata anomali ke ReplayRecordManager (UI state,
+  -- control rotation mendadak, forbidden move, NaN position, FPP anim,
+  -- spectator scope, mini-map jump, avatar mesh). Metadata inilah yang
+  -- dibaca ulang saat server meminta replay/evidence, jadi seluruh handler
+  -- dinolkan - bukan cuma dua yang baru di 4.7.
+  -- --------------------------------------------------------------------------
+  local REPLAY_REPORT_HANDLERS = {
+    "OnReportUIState",
+    "OnReceiveBattleResult",
+    "OnUpdateBattleResultPeriod",
+    "OnReportAvatarNetData",
+    "OnReportControlRotationSuddenChange",
+    "OnReportForbiddenMoveException",
+    "OnReportParachuteAvgSpeed",
+    "OnReportSpectatorScopeAvatarInconsistency",
+    "OnReportNaNPositionEvent",
+    "OnReportFPPAnimState",
+    "OnReportAvatarMeshLoaded",
+    "OnReportMiniMapIconJump",
+  }
+
+  local function _patchReplay(mod)
+    if type(mod) ~= "table" then return false end
+    local did = false
+    for i = 1, #REPLAY_REPORT_HANDLERS do
+      local name = REPLAY_REPORT_HANDLERS[i]
+      local _, applied = _patchFn(mod, name, function() end, "Replay." .. name)
+      did = did or applied
+    end
+    if did then
+      print("[ACU-470] ReplayReportHandler: 12 handler anomali diblokir")
+    end
+    return did
+  end
+
+  -- --------------------------------------------------------------------------
+  -- J5b. ReportCrashKitFeature: reporter anomali gerak / rotasi / posisi
+  -- OnControlRotationSuddenChangeToReplay -> ReplayReportData(5)
+  -- OnForbiddenMoveEventToReplay         -> ReplayReportData(6)
+  -- OnNaNPositionEventToReplay           -> ReplayReportData(9)
+  -- ReportCharacterMoveableException / ReportTeammateDisappear -> Buggly
+  -- Ini sumber "anomali" paling sering sebelum observasi server.
+  -- --------------------------------------------------------------------------
+  local CRASH_KIT_METHODS = {
+    "HandlePlayerEnterFighting",
+    "OnControlRotationSuddenChangeToReplay",
+    "ReportCharacterMoveableException",
+    "ReportTeammateDisappear",
+    "OnForbiddenMoveEventToReplay",
+    "OnNaNPositionEventToReplay",
+  }
+
+  local function _patchCrashKit(mod)
+    if type(mod) ~= "table" then return false end
+    local did = false
+    for i = 1, #CRASH_KIT_METHODS do
+      local name = CRASH_KIT_METHODS[i]
+      local _, applied = _patchFn(mod, name, function() return false end,
+        "CrashKit." .. name)
+      did = did or applied
+    end
+    if did then
+      print("[ACU-470] ReportCrashKitFeature: reporter anomali gerak diblokir")
+    end
+    return did
+  end
+
+  -- --------------------------------------------------------------------------
+  -- J5c. FPPAnimMonitorFeature: sampling animasi FPP -> ReplayReportData
+  -- Dipakai untuk mendeteksi mismatch animasi/aim; tidak menyentuh gameplay.
+  -- --------------------------------------------------------------------------
+  local FPP_MONITOR_METHODS = {
+    "TriggerReport",
+    "ReportFPPAnimState",
+  }
+
+  local function _patchFppAnim(mod)
+    if type(mod) ~= "table" then return false end
+    local did = false
+    for i = 1, #FPP_MONITOR_METHODS do
+      local name = FPP_MONITOR_METHODS[i]
+      local _, applied = _patchFn(mod, name, function() return false end,
+        "FppAnim." .. name)
+      did = did or applied
+    end
+    if did then
+      print("[ACU-470] FPPAnimMonitorFeature: sampling animasi diblokir")
+    end
+    return did
+  end
+
+  -- --------------------------------------------------------------------------
+  -- J5d. SpectatorScopeAvatarMonitor: mismatch scope avatar spectator
+  -- --------------------------------------------------------------------------
+  local SPECTATOR_SCOPE_METHODS = {
+    "QueueSpectatorScopeAvatarCheck",
+    "CheckSpectatorScopeAvatarInconsistency",
+    "ReportSpectatorScopeAvatarInconsistency",
+  }
+
+  local function _patchSpectatorScope(mod)
+    if type(mod) ~= "table" then return false end
+    local did = false
+    for i = 1, #SPECTATOR_SCOPE_METHODS do
+      local name = SPECTATOR_SCOPE_METHODS[i]
+      local _, applied = _patchFn(mod, name, function() return true end,
+        "SpectatorScope." .. name)
+      did = did or applied
+    end
+    if did then
+      print("[ACU-470] SpectatorScopeAvatarMonitor: reporter mismatch diblokir")
+    end
+    return did
+  end
+
+  -- --------------------------------------------------------------------------
+  -- J5e. GameReportSubsystem: sink native ClientReplayDataReporter
+  -- GameReportUtils.ReplayReportData hanya meneruskan ke sini, lalu ke
+  -- ClientReplayDataReporter:Report*ArrayData (RPC native, bukan NetUtil).
+  -- Kalau subsistem ini sudah terlanjur dibuat sebelum require-hook, patch
+  -- class-nya tetap berlaku untuk instance yang belum ada.
+  -- --------------------------------------------------------------------------
+  local function _patchGameReportSubsystem(mod)
+    if type(mod) ~= "table" then return false end
+    local _, a = _patchFn(mod, "ReplayReportData", function() return false end,
+      "GRS.Replay")
+    local _, b = _patchFn(mod, "ReplayReportDataFromDS", function() return false end,
+      "GRS.ReplayDS")
+    if a or b then
+      print("[ACU-470] GameReportSubsystem: sink replay native diblokir")
+    end
+    return a or b
+  end
+
+  -- --------------------------------------------------------------------------
+  -- J6. ClientTlogHandler: channel SoundAbnormalFlow / security
+  -- --------------------------------------------------------------------------
+  local function _patchTlogHandler(mod)
+    if type(mod) ~= "table" then return false end
+    local fn = rawget(mod, "send_report_lobby_common_tlog")
+    if type(fn) ~= "function" then return false end
+    if not _mark(mod, "Tlog.report_lobby") then return true end
+
+    J.saved["Tlog.report_lobby"] = fn
+    rawset(mod, "send_report_lobby_common_tlog", function(channel, ...)
+      local low = string.lower(tostring(channel or ""))
+      if string.find(low, "soundabnormal", 1, true)
+         or string.find(low, "audionumber", 1, true)
+         or string.find(low, "security", 1, true)
+         or string.find(low, "anticheat", 1, true)
+         or string.find(low, "anti_cheat", 1, true)
+         or string.find(low, "cheat", 1, true)
+         or string.find(low, "inspection", 1, true)
+         or string.find(low, "hawkeye", 1, true) then
+        J.tlogDropped = J.tlogDropped + 1
+        return nil
+      end
+      return fn(channel, ...)
+    end)
+    J.hooked["Tlog.report_lobby"] = true
+    print("[ACU-470] ClientTlogHandler: channel security/SoundAbnormalFlow difilter")
+    return true
+  end
+
+  -- --------------------------------------------------------------------------
+  -- J7. GameReportUtils: jaring kedua kalau Part G jalan sebelum modul ada
+  -- --------------------------------------------------------------------------
+  local function _patchGameReportUtils(mod)
+    if type(mod) ~= "table" then return false end
+    local _, a = _patchFn(mod, "BugglyPostExceptionFull", function() end, "GR.BugglyFull")
+    local _, b = _patchFn(mod, "BugglyPostException", function() end, "GR.Buggly")
+    local _, c = _patchFn(mod, "CheckCanBugglyPostException", function() return false end, "GR.CheckBuggly")
+    local _, d = _patchFn(mod, "ReplayReportDataFromDS", function() return false end, "GR.ReplayDS")
+    local _, e = _patchFn(mod, "ReplayReportData", function() return false end, "GR.Replay")
+    if a or b or c or d or e then
+      print("[ACU-470] GameReportUtils: Buggly + replay report diblokir")
+    end
+    return a or b or c or d or e
+  end
+
+  -- --------------------------------------------------------------------------
+  -- J8. require-hook: patch begitu modul 4.7 dimuat game
+  -- --------------------------------------------------------------------------
+  local lateHooks = {
+    ["common.hook_lua_native_func"] = function()
+      if J.config.restoreNativeLoad == true then J.RestoreNativeLoad() end
+    end,
+    ["GameLua.Mod.BaseMod.Client.SoundMonitorSubsystem"] = function(mod)
+      if J.config.soundMonitor == true then _patchSoundMonitor(mod) end
+    end,
+    ["client.network.Protocol.ClientTlogHandler"] = function(mod)
+      if J.config.tlogFilter == true then _patchTlogHandler(mod) end
+    end,
+    ["GameLua.Mod.BaseMod.GamePlay.GameReport.GameReportUtils"] = function(mod)
+      if J.config.reportSink == true then _patchGameReportUtils(mod) end
+    end,
+    ["GameLua.Mod.BaseMod.GamePlay.GameReport.GameReportSubsystem"] = function(mod)
+      if J.config.reportSink == true then _patchGameReportSubsystem(mod) end
+    end,
+    ["GameLua.Mod.BaseMod.GamePlay.Feature.Player.ReportCrashKitFeature"] = function(mod)
+      if J.config.crashKit == true then _patchCrashKit(mod) end
+    end,
+    ["GameLua.Mod.BaseMod.GamePlay.Feature.Player.FPPAnimMonitorFeature"] = function(mod)
+      if J.config.fppAnim == true then _patchFppAnim(mod) end
+    end,
+    ["GameLua.Mod.BaseMod.GamePlay.Weapon.Monitor.SpectatorScopeAvatarMonitor"] = function(mod)
+      if J.config.spectatorScope == true then _patchSpectatorScope(mod) end
+    end,
+    ["client.slua.umg.crew.crew_safety_detection_base"] = function(mod)
+      if J.config.crewAuth == true then _patchCrewBase(mod) end
+    end,
+    ["client.slua.umg.crew.crew_safety_detection_allstar"] = function(mod)
+      if J.config.crewAuth == true then
+        _patchCrewResult(mod, "Crew.Allstar", _crewSendAllstar)
+      end
+    end,
+    ["client.slua.umg.crew.crew_safety_detection_peak"] = function(mod)
+      if J.config.crewAuth == true then
+        _patchCrewResult(mod, "Crew.Peak", _crewSendPeak)
+      end
+    end,
+    ["client.slua.umg.crew.crew_safety_detection_pug"] = function(mod)
+      if J.config.crewAuth == true then
+        _patchCrewResult(mod, "Crew.Pug", _crewSendPug)
+      end
+    end,
+    ["client.slua.umg.crew.crew_safety_detection_tournament"] = function(mod)
+      if J.config.crewAuth == true then
+        _patchCrewResult(mod, "Crew.Tournament", _crewSendTournament)
+      end
+    end,
+    ["client.slua.umg.crew.crew_safety_detection_nationesport"] = function(mod)
+      if J.config.crewAuth == true then
+        _patchCrewResult(mod, "Crew.Nation", _crewSendNation)
+      end
+    end,
+    ["GameLua.Mod.BaseMod.Client.Replay.ReplayReportHandler"] = function(mod)
+      if J.config.replayReport == true then _patchReplay(mod) end
+    end,
+    ["client.client_entry"] = function()
+      _patchTss()
+      _patchNetUtil()
+    end,
+  }
+
+  local function _sweepLoaded()
+    for name, hook in pairs(lateHooks) do
+      local mod = package.loaded[name]
+      if mod ~= nil then
+        pcall(hook, mod)
+      end
+    end
+  end
+
+  function J.InstallRequireHook()
+    if J.config.lateRequireHook ~= true then return false end
+    if J.hooked.require then return true end
+    local orig = rawget(_G, "require")
+    if type(orig) ~= "function" then return false end
+    if rawget(_G, "__ACU_J_REQUIRE") then
+      J.hooked.require = true
+      return true
+    end
+
+    -- Jumlah nilai kembalian require harus sama dengan native: jangan
+    -- mengembalikan nilai kedua (nil) yang tidak diminta pemanggil.
+    local packFn   = rawget(table, "pack")
+    local unpackFn = rawget(table, "unpack")
+    local function wrapped(name)
+      if type(packFn) == "function" and type(unpackFn) == "function" then
+        local res = packFn(orig(name))
+        local hook = lateHooks[name]
+        if hook then pcall(hook, res[1]) end
+        return unpackFn(res, 1, res.n)
+      end
+      local a, b = orig(name)
+      local hook = lateHooks[name]
+      if hook then pcall(hook, a) end
+      return a, b
+    end
+
+    rawset(_G, "require", wrapped)
+    rawset(_G, "__ACU_J_REQUIRE", true)
+    J.saved.require = orig
+    J.wrappedRequire = wrapped
+    J.hooked.require = true
+    print("[ACU-470] require-hook terpasang")
+    return true
+  end
+
+  -- --------------------------------------------------------------------------
+  -- J9. controller Part J
+  -- --------------------------------------------------------------------------
+  function J.Apply()
+    _blockHookModule()
+    if J.config.restoreNativeLoad == true then J.RestoreNativeLoad() end
+    _patchTss()
+    _patchNetUtil()
+    _sweepLoaded()
+    J.InstallRequireHook()
+    return J.Status()
+  end
+
+  function J.Status()
+    local hooked = {}
+    for k, v in pairs(J.hooked) do hooked[k] = v end
+    local cfg = {}
+    for k, v in pairs(J.config) do cfg[k] = v end
+    return {
+      version = J.version,
+      hooked  = hooked,
+      config  = cfg,
+      tlogDropped = J.tlogDropped,
+    }
+  end
+
+  local function _scheduleRetries()
+    if J._retriesScheduled then return end
+    J._retriesScheduled = true
+    local GameTbl = rawget(_G, "Game")
+    if type(GameTbl) ~= "table" or type(GameTbl.SetTimer) ~= "function" then
+      return
+    end
+    for _, delay in ipairs({ 1, 5, 15, 30, 60, 120 }) do
+      pcall(GameTbl.SetTimer, delay, false, function()
+        if J.config.restoreNativeLoad == true then J.RestoreNativeLoad() end
+        _patchTss()
+        _patchNetUtil()
+        _sweepLoaded()
+      end)
+    end
+  end
+
+  J.Apply()
+  _scheduleRetries()
+  return J
+end
+
+-- ============================================================================
 -- CONTROLLER: jalankan semua PART berurutan
 -- ============================================================================
 local function _run(name, fn)
+  ACU.CurrentPart = name
   local ok, err = pcall(fn)
+  ACU.CurrentPart = "controller"
   _recordPart(name, ok, err)
 end
 
@@ -7334,18 +9333,33 @@ function ACU.Apply()
   _run("E_rapzhang10", _partE_rapzhang10)
   _run("F_rapzhang11", _partF_rapzhang11)
   _run("G_rapzhang12", _partG_rapzhang12)
+  _run("H_ban_pak",   _partH_ban_pak_check)
+  _run("I_pak_guard", _partI_pak_guard)
+  _run("J_security_470", _partJ_470_security)
   ACU.Installed = true
   print("[ACU] ===== FULL MERGE APPLY DONE =====")
 end
 
 function ACU.Stats()
   return {
-    version       = "FULL-MERGE v1.0",
+    version       = "FULL-MERGE v1.1",
     installed     = ACU.Installed,
     blocked       = ACU.BlockedCount,
     sanitized     = ACU.SanitizedCount,
     parts         = ACU.Parts,
     part_errors   = ACU.PartErrors,
+    patch         = ACU.PatchStats(),
+    net_guard     = {
+      installed = ACU.NetGuard.installed,
+      dropped   = ACU.NetGuard.dropped,
+      hooked    = ACU.NetGuard.hooked,
+    },
+    ban_pak       = _G.AntiCheatBypass and _G.AntiCheatBypass.Status
+                    and _G.AntiCheatBypass.Status() or nil,
+    pak_guard     = _G.AntiCheatPakGuardModule and _G.AntiCheatPakGuardModule.Status
+                    and _G.AntiCheatPakGuardModule.Status() or nil,
+    security_470  = _G.ACU_PART_J_470 and _G.ACU_PART_J_470.Status
+                    and _G.ACU_PART_J_470.Status() or nil,
   }
 end
 
@@ -7356,9 +9370,9 @@ function ACU.Stop()
 end
 
 pcall(function()
-  print("[ACU] Boot FULL-MERGE v1.0")
+  print("[ACU] Boot FULL-MERGE v1.1")
   ACU.Apply()
-  print("[ACU] ACTIVE — 7 parts merged")
+  print("[ACU] ACTIVE — 10 parts merged")
 end)
 
 return ACU
