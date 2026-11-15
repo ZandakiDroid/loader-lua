@@ -204,6 +204,9 @@ _G.RapzhangConfig = _G.RapzhangConfig or {
     Sup_FastLootDist = 4,
     Sup_AutoRescue = false,
     Sup_AutoRescueDist = 3,
+    -- Auto Save & Equip Code: simpan sensitivitas + control layout ke
+    -- rapzhang_code. Default OFF supaya tidak menulis file tanpa izin.
+    CodeAutoSave = false,
     AutoReportKiller = false,
     -- Auto feedback is always on and is intentionally not exposed in the menu.
     AutoFeedbackEnabled = true,
@@ -1322,6 +1325,10 @@ end
 
 local function AutoSaveLoop()
     pcall(function() if _G.SaveModSettings then _G.SaveModSettings() end end)
+    -- Code vault tick: hanya bekerja kalau CodeAutoSave = true.
+    pcall(function()
+        if _G.RapzhangCode and _G.RapzhangCode.Tick then _G.RapzhangCode.Tick() end
+    end)
     pcall(function()
         local okTicker, ticker = pcall(require, "common.time_ticker") 
         if okTicker and ticker and ticker.AddTimerOnce then 
@@ -1371,6 +1378,830 @@ do
         cfg.Sup_AutoRescueDist = math.max(1, math.min(15, math.floor((tonumber(cfg.Sup_AutoRescueDist) or 3) + 0.5)))
     end
 end
+
+-- >>> RAPZHANG CODE VAULT BEGIN
+-- ============================================================
+-- AUTO SAVE & EQUIP CODE — sensitivitas + control layout
+-- ------------------------------------------------------------
+-- Menyimpan snapshot file setting PUBG ke satu file teks
+-- `rapzhang_code` (di folder yang sama dengan rapzhang_settings.txt):
+--   * Active.sav              -> sensitivitas + setting lokal lain
+--   * UIElemLayout_Slot*.sav  -> 6 slot control layout (TPP/FPP 1-3)
+--   * share code (opsional)   -> string 1-xxxx-... bila tersedia
+--
+-- Equip menulis ulang snapshot ke SaveGames. Game membaca file itu saat
+-- restart/relog, jadi pemain diberi tahu untuk restart setelah equip.
+-- Semua operasi file memakai pcall/io.open dan tidak pernah melempar
+-- error ke loop utama.
+-- ============================================================
+_G.RapzhangCode = (function()
+    local Code = {}
+    Code.Version = 1
+    Code.FileName = "rapzhang_code"
+    Code.AlternateFileName = "rapzhang_code.txt"
+    Code.AutoBackupName = "rapzhang_code_autobackup"
+    Code.AutoInterval = 12
+    Code.MaxSnapshotBytes = 2 * 1024 * 1024
+
+    Code.KnownPackages = {
+        "com.tencent.ig",
+        "com.tencent.igfit",
+        "com.pubg.imobile",
+        "com.pubg.krmobile",
+        "com.vng.pubgmobile",
+        "com.rekoo.pubgm",
+    }
+
+    -- Nama file layout per slot. Urutan pertama adalah nama canonical yang
+    -- dipakai PUBGM 4.x; alias lama tetap dibaca supaya code dari versi
+    -- sebelumnya tidak hilang.
+    Code.SlotAliases = {
+        [0] = { "UIElemLayout_Slot.sav.sav", "UIElemLayout_Slot.sav", "UIElemLayout_Slot00.sav" },
+        [1] = { "UIElemLayout_Slot.sav1.sav", "UIElemLayout_Slot1.sav", "UIElemLayout_Slot01.sav" },
+        [2] = { "UIElemLayout_Slot.sav2.sav", "UIElemLayout_Slot2.sav", "UIElemLayout_Slot02.sav" },
+        [3] = { "UIElemLayout_Slot.sav3.sav", "UIElemLayout_Slot3.sav", "UIElemLayout_Slot03.sav" },
+        [4] = { "UIElemLayout_Slot.sav4.sav", "UIElemLayout_Slot4.sav", "UIElemLayout_Slot04.sav" },
+        [5] = { "UIElemLayout_Slot.sav5.sav", "UIElemLayout_Slot5.sav", "UIElemLayout_Slot05.sav" },
+    }
+
+    local function notify(msg)
+        if msg == nil or msg == "" then return end
+        pcall(function()
+            if _G.RapzhangNotify then _G.RapzhangNotify(msg) end
+        end)
+    end
+
+    local function trim(text)
+        if type(text) ~= "string" then return "" end
+        return (text:gsub("^%s+", ""):gsub("%s+$", ""))
+    end
+
+    local function readFile(path)
+        if type(path) ~= "string" or path == "" then return nil end
+        local ok, data = pcall(function()
+            local file = io.open(path, "rb")
+            if not file then return nil end
+            local content = file:read("*a")
+            file:close()
+            return content
+        end)
+        if ok and type(data) == "string" then return data end
+        return nil
+    end
+
+    local function writeFile(path, data)
+        if type(path) ~= "string" or path == "" or type(data) ~= "string" then
+            return false
+        end
+        local ok, written = pcall(function()
+            local file = io.open(path, "wb")
+            if not file then return false end
+            local wrote = file:write(data)
+            file:close()
+            return wrote ~= nil
+        end)
+        return ok == true and written == true
+    end
+
+    local function fileExists(path)
+        if type(path) ~= "string" or path == "" then return false end
+        local ok, exists = pcall(function()
+            local file = io.open(path, "rb")
+            if not file then return false end
+            file:close()
+            return true
+        end)
+        return ok == true and exists == true
+    end
+
+    local function writeVerified(path, data)
+        local function sameContent(value)
+            return type(value) == "string" and #value == #data
+                and Code.Checksum(value) == Code.Checksum(data)
+        end
+        -- Tulis ke file sementara lalu rename, supaya file game tidak pernah
+        -- tertinggal setengah jadi kalau proses berhenti di tengah write.
+        local temp = path .. ".rz_tmp"
+        if writeFile(temp, data) and sameContent(readFile(temp)) then
+            local renamed = pcall(os.rename, temp, path)
+            if renamed and sameContent(readFile(path)) then return true end
+            pcall(os.remove, temp)
+        end
+        pcall(os.remove, temp)
+        -- Sebagian storage Android menolak rename menimpa file lama;
+        -- fallback ke tulis langsung setelah verifikasi file sementara.
+        if not writeFile(path, data) then return false end
+        return sameContent(readFile(path))
+    end
+
+    -- --------------------------------------------------------
+    -- Base64 (dipakai untuk file .sav biner)
+    -- --------------------------------------------------------
+    local B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    local B64_INDEX = {}
+    for i = 1, #B64 do B64_INDEX[B64:sub(i, i)] = i - 1 end
+
+    function Code.Base64Encode(data)
+        if type(data) ~= "string" or data == "" then return "" end
+        local out = {}
+        local n = #data
+        for i = 1, n, 3 do
+            local a = data:byte(i) or 0
+            local b = data:byte(i + 1)
+            local c = data:byte(i + 2)
+            local value = a * 65536 + (b or 0) * 256 + (c or 0)
+            local c1 = math.floor(value / 262144) % 64
+            local c2 = math.floor(value / 4096) % 64
+            local c3 = math.floor(value / 64) % 64
+            local c4 = value % 64
+            local chunk = B64:sub(c1 + 1, c1 + 1) .. B64:sub(c2 + 1, c2 + 1)
+            if b ~= nil then chunk = chunk .. B64:sub(c3 + 1, c3 + 1) else chunk = chunk .. "=" end
+            if c ~= nil then chunk = chunk .. B64:sub(c4 + 1, c4 + 1) else chunk = chunk .. "=" end
+            out[#out + 1] = chunk
+        end
+        return table.concat(out)
+    end
+
+    function Code.Base64Decode(text)
+        if type(text) ~= "string" then return nil end
+        local clean = text:gsub("%s+", "")
+        if clean == "" then return "" end
+        if #clean % 4 ~= 0 then return nil end
+        local out = {}
+        for i = 1, #clean, 4 do
+            local c1, c2, c3, c4 = clean:sub(i, i), clean:sub(i + 1, i + 1),
+                clean:sub(i + 2, i + 2), clean:sub(i + 3, i + 3)
+            local v1, v2 = B64_INDEX[c1], B64_INDEX[c2]
+            if v1 == nil or v2 == nil then return nil end
+            local value = v1 * 262144 + v2 * 4096
+            local v3, v4 = 0, 0
+            local pad3, pad4 = false, false
+            if c3 == "=" then
+                pad3 = true
+            else
+                v3 = B64_INDEX[c3]
+                if v3 == nil then return nil end
+                value = value + v3 * 64
+            end
+            if c4 == "=" then
+                pad4 = true
+            else
+                if pad3 then return nil end
+                v4 = B64_INDEX[c4]
+                if v4 == nil then return nil end
+                value = value + v4
+            end
+            if pad3 then
+                if not pad4 then return nil end
+                out[#out + 1] = string.char(math.floor(value / 65536) % 256)
+            else
+                out[#out + 1] = string.char(math.floor(value / 65536) % 256)
+                out[#out + 1] = string.char(math.floor(value / 256) % 256)
+                if not pad4 then
+                    out[#out + 1] = string.char(value % 256)
+                end
+            end
+        end
+        return table.concat(out)
+    end
+
+    -- --------------------------------------------------------
+    -- Checksum sederhana (Adler-32) untuk deteksi perubahan
+    -- --------------------------------------------------------
+    function Code.Checksum(data)
+        if type(data) ~= "string" then return 0 end
+        local a, b = 1, 0
+        for i = 1, #data do
+            a = (a + data:byte(i)) % 65521
+            b = (b + a) % 65521
+        end
+        return b * 65536 + a
+    end
+
+    function Code.StateChecksum(state)
+        if type(state) ~= "table" then return 0 end
+        local parts = {}
+        for idx = 0, 5 do
+            local data = state.slots and state.slots[idx]
+            parts[#parts + 1] = tostring(idx) .. ":" .. tostring(data and #data or -1)
+            if data then parts[#parts + 1] = data end
+        end
+        local active = state.active
+        parts[#parts + 1] = "a:" .. tostring(active and #active or -1)
+        if active then parts[#parts + 1] = active end
+        return Code.Checksum(table.concat(parts))
+    end
+
+    -- --------------------------------------------------------
+    -- Serialize / parse file rapzhang_code
+    -- --------------------------------------------------------
+    function Code.Serialize(state)
+        if type(state) ~= "table" then return "" end
+        local lines = {
+            "RZCODE " .. tostring(Code.Version),
+            "pkg=" .. tostring(state.pkg or ""),
+            "saved=" .. tostring(state.saved or 0),
+            "sum=" .. tostring(state.sum or 0),
+            "sens_code=" .. tostring(state.sens_code or ""),
+            "layout_code=" .. tostring(state.layout_code or ""),
+            "clipboard_code=" .. tostring(state.clipboard_code or ""),
+        }
+        for idx = 0, 5 do
+            local data = state.slots and state.slots[idx]
+            if data and #data > 0 then
+                lines[#lines + 1] = "slot" .. tostring(idx) .. "_name="
+                    .. tostring(state.slotNames and state.slotNames[idx] or Code.SlotAliases[idx][1])
+                lines[#lines + 1] = "slot" .. tostring(idx) .. "=" .. Code.Base64Encode(data)
+            end
+        end
+        if state.active and #state.active > 0 then
+            lines[#lines + 1] = "active=" .. Code.Base64Encode(state.active)
+        end
+        lines[#lines + 1] = "end"
+        return table.concat(lines, "\n") .. "\n"
+    end
+
+    function Code.Parse(text)
+        if type(text) ~= "string" or text == "" then return nil, "file kosong" end
+        local lines = {}
+        for line in (text .. "\n"):gmatch("(.-)\r?\n") do
+            lines[#lines + 1] = line
+        end
+        if not lines[1] or not lines[1]:match("^RZCODE%s+%d+$") then
+            return nil, "header bukan RZCODE"
+        end
+        local version = tonumber(lines[1]:match("(%d+)$")) or 0
+        if version ~= Code.Version then
+            return nil, "versi code tidak didukung: " .. tostring(version)
+        end
+        local state = { slots = {}, slotNames = {} }
+        for i = 2, #lines do
+            local line = lines[i]
+            if line == "end" then break end
+            local key, value = line:match("^([%w_]+)=(.*)$")
+            if key then
+                if key == "pkg" then state.pkg = trim(value)
+                elseif key == "saved" then state.saved = tonumber(value) or 0
+                elseif key == "sum" then state.sum = tonumber(value) or 0
+                elseif key == "sens_code" then state.sens_code = value
+                elseif key == "layout_code" then state.layout_code = value
+                elseif key == "clipboard_code" then state.clipboard_code = value
+                elseif key == "active" then
+                    local data = Code.Base64Decode(value)
+                    if data and #data > 0 then state.active = data end
+                else
+                    local idx = tonumber(key:match("^slot(%d)$"))
+                    local nameIdx = tonumber(key:match("^slot(%d)_name$"))
+                    if idx ~= nil and idx >= 0 and idx <= 5 then
+                        local data = Code.Base64Decode(value)
+                        if data and #data > 0 then state.slots[idx] = data end
+                    elseif nameIdx ~= nil and nameIdx >= 0 and nameIdx <= 5 then
+                        if value ~= "" then state.slotNames[nameIdx] = value end
+                    end
+                end
+            end
+        end
+        return state
+    end
+
+    -- --------------------------------------------------------
+    -- Deteksi paket + folder SaveGames
+    -- --------------------------------------------------------
+    function Code.PackageFromText(text)
+        if type(text) ~= "string" then return nil end
+        -- igfit harus dicek sebelum ig (com.tencent.ig adalah awalan igfit).
+        for _, pkg in ipairs(Code.KnownPackages) do
+            if pkg == "com.tencent.ig" then
+                -- lewati dulu; akan dicek setelah igfit
+            else
+                if text:find(pkg, 1, true) then return pkg end
+            end
+        end
+        if text:find("com.tencent.ig", 1, true) then return "com.tencent.ig" end
+        return nil
+    end
+
+    function Code.DetectPackage()
+        if Code._package then return Code._package end
+        local found = nil
+        local function consider(value)
+            if found ~= nil then return end
+            local pkg = Code.PackageFromText(tostring(value or ""))
+            if pkg then found = pkg end
+        end
+
+        pcall(function()
+            local c = rawget(_G, "Client")
+            local kind = type(c)
+            if kind ~= "table" and kind ~= "userdata" then return end
+            for _, name in ipairs({ "GetPackageName", "GetAppPackageName", "GetBundleId", "GetApplicationId" }) do
+                local fn = c[name]
+                if type(fn) == "function" then
+                    -- Coba sebagai method (self) dulu, lalu sebagai fungsi
+                    -- biasa. Argumen tambahan diabaikan oleh fungsi Lua.
+                    local ok, value = pcall(fn, c)
+                    if not ok then ok, value = pcall(fn) end
+                    if ok then consider(value) end
+                elseif fn ~= nil then
+                    consider(fn)
+                end
+            end
+        end)
+        for _, name in ipairs({ "PackageName", "PACKAGE_NAME", "GamePackageName", "BundleId" }) do
+            consider(rawget(_G, name))
+        end
+        pcall(function()
+            local data = readFile("/proc/self/cmdline")
+            if data then consider(data) end
+        end)
+        pcall(function()
+            if os and os.getenv then
+                consider(os.getenv("HOME"))
+                consider(os.getenv("ANDROID_DATA"))
+            end
+        end)
+        pcall(function()
+            if debug and debug.getinfo then
+                local info = debug.getinfo(2, "S")
+                if info and info.source then consider(info.source) end
+            end
+        end)
+        found = found or "com.tencent.ig"
+        Code._package = found
+        return found
+    end
+
+    function Code.PackageCandidates()
+        local list, seen = {}, {}
+        local function add(pkg)
+            if pkg and not seen[pkg] then
+                seen[pkg] = true
+                list[#list + 1] = pkg
+            end
+        end
+        add(Code.DetectPackage())
+        for _, pkg in ipairs(Code.KnownPackages) do add(pkg) end
+        return list
+    end
+
+    function Code.SaveGameDirs(pkg)
+        pkg = pkg or Code.DetectPackage()
+        local root = "/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/SaveGames/"
+        local dirs = {
+            "/storage/emulated/0/Android/data/" .. pkg .. root,
+            "//storage/emulated/0/Android/data/" .. pkg .. root,
+            "/sdcard/Android/data/" .. pkg .. root,
+            "//sdcard/Android/data/" .. pkg .. root,
+            "/data/data/" .. pkg .. root,
+            "/data/user/0/" .. pkg .. root,
+        }
+        pcall(function()
+            if os and os.getenv then
+                local home = os.getenv("HOME")
+                if home and home ~= "" then
+                    dirs[#dirs + 1] = home .. "/Documents/ShadowTrackerExtra/Saved/SaveGames/"
+                end
+            end
+        end)
+        dirs[#dirs + 1] = "/Documents/ShadowTrackerExtra/Saved/SaveGames/"
+        dirs[#dirs + 1] = "/com.tencent.ig/Documents/ShadowTrackerExtra/Saved/SaveGames/"
+        dirs[#dirs + 1] = "/com.tencent.igfit/Documents/ShadowTrackerExtra/Saved/SaveGames/"
+        dirs[#dirs + 1] = "ShadowTrackerExtra/Saved/SaveGames/"
+        dirs[#dirs + 1] = "../../ShadowTrackerExtra/Saved/SaveGames/"
+        dirs[#dirs + 1] = "../../../ShadowTrackerExtra/Saved/SaveGames/"
+        return dirs
+    end
+
+    function Code.DirHasFiles(dir)
+        if type(dir) ~= "string" then return false end
+        if fileExists(dir .. "Active.sav") then return true end
+        for idx = 0, 5 do
+            for _, name in ipairs(Code.SlotAliases[idx]) do
+                if fileExists(dir .. name) then return true end
+            end
+        end
+        return false
+    end
+
+    function Code.ResolveSaveGamesDir(preferredPkg)
+        if Code._overrideDir then
+            return Code._overrideDir, preferredPkg or "test.package"
+        end
+        local pkgs = Code.PackageCandidates()
+        if preferredPkg and preferredPkg ~= "" and Code.PackageFromText(preferredPkg) == preferredPkg then
+            table.insert(pkgs, 1, preferredPkg)
+        end
+        local seen = {}
+        for _, pkg in ipairs(pkgs) do
+            if not seen[pkg] then
+                seen[pkg] = true
+                for _, dir in ipairs(Code.SaveGameDirs(pkg)) do
+                    if Code.DirHasFiles(dir) then return dir, pkg end
+                end
+            end
+        end
+        local pkg = pkgs[1] or "com.tencent.ig"
+        return Code.SaveGameDirs(pkg)[1], pkg
+    end
+
+    -- --------------------------------------------------------
+    -- Path file code (sejajar dengan rapzhang_settings.txt)
+    -- --------------------------------------------------------
+    function Code.ConfigPaths()
+        if Code._overrideCodePath then return { Code._overrideCodePath } end
+        local function build(name)
+            -- Paket yang terdeteksi diprioritaskan supaya build igfit tidak
+            -- membaca code lama milik paket lain yang kebetulan ada.
+            local pkg = Code.DetectPackage()
+            local pkgRoot = "/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. name
+            return {
+                "//storage/emulated/0/Android/data/" .. pkg .. pkgRoot,
+                "/storage/emulated/0/Android/data/" .. pkg .. pkgRoot,
+                "//storage/emulated/0/Android/data/com.tencent.ig/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. name,
+                "//storage/emulated/0/Android/data/com.tencent.igfit/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. name,
+                "//storage/emulated/0/Android/data/com.vng.pubgmobile/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. name,
+                "//storage/emulated/0/Android/data/com.pubg.krmobile/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. name,
+                "//storage/emulated/0/Android/data/com.rekoo.pubgm/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. name,
+                "//storage/emulated/0/Android/data/com.pubg.imobile/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. name,
+                "/Documents/ShadowTrackerExtra/Saved/Paks/" .. name,
+                "/Documents/ShadowTrackerExtra/Saved/Paks/puffer_temp/" .. name,
+                "/com.tencent.ig/Documents/ShadowTrackerExtra/Saved/Paks/" .. name,
+                "/com.tencent.igfit/Documents/ShadowTrackerExtra/Saved/Paks/" .. name,
+                "ShadowTrackerExtra/Saved/Paks/" .. name,
+                "../../ShadowTrackerExtra/Saved/Paks/" .. name,
+                "../../../ShadowTrackerExtra/Saved/Paks/" .. name,
+                name,
+            }
+        end
+        local list = build(Code.FileName)
+        local alt = build(Code.AlternateFileName)
+        for _, path in ipairs(alt) do list[#list + 1] = path end
+        pcall(function()
+            if os and os.getenv then
+                local home = os.getenv("HOME")
+                if home and home ~= "" then
+                    table.insert(list, 1, home .. "/Documents/ShadowTrackerExtra/Saved/Paks/" .. Code.FileName)
+                    table.insert(list, 2, home .. "/Documents/ShadowTrackerExtra/Saved/Paks/" .. Code.AlternateFileName)
+                end
+            end
+        end)
+        return list
+    end
+
+    function Code.LoadCodeFile(force)
+        if Code._cache and not force then return Code._cache end
+        local text = nil
+        for _, path in ipairs(Code.ConfigPaths()) do
+            text = readFile(path)
+            if text then break end
+        end
+        if not text then return nil, "rapzhang_code belum ada" end
+        local state, err = Code.Parse(text)
+        if not state then return nil, err or "format code rusak" end
+        Code._cache = state
+        return state
+    end
+
+    function Code.WriteConfigFile(text, fileName)
+        if type(text) ~= "string" or text == "" then return nil, "data kosong" end
+        local name = fileName or Code.FileName
+        local paths
+        if Code._overrideCodePath and not fileName then
+            paths = { Code._overrideCodePath }
+        else
+            paths = Code.ConfigPaths()
+            if fileName then
+                -- ganti nama file pada setiap path
+                local replaced = {}
+                for _, path in ipairs(paths) do
+                    replaced[#replaced + 1] = path:gsub("[^/]+$", name)
+                end
+                paths = replaced
+            end
+        end
+        for _, path in ipairs(paths) do
+            local ok, written = pcall(function()
+                local file = io.open(path, "wb")
+                if not file then return false end
+                file:write(text)
+                file:close()
+                -- Verifikasi isi: file bisa gagal ditulis penuh saat storage
+                -- penuh atau path read-only.
+                return readFile(path) == text
+            end)
+            if ok and written == true then return path end
+        end
+        return nil, "tidak ada path yang bisa ditulis"
+    end
+
+    -- --------------------------------------------------------
+    -- Share code (string 1-xxxx-...)
+    -- --------------------------------------------------------
+    function Code.IsShareCode(value)
+        if type(value) ~= "string" then return false end
+        local text = trim(value)
+        -- Kode share PUBG umumnya 19-20 digit. Minimal 18 digit dipakai
+        -- supaya nomor telepon/angka acak dari clipboard tidak ikut tersimpan.
+        if #text < 18 or #text > 40 then return false end
+        if not text:match("^%d[%d%-]*%d$") then return false end
+        if text:find("--", 1, true) then return false end
+        local digits = text:gsub("%D", "")
+        return #digits >= 18
+    end
+
+    function Code.ReadClipboard()
+        local c = rawget(_G, "Client")
+        if type(c) ~= "table" and type(c) ~= "userdata" then return nil end
+        local function getMember(name)
+            local ok, value = pcall(function() return c[name] end)
+            if ok then return value end
+            return nil
+        end
+        for _, name in ipairs({
+            "ClipBoardPaste", "ClipboardPaste", "GetClipBoardText",
+            "GetClipboardText", "GetClipboardData",
+        }) do
+            local fn = getMember(name)
+            if type(fn) == "function" then
+                local ok, value = pcall(fn, c)
+                if not ok then ok, value = pcall(fn) end
+                if ok and Code.IsShareCode(value) then return trim(value) end
+            elseif Code.IsShareCode(fn) then
+                return trim(fn)
+            end
+        end
+        return nil
+    end
+
+    function Code.FindShareCode(kind)
+        local keys
+        if kind == "sensitivity" then
+            keys = { "SensitivityCode", "SensCode", "ShareSensitivityCode" }
+        elseif kind == "layout" then
+            keys = { "LayoutCode", "ControlCode", "ShareLayoutCode" }
+        else
+            keys = { "ShareCode", "RapzhangShareCode" }
+        end
+        for _, key in ipairs(keys) do
+            local value = rawget(_G, key)
+            if Code.IsShareCode(value) then return trim(value) end
+            local cfg = rawget(_G, "RapzhangConfig")
+            if type(cfg) == "table" and Code.IsShareCode(cfg[key]) then return trim(cfg[key]) end
+        end
+        local state = rawget(_G, "RapzhangState")
+        if type(state) == "table" then
+            for _, key in ipairs(keys) do
+                local value = state[key]
+                if Code.IsShareCode(value) then return trim(value) end
+            end
+            local codes = state.CodeVault
+            if type(codes) == "table" then
+                local value = codes[kind]
+                if Code.IsShareCode(value) then return trim(value) end
+            end
+        end
+        return nil
+    end
+
+    function Code.SetShareCodes(sens, layout, clipboard)
+        if type(_G.RapzhangState) ~= "table" then _G.RapzhangState = {} end
+        _G.RapzhangState.CodeVault = _G.RapzhangState.CodeVault or {}
+        if Code.IsShareCode(sens) then _G.RapzhangState.CodeVault.sensitivity = trim(sens) end
+        if Code.IsShareCode(layout) then _G.RapzhangState.CodeVault.layout = trim(layout) end
+        if Code.IsShareCode(clipboard) then _G.RapzhangState.CodeVault.clipboard = trim(clipboard) end
+        Code._cache = nil
+        return true
+    end
+
+    function Code.GetCodes()
+        local state = Code._cache or Code.LoadCodeFile()
+        if not state then return {} end
+        return {
+            sensitivity = state.sens_code or "",
+            layout = state.layout_code or "",
+            clipboard = state.clipboard_code or "",
+        }
+    end
+
+    -- --------------------------------------------------------
+    -- Capture / save / equip
+    -- --------------------------------------------------------
+    function Code.CaptureState()
+        local dir, pkg = Code.ResolveSaveGamesDir()
+        if not dir then return nil, "folder SaveGames tidak ditemukan" end
+        local state = { pkg = pkg, saved = os.time(), slots = {}, slotNames = {} }
+        local any = false
+        for idx = 0, 5 do
+            for _, name in ipairs(Code.SlotAliases[idx]) do
+                local data = readFile(dir .. name)
+                if data and #data > 0 then
+                    if #data <= Code.MaxSnapshotBytes then
+                        state.slots[idx] = data
+                        state.slotNames[idx] = name
+                        any = true
+                    end
+                    break
+                end
+            end
+        end
+        local active = readFile(dir .. "Active.sav")
+        if active and #active > 0 and #active <= Code.MaxSnapshotBytes then
+            state.active = active
+            any = true
+        end
+        if not any then return nil, "file setting game tidak ditemukan" end
+        state.sum = Code.StateChecksum(state)
+        return state
+    end
+
+    function Code.MergeShareCodes(state)
+        if type(state) ~= "table" then return state end
+        local old = Code._cache
+        if not old then
+            local loaded = Code.LoadCodeFile()
+            if loaded then old = loaded end
+        end
+        state.sens_code = Code.FindShareCode("sensitivity")
+            or (old and old.sens_code) or state.sens_code or ""
+        state.layout_code = Code.FindShareCode("layout")
+            or (old and old.layout_code) or state.layout_code or ""
+        state.clipboard_code = Code.ReadClipboard()
+            or (old and old.clipboard_code) or state.clipboard_code or ""
+        return state
+    end
+
+    local function countSlots(state)
+        local n = 0
+        for idx = 0, 5 do
+            if state.slots and state.slots[idx] and #state.slots[idx] > 0 then n = n + 1 end
+        end
+        return n
+    end
+
+    function Code.SaveNow(verbose)
+        local state, err = Code.CaptureState()
+        if not state then
+            if verbose then notify("Code: " .. tostring(err)) end
+            return false, err
+        end
+        state = Code.MergeShareCodes(state)
+        local text = Code.Serialize(state)
+        local path, werr = Code.WriteConfigFile(text)
+        if not path then
+            if verbose then notify("Code: " .. tostring(werr)) end
+            return false, werr
+        end
+        Code._cache = state
+        Code._lastSum = state.sum
+        Code._lastSave = os.time()
+        local msg = string.format("Code saved: %d layout%s",
+            countSlots(state), state.active and " + sensitivity" or "")
+        if not state.active then
+            msg = msg .. " (Active.sav missing/too large)"
+        end
+        if verbose then notify(msg) end
+        return true, msg, path
+    end
+
+    function Code.AutoSaveStep()
+        local state, err = Code.CaptureState()
+        if not state then return false, err end
+        -- Sinkronkan checksum dengan file yang sudah ada supaya start game
+        -- tidak langsung menulis ulang code yang isinya sama.
+        if Code._lastSum == nil then
+            local existing = Code.LoadCodeFile()
+            if existing and existing.sum ~= nil then Code._lastSum = existing.sum end
+        end
+        if Code._lastSum ~= nil and state.sum == Code._lastSum then
+            -- Share code dari clipboard tetap dicek walau file .sav belum berubah.
+            local clip = Code.ReadClipboard()
+            local cached = Code._cache
+            if clip and (not cached or cached.clipboard_code ~= clip) then
+                state = Code.MergeShareCodes(state)
+                state.clipboard_code = clip
+                local text = Code.Serialize(state)
+                if Code.WriteConfigFile(text) then
+                    Code._cache = state
+                    notify("Share code captured: " .. clip)
+                end
+            end
+            return false
+        end
+        state = Code.MergeShareCodes(state)
+        local text = Code.Serialize(state)
+        local path = Code.WriteConfigFile(text)
+        if not path then return false, "gagal menulis rapzhang_code" end
+        Code._cache = state
+        Code._lastSum = state.sum
+        Code._lastSave = os.time()
+        local now = os.time()
+        if now - (Code._lastNotify or 0) >= 30 then
+            Code._lastNotify = now
+            notify(string.format("Auto-save code: %d layout%s",
+                countSlots(state), state.active and " + sensitivity" or ""))
+        end
+        return true, path
+    end
+
+    function Code.Tick()
+        local cfg = rawget(_G, "RapzhangConfig")
+        if not cfg or cfg.CodeAutoSave ~= true then return end
+        local now = os.time()
+        if now - (Code._lastTick or 0) < Code.AutoInterval then return end
+        Code._lastTick = now
+        pcall(Code.AutoSaveStep)
+    end
+
+    function Code.EquipNow(verbose)
+        local code, err = Code.LoadCodeFile(true)
+        if not code then
+            if verbose then notify("Equip: " .. tostring(err)) end
+            return false, err
+        end
+        local dir, pkg = Code.ResolveSaveGamesDir(code.pkg)
+        if not dir then
+            if verbose then notify("Equip: folder SaveGames tidak ditemukan") end
+            return false, "folder SaveGames tidak ditemukan"
+        end
+
+        -- Simpan setting yang sedang aktif sekali per sesi sebelum ditimpa.
+        if not Code._autoBackupDone then
+            local prev = Code.CaptureState()
+            if prev and prev.sum ~= (code.sum or 0) then
+                prev.sens_code = code.sens_code or ""
+                prev.layout_code = code.layout_code or ""
+                prev.clipboard_code = code.clipboard_code or ""
+                Code.WriteConfigFile(Code.Serialize(prev), Code.AutoBackupName)
+            end
+            Code._autoBackupDone = true
+        end
+
+        local written, failed = 0, 0
+        for idx = 0, 5 do
+            local data = code.slots and code.slots[idx]
+            if data and #data >= 16 then
+                local name = code.slotNames and code.slotNames[idx]
+                -- Hanya terima nama yang dikenal. Ini mencegah file code
+                -- yang diedit manual menulis ke path di luar SaveGames.
+                local known = false
+                if name then
+                    for _, alias in ipairs(Code.SlotAliases[idx]) do
+                        if name == alias then known = true break end
+                    end
+                end
+                if not known then
+                    name = Code.SlotAliases[idx][1]
+                end
+                if writeVerified(dir .. name, data) then
+                    written = written + 1
+                else
+                    failed = failed + 1
+                end
+            end
+        end
+        if code.active and #code.active >= 16 then
+            if writeVerified(dir .. "Active.sav", code.active) then
+                written = written + 1
+            else
+                failed = failed + 1
+            end
+        end
+
+        if written > 0 then
+            -- Reload modul sensitivitas kalau build ini menyediakannya.
+            pcall(function()
+                local mod = require("client.logic.setting.logic_setting_custom_sensitivity")
+                if mod and type(mod.Read) == "function" then mod.Read() end
+            end)
+            Code._cache = code
+            Code._lastSum = code.sum
+            local msg = string.format("Code equipped: %d file%s%s (restart game to apply)",
+                written,
+                failed > 0 and (", " .. failed .. " failed") or "",
+                code.active and "" or " (layout only)")
+            if verbose then notify(msg) end
+            return true, msg, dir, pkg
+        end
+        local msg = "Equip gagal: tidak ada file yang bisa ditulis"
+        if verbose then notify(msg) end
+        return false, msg
+    end
+
+    function Code.Status()
+        local code = Code._cache or Code.LoadCodeFile()
+        if not code then return "no code" end
+        local n = 0
+        for idx = 0, 5 do
+            if code.slots and code.slots[idx] and #code.slots[idx] > 0 then n = n + 1 end
+        end
+        return string.format("%d layout%s%s", n,
+            code.active and " + sens" or "",
+            code.saved and (" @ " .. os.date("%d/%m %H:%M", code.saved)) or "")
+    end
+
+    return Code
+end)()
+-- <<< RAPZHANG CODE VAULT END
 
 _G.ReadLiveConfig = function()
     if _G.SaveModSettings then _G.SaveModSettings() end
@@ -2146,6 +2977,10 @@ function _G.InitModMenuTab()
         { Key = "ModMenu_Sup_FastLootDist", UI = AliasMap.Slider, Text = T("      Pickup Radius (m)", "      Pickup Radius (m)"), ExpandHandle = "ModMenu_Sup_FastLoot", MinValue = 1, MaxValue = 15, min = 1, max = 15, Min = 1, Max = 15, GetFunc = function() return math.max(1, math.min(15, math.floor((tonumber(_G.RapzhangConfig.Sup_FastLootDist) or 4) + 0.5))) end, SetFunc = function(_, v) _G.RapzhangConfig.Sup_FastLootDist = math.max(1, math.min(15, math.floor((tonumber(v) or 4) + 0.5))); pcall(function() if _G.ESP and _G.ESP.Support then _G.ESP.Support.Reset() end end); if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
         { Key = "ModMenu_Sup_AutoRescue", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Auto Rescue Team", "   ▶ Auto Rescue Team"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.Sup_AutoRescue == true end, SetFunc = function(_, v) local on = v and true or false; _G.RapzhangConfig.Sup_AutoRescue = on; if on then pcall(function() if _G.ESP and _G.ESP.Support then _G.ESP.Support.Reset() end end); if _G.ESP and _G.ESP.Start then pcall(_G.ESP.Start) end end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
         { Key = "ModMenu_Sup_AutoRescueDist", UI = AliasMap.Slider, Text = T("      Rescue Radius (m)", "      Rescue Radius (m)"), ExpandHandle = "ModMenu_Sup_AutoRescue", MinValue = 1, MaxValue = 10, min = 1, max = 10, Min = 1, Max = 10, GetFunc = function() return math.max(1, math.min(10, math.floor((tonumber(_G.RapzhangConfig.Sup_AutoRescueDist) or 3) + 0.5))) end, SetFunc = function(_, v) _G.RapzhangConfig.Sup_AutoRescueDist = math.max(1, math.min(10, math.floor((tonumber(v) or 3) + 0.5))); pcall(function() if _G.ESP and _G.ESP.Support then _G.ESP.Support.Reset() end end); if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
+        { Key = "ModMenu_Sup_Code", UI = AliasMap.TitleSwitcher, Text = T("   ▶ Auto Save & Equip Code", "   ▶ Auto Save & Equip Code"), ExpandIndex = 0, GetFunc = function() return _G.RapzhangConfig.CodeAutoSave == true end, SetFunc = function(_, v) local on = v and true or false; _G.RapzhangConfig.CodeAutoSave = on; if on and _G.RapzhangCode then pcall(_G.RapzhangCode.SaveNow, true) end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
+        { Key = "ModMenu_Sup_CodeAuto", UI = AliasMap.Switcher, Text = T("      Auto Save Code (Sens + Layout)", "      Auto Save Code (Sens + Layout)"), ExpandHandle = "ModMenu_Sup_Code", GetFunc = function() return _G.RapzhangConfig.CodeAutoSave == true end, SetFunc = function(_, v) local on = v and true or false; _G.RapzhangConfig.CodeAutoSave = on; if on and _G.RapzhangCode then pcall(_G.RapzhangCode.SaveNow, true) end; if _G.SaveModSettings then pcall(_G.SaveModSettings) end; return true end },
+        { Key = "ModMenu_Sup_CodeSave", UI = AliasMap.Switcher, Text = T("      Save Code Now", "      Save Code Now"), ExpandHandle = "ModMenu_Sup_Code", GetFunc = function() return false end, SetFunc = function() if _G.RapzhangCode then pcall(_G.RapzhangCode.SaveNow, true) end; return false end },
+        { Key = "ModMenu_Sup_CodeEquip", UI = AliasMap.Switcher, Text = T("      Equip Saved Code Now", "      Equip Saved Code Now"), ExpandHandle = "ModMenu_Sup_Code", GetFunc = function() return false end, SetFunc = function() if _G.RapzhangCode then pcall(_G.RapzhangCode.EquipNow, true) end; return false end },
     }
 
     -- STEP 10: Stack ESP LOOT (tab sendiri di samping ESP)
