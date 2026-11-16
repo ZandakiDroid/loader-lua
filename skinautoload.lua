@@ -5,30 +5,484 @@
 -- Dibuang dari versi asli:
 --   * cek expiry + sumber waktu internet (worldtimeapi/timezonedb/timeapi)
 --   * popup welcome / expired + tautan Telegram
---   * menu mod, ESP, aimbot, scanner/replay/log blocker, anti-report
+--   * menu mod, ESP, aimbot (fitur cheat gameplay tidak ada)
 --   * kelas BRPlayerCharacterBase (file ini tidak menggantikan kelas game,
 --     jadi bisa dimuat sendiri lewat loader tanpa BRP)
+-- Ditambah:
+--   * blok SkinBypass di bawah: menutup jalur laporan skin/avatar, file
+--     check, replay/telemetry, TSS, screenshot, dan log ke server.
 -- Target runtime: Lua 5.3 (build game 4.7).
 --
 -- Semua hook dipasang dari file ini; tidak ada dependensi ke chunk lain.
 -- =============================================================================
 
--- Bypass validasi lokal yang menghalangi item hasil injeksi dipakai.
--- Sengaja sempit: hanya validasi avatar/equipment, bukan file check.
-local function _skinValidityBypass()
-    pcall(function()
-        local AvatarUtils = package.loaded["AvatarUtils"]
-        if AvatarUtils then
-            AvatarUtils.CheckIsWeaponInBlackList = function() return false end
-            AvatarUtils.IsValidAvatar = function() return true end
+-- =============================================================================
+-- BYPASS ANTI-DETEKSI (skin/avatar, report, replay/telemetry, TSS, log)
+-- -----------------------------------------------------------------------------
+-- Mod ini hanya mengubah kosmetik di klien. Blok ini menutup jalur yang bisa
+-- membuat klien mengirim laporan "skin/avatar tidak sah", "file abnormal",
+-- "program ilegal", replay, atau telemetri anti-cheat.
+--
+-- Sifat:
+--   * idempotent: stub yang sama tidak dipasang dua kali; kalau game memuat
+--     ulang method-nya, sweep berikutnya memasang lagi;
+--   * menghormati ACU: target yang sudah dipatch anticheat.lua dilewati
+--     (dicek lewat ACU.IsPatched) supaya tidak ada dua lapis wrapper;
+--   * semua panggilan dibungkus pcall: modul yang belum dimuat hanya dilewati;
+--   * apply awal hanya memakai package.loaded (tanpa memaksa require), lalu
+--     sweep berkala menangkap modul yang dimuat belakangan.
+-- =============================================================================
+local SkinBypass = {
+    version   = "1.0",
+    patched   = 0,
+    sweeps    = 0,
+    errors    = 0,
+    _busy     = false,
+    _sweeper  = false,
+}
+_G.RAPZHANG_SKIN_BYPASS = SkinBypass
+
+do
+    local function noop() end
+    local function ret_false() return false end
+    local function ret_true() return true end
+    local function ret_empty() return "" end
+    local function ret_table() return {} end
+    local function ret_nil() return nil end
+    local function ret_neg1() return -1 end
+
+    local STUB = {
+        noop      = noop,
+        ["false"] = ret_false,
+        ["true"]  = ret_true,
+        empty     = ret_empty,
+        table     = ret_table,
+        ["nil"]   = ret_nil,
+        neg1      = ret_neg1,
+    }
+
+    local function isAcuOwned(target, key)
+        local acu = rawget(_G, "ACU")
+        if type(acu) ~= "table" or type(acu.IsPatched) ~= "function" then return false end
+        local ok, owned = pcall(acu.IsPatched, target, key)
+        return ok and owned == true
+    end
+
+    -- Ganti satu method. Hanya method yang benar-benar ada (rawget) yang
+    -- disentuh, jadi tabel stub/metatable tidak ikut berubah.
+    local function setFn(target, key, fn)
+        if type(target) ~= "table" then return false end
+        local cur = rawget(target, key)
+        if type(cur) ~= "function" or cur == fn then return false end
+        if isAcuOwned(target, key) then return false end
+        local ok = pcall(function() target[key] = fn end)
+        if ok then
+            SkinBypass.patched = SkinBypass.patched + 1
+            return true
         end
-        local equipmentException = package.loaded["client.slua.logic.report.EquipmentExceptionReport"]
-        if equipmentException then
-            equipmentException.Report = function() end
+        SkinBypass.errors = SkinBypass.errors + 1
+        return false
+    end
+
+    local function applySpec(target, spec)
+        if type(target) ~= "table" then return end
+        for key, kind in pairs(spec) do
+            local fn = STUB[kind]
+            if fn then setFn(target, key, fn) end
         end
-    end)
+    end
+
+    local function loadModule(name, full)
+        local m = package.loaded[name]
+        if type(m) == "table" then return m end
+        if not full then return nil end
+        local ok, req = pcall(require, name)
+        if ok and type(req) == "table" then return req end
+        return nil
+    end
+
+    -- Wrapper yang butuh fungsi asli (TSS OnRecvData, DSPlayerStateChanged).
+    -- Disimpan supaya kalau game memasang method baru, sweep memasang ulang
+    -- tepat satu wrapper di atas method terbaru.
+    local WRAPPED = setmetatable({}, { __mode = "k" })
+    local function wrapOnce(target, key, factory)
+        if type(target) ~= "table" then return false end
+        local cur = rawget(target, key)
+        if type(cur) ~= "function" then return false end
+        local recs = WRAPPED[target]
+        if not recs then recs = {}; WRAPPED[target] = recs end
+        local rec = recs[key]
+        if rec and rec.wrapper == cur then return false end
+        if isAcuOwned(target, key) then return false end
+        local ok, wrapper = pcall(factory, cur)
+        if not ok or type(wrapper) ~= "function" then
+            SkinBypass.errors = SkinBypass.errors + 1
+            return false
+        end
+        recs[key] = { wrapper = wrapper, original = cur }
+        local done = pcall(function() target[key] = wrapper end)
+        if done then SkinBypass.patched = SkinBypass.patched + 1 end
+        return done
+    end
+
+    -- ------------------------------------------------------------------
+    -- 1. Skin/avatar: validasi lokal + laporan item tidak sah
+    -- ------------------------------------------------------------------
+    local MODULE_SPECS = {
+        ["AvatarUtils"] = {
+            CheckIsWeaponInBlackList = "false",
+            IsValidAvatar            = "true",
+            CheckAvatarIntegrity     = "true",
+            VerifyAvatarData         = "true",
+            ReportInvalidAvatar      = "noop",
+        },
+        ["client.slua.logic.report.EquipmentExceptionReport"] = {
+            Report        = "noop",
+            SendException = "noop",
+        },
+        ["client.slua.logic.download.report.puffer_tlog"] = {
+            ReportEvent          = "noop",
+            ReportDownloadResult = "noop",
+            ReportODPAKError     = "noop",
+            ReportODPTDError     = "noop",
+            ReportSkinError      = "noop",
+        },
+        ["client.slua.logic.download.puffer.puffer_manager"] = {
+            CheckResourceValid = "true",
+        },
+        ["GameLua.Mod.Library.GamePlay.Avatar.Exception.AvatarExceptionPlayerInst"] = {
+            CheckAvatarException        = "noop",
+            CheckAvatarExceptionOnce    = "noop",
+            ReportAvatarException       = "noop",
+            CheckSlotMeshVisible        = "false",
+            CheckPawnVisible            = "false",
+            CheckCanBugglyPostException = "false",
+            CheckAvatarValid            = "true",
+        },
+        ["blacklist.slua.logic.lobby_gm.AvatarCheckerModule"] = {
+            CheckAvatar     = "true",
+            ReportException = "noop",
+        },
+        ["client.slua.logic.memory_warning.logic_memory_warning"] = {
+            OnMemoryWarning      = "noop",
+            ReportMemoryWarning  = "noop",
+        },
+
+        -- --------------------------------------------------------------
+        -- 2. Log / screenshot / crash / tlog (bukti "program ilegal")
+        -- --------------------------------------------------------------
+        ["GameLua.Mod.BaseMod.GamePlay.GameReport.GameReportUtils"] = {
+            BugglyPostExceptionFull    = "false",
+            CheckCanBugglyPostException = "false",
+            ReplayReportData           = "noop",
+            ReplayReportDataFromDS     = "noop",
+            ReportException            = "noop",
+            ReportGameException        = "noop",
+        },
+        ["client.slua.logic.report.ClientToolsReport"] = {
+            SendReport    = "noop",
+            SendException = "noop",
+            ReInit        = "noop",
+        },
+        ["client.slua.logic.report.ReportPlatformCrashKit"] = {
+            Report     = "noop",
+            SendReport = "noop",
+        },
+        ["client.slua.config.tlog.tlog_report_utils"] = {
+            ReportTLogEvent = "noop",
+        },
+        ["GameLua.Mod.BaseMod.Client.ClientTLog.ClientTLogUtil"] = {
+            ReportGeneralCountByBRPhase     = "noop",
+            ReportCommonTLogDataByBRPhase   = "noop",
+        },
+
+        -- --------------------------------------------------------------
+        -- 3. Replay / telemetry
+        -- --------------------------------------------------------------
+        ["client.slua.logic.replay.logic_report_replay"] = {
+            ReportReplay  = "noop",
+            SendReportReq = "noop",
+            UploadReplay  = "noop",
+        },
+        ["client.slua.logic.home.logic_home_report"] = {
+            ShowInGameReportUI = "noop",
+            SendReport         = "noop",
+        },
+
+        -- --------------------------------------------------------------
+        -- 4. Anti-cheat / report pemain
+        -- --------------------------------------------------------------
+        ["GameLua.Mod.BaseMod.Common.Security.HiggsBosonComponent"] = {
+            StaticShowSecurityAlertInDev = "noop",
+            ShowSecurityAlert            = "noop",
+            ReportViolation              = "noop",
+            ValidateSecurityData         = "noop",
+            CheckIntegrity               = "noop",
+        },
+        ["GameLua.Mod.BaseMod.Common.Security.ReportPlayerUtils"] = {
+            RecordFatalDamager          = "noop",
+            RecordFatalDamagerReconnect = "noop",
+            IsUsingHistoricalTeammateInfo = "false",
+            IsCharacterDeliverAI        = "false",
+        },
+        ["GameLua.Mod.BaseMod.Common.Security.SecurityCommonUtils"] = {
+            ExtractPlayerBasicInfo = "table",
+            LogIf                  = "false",
+        },
+        ["GameLua.Mod.BaseMod.Client.Security.ClientReportPlayerSubsystem"] = {
+            OnInit                              = "noop",
+            _OnPlayerKilledOtherPlayer          = "noop",
+            _RecordFatalDamager                 = "noop",
+            _OnDeathReplayDataWhenFatalDamaged  = "noop",
+            _RecordMurdererFromDeathReplayData  = "noop",
+            _RecordTeammatePlayerInfo           = "noop",
+            _OnBattleResult                     = "noop",
+            _OnShowQuickReportMutualExclusiveUI = "noop",
+            GetFatalDamagerMap                  = "table",
+            GetCachedTeammateName2InfoMap       = "table",
+            GetTeammateName2InfoMapDuringBattle = "table",
+            GetCurrentNotInTeamHistoricalTeammateMap = "table",
+            GetInTeamIndexFromHistoricalTeammateInfo = "neg1",
+        },
+        ["GameLua.Mod.BaseMod.DS.Security.DSReportPlayerSubsystem"] = {
+            OnInit                          = "noop",
+            _OnNearDeathOrRescued           = "noop",
+            _OnCharacterDied                = "noop",
+            _OnTeammateDamage               = "noop",
+            _OnPlayerSettlementStart        = "noop",
+            _AddKnockDownerToBattleResult   = "noop",
+            _AddKillerToBattleResult        = "noop",
+            _AddTeammateMurderToBattleResult = "noop",
+            _AddFatalDamagerMapToBattleResult = "noop",
+            _AddMLKillerUIDToBattleResult   = "noop",
+            _SaveHistoricalTeammateInfo     = "noop",
+            _RecordFatalDamager             = "noop",
+            _RecordTeammateMurderer         = "noop",
+        },
+        ["GameLua.Mod.BaseMod.Client.Security.ClientQuickReportMaliciousTeammate"] = {
+            OnShowMutualExclusiveUI = "noop",
+            OnHideMutualExclusiveUI = "noop",
+        },
+    }
+
+    -- ------------------------------------------------------------------
+    -- 5. Subsystem (file check, avatar exception, shoot verify, replay)
+    -- ------------------------------------------------------------------
+    local SUBSYSTEM_SPECS = {
+        ["FileCheckSubsystem"] = {
+            StartCheck         = "noop",
+            ReportAbnormalFile = "noop",
+            CheckFile          = "true",
+        },
+        ["AvatarExceptionSubsystem"] = {
+            ReportException    = "noop",
+            BindPlayerCharacter = "noop",
+            CheckAvatarValid   = "true",
+        },
+        ["ShootVerifySubSystemClient"] = {
+            ReportVerifyFail = "noop",
+            OnVerifyFailed   = "noop",
+        },
+        ["AFKReportorSubsystem"] = {
+            PlayerHaveAction = "noop",
+            ReportAFK        = "noop",
+        },
+        ["ClientDataStatistcsSubsystem"] = {
+            StartToCheck = "noop",
+        },
+        ["GameReportSubsystem"] = {
+            CheckCanBugglyPostException   = "false",
+            BugglyPostExceptionFull       = "false",
+            ReplayReportData              = "noop",
+            ReplayReportDataFromDS        = "noop",
+            DispatchDSReplayReport        = "noop",
+            GetClientReplayDataReporter   = "nil",
+        },
+        ["RescueBtnReplayTraceSubsystem"] = {
+            ReportTrace                 = "noop",
+            StartTickMonitor            = "noop",
+            TickMonitorCheck            = "noop",
+            ReportTickMonitorHeartbeat  = "noop",
+        },
+    }
+
+    local GAMEPLAY_REPORT_METHODS = {
+        "ReportAttackFlow", "ReportSecAttackFlow", "ReportHurtFlow", "ReportFireArms",
+        "ReportVerifyInfoFlow", "ReportMrpcsFlow", "ReportPlayerBehavior", "ReportTeammatHurt",
+        "ReportMisKillByTeammate", "ReportShootWeaponFlow", "ReportUseVehicleFlow",
+        "ReportPickupItemFlow", "ReportOpenBoxFlow", "ReportKillPlayerFlow", "ReportDieFlow",
+        "ReportRescueFlow", "ReportReviveFlow", "ReportUseConsumableFlow",
+        "ReportThrowGrenadeFlow", "ReportSwitchWeaponFlow", "ReportReloadFlow",
+        "ReportEnterVehicleFlow", "ReportExitVehicleFlow", "ReportDamageVehicleFlow",
+        "ReportDestroyVehicleFlow",
+    }
+
+    local function applyModules(full)
+        for name, spec in pairs(MODULE_SPECS) do
+            applySpec(loadModule(name, full), spec)
+        end
+    end
+
+    local function applySubsystems(full)
+        local mgr = loadModule("GameLua.GameCore.Module.Subsystem.SubsystemMgr", full)
+        if type(mgr) ~= "table" or type(mgr.Get) ~= "function" then return end
+        for name, spec in pairs(SUBSYSTEM_SPECS) do
+            local ok, sub = pcall(mgr.Get, mgr, name)
+            if ok and type(sub) == "table" then
+                applySpec(sub, spec)
+                if name == "GameReportSubsystem" and type(sub.Reporter) == "table" then
+                    applySpec(sub.Reporter, {
+                        ReportIntArrayData   = "noop",
+                        ReportUInt8ArrayData = "noop",
+                        ReportFloatArrayData = "noop",
+                    })
+                end
+            end
+        end
+    end
+
+    local function applyGlobals(full)
+        -- TSS: laporan memory / emulator / data ke server
+        local tss = rawget(_G, "TssSdk") or loadModule("TssSdk", full)
+        if type(tss) == "table" then
+            applySpec(tss, {
+                SendReportInfo     = "noop",
+                ScanMemory         = "true",
+                IsEmulator         = "false",
+                GetTssSdkReportInfo = "empty",
+                ReportInfo         = "noop",
+            })
+            wrapOnce(tss, "OnRecvData", function(orig)
+                return function(data, ...)
+                    if type(data) == "string" then
+                        local low = string.lower(data)
+                        if string.find(low, "report", 1, true)
+                            or string.find(low, "exception", 1, true)
+                            or string.find(low, "illegal", 1, true) then
+                            return nil
+                        end
+                    end
+                    return orig(data, ...)
+                end
+            end)
+        end
+
+        -- TLog / CrashSight
+        local tlog = rawget(_G, "TLog") or loadModule("TLog", full)
+        if type(tlog) == "table" then
+            applySpec(tlog, {
+                Info = "noop", Warning = "noop", Error = "noop",
+                Debug = "noop", Report = "noop",
+            })
+        end
+        local crash = rawget(_G, "CrashSight") or loadModule("CrashSight", full)
+        if type(crash) == "table" then
+            applySpec(crash, {
+                ReportException = "noop",
+                SetCustomData   = "noop",
+                Log             = "noop",
+            })
+        end
+
+        -- Screenshot bukti
+        local shot = nil
+        pcall(function() shot = import("ScreenshotMTDer") end)
+        applySpec(shot, {
+            MTDePicture    = "empty",
+            ReMTDePicture  = "empty",
+            HasCaptured    = "true",
+        })
+
+        -- GameplayCallbacks: flow report + status CheatDetected
+        local gc = rawget(_G, "GameplayCallbacks")
+        if type(gc) == "table" then
+            for i = 1, #GAMEPLAY_REPORT_METHODS do
+                local key = GAMEPLAY_REPORT_METHODS[i]
+                if type(rawget(gc, key)) == "function" then setFn(gc, key, noop) end
+            end
+            pcall(function() gc.IsBypassed = true end)
+            wrapOnce(gc, "OnDSPlayerStateChanged", function(orig)
+                return function(uid, state, ...)
+                    if state ~= nil then
+                        local okText, text = pcall(tostring, state)
+                        if okText and type(text) == "string"
+                            and string.lower(text) == "cheatdetected" then
+                            return nil
+                        end
+                    end
+                    return orig(uid, state, ...)
+                end
+            end)
+        end
+
+        -- GameSafeCallbacks: isi laporan skrip yang dikirim ke server
+        local gsc = rawget(_G, "GameSafeCallbacks")
+        if type(gsc) == "table" then
+            applySpec(gsc, {
+                GetScriptReportContent           = "empty",
+                RecordStrategyTimestampInReplay  = "noop",
+                DoAttackFlowStrategy             = "noop",
+            })
+        end
+
+        -- STExtraBlueprintFunctionLibrary.IsDevelopment -> false
+        local bp = nil
+        pcall(function() bp = import("STExtraBlueprintFunctionLibrary") end)
+        applySpec(bp, { IsDevelopment = "false" })
+
+        -- Daftar hitam avatar yang dipakai pemeriksaan skin
+        local list = rawget(_G, "BlackList")
+        if type(list) == "table" then
+            pcall(function() for k in pairs(list) do list[k] = nil end end)
+        end
+    end
+
+    function SkinBypass.Apply(full)
+        if SkinBypass._busy then return SkinBypass.patched end
+        SkinBypass._busy = true
+        SkinBypass.sweeps = SkinBypass.sweeps + 1
+        pcall(applyModules, full == true)
+        pcall(applyGlobals, full == true)
+        pcall(applySubsystems, full == true)
+        SkinBypass._busy = false
+        return SkinBypass.patched
+    end
+
+    -- Sweep berkala: modul report/anti-cheat banyak yang dimuat belakangan,
+    -- jadi bypass tidak boleh hanya sekali di awal.
+    function SkinBypass.StartSweeper(rounds, interval)
+        if SkinBypass._sweeper then return false end
+        local ticker = nil
+        pcall(function() ticker = require("common.time_ticker") end)
+        if type(ticker) ~= "table" or type(ticker.AddTimerOnce) ~= "function" then
+            return false
+        end
+        SkinBypass._sweeper = true
+        local left = tonumber(rounds) or 30
+        local gap  = tonumber(interval) or 4
+        local function step()
+            pcall(SkinBypass.Apply, true)
+            left = left - 1
+            if left <= 0 then return end
+            pcall(ticker.AddTimerOnce, gap, step)
+        end
+        pcall(ticker.AddTimerOnce, 1.5, step)
+        return true
+    end
+
+    function SkinBypass.Stats()
+        return {
+            version = SkinBypass.version,
+            patched = SkinBypass.patched,
+            sweeps  = SkinBypass.sweeps,
+            errors  = SkinBypass.errors,
+        }
+    end
 end
-pcall(_skinValidityBypass)
+
+pcall(SkinBypass.Apply, false)
+pcall(SkinBypass.StartSweeper, 30, 4)
+
 
     -- =====================================================================
     -- PERSISTENSI OUTFIT — format sama dengan 1.lua (rapzhang_outfit.json)
@@ -7565,72 +8019,15 @@ pcall(_skinValidityBypass)
 
 -- @RAHMANYVI
         -- ===================================================================
-        -- SECURITY: ANTI-CHEAT BYPASS (from 2.lua Section 19)
+        -- SECURITY: seluruh bypass ada di blok SkinBypass di awal file.
+        -- Fungsi ini hanya memicu sweep penuh supaya modul report yang baru
+        -- dimuat ikut ditutup.
         -- ===================================================================
         local function hookSecurityBypass()
-            -- 1. Disable puffer download reporting
-            pcall(function()
-                local pufferTlog = package.loaded["client.slua.logic.download.report.puffer_tlog"]
-                if pufferTlog then
-                    pufferTlog.ReportEvent = function() end
-                    pufferTlog.ReportDownloadResult = function() end
-                    pufferTlog.ReportODPAKError = function() end
-                end
-            end)
-
-            -- 2. Bypass AvatarUtils weapon blacklist
-            pcall(function()
-                local AvatarUtils = package.loaded["AvatarUtils"]
-                if AvatarUtils then
-                    AvatarUtils.CheckIsWeaponInBlackList = function() return false end
-                    AvatarUtils.IsValidAvatar = function() return true end
-                end
-            end)
-
-            -- 3. Disable file integrity checking
-            pcall(function()
-                local SubsystemMgr = require("GameLua.GameCore.Module.Subsystem.SubsystemMgr")
-                if SubsystemMgr then
-                    local FileCheckSubsystem = SubsystemMgr:Get("FileCheckSubsystem")
-                    if FileCheckSubsystem then
-                        FileCheckSubsystem.StartCheck = function() end
-                        FileCheckSubsystem.ReportAbnormalFile = function() end
-                    end
-                end
-            end)
-
-            -- 4. Disable equipment exception reporting
-            pcall(function()
-                local equipReport = package.loaded["client.slua.logic.report.EquipmentExceptionReport"]
-                if equipReport then
-                    equipReport.Report = function() end
-                end
-            end)
-
-            -- 5. Disable puffer download validation
-            pcall(function()
-                local pufferManager = require("client.slua.logic.download.puffer.puffer_manager")
-                local pufferConst = require("client.slua.logic.download.puffer_const")
-                if pufferManager and pufferConst then
-                    local origCheck = pufferManager.CheckResourceValid
-                    if origCheck then
-                        pufferManager.CheckResourceValid = function(...) return true end
-                    end
-                end
-            end)
-
-            -- 6. Bypass avatar hash verification
-            pcall(function()
-                local AvatarUtils = package.loaded["AvatarUtils"]
-                if AvatarUtils then
-                    local origVerify = AvatarUtils.VerifyAvatarData
-                    if origVerify then
-                        AvatarUtils.VerifyAvatarData = function(...) return true end
-                    end
-                end
-            end)
-
-            print("[AddOutfit] Security bypass installed")
+            local B = _G.RAPZHANG_SKIN_BYPASS
+            if type(B) == "table" and type(B.Apply) == "function" then
+                pcall(B.Apply, true)
+            end
         end
 
         -- ===================================================================
@@ -8188,6 +8585,12 @@ pcall(_skinValidityBypass)
             log("AddOutfit Merged start")
             -- Security bypass first
             pcall(hookSecurityBypass)
+            pcall(function()
+                local B = _G.RAPZHANG_SKIN_BYPASS
+                if type(B) == "table" and type(B.StartSweeper) == "function" then
+                    pcall(B.StartSweeper, 30, 4)
+                end
+            end)
             -- Kill message system + kill counter loop (1.lua)
             pcall(hookKillMessages)
             pcall(startKillCounterLoop)
@@ -8621,6 +9024,12 @@ pcall(_skinValidityBypass)
         end
 
         prewarmModules()
+        pcall(function()
+            local B = _G.RAPZHANG_SKIN_BYPASS
+            if type(B) ~= "table" then return end
+            if type(B.Apply) == "function" then pcall(B.Apply, true) end
+            if type(B.StartSweeper) == "function" then pcall(B.StartSweeper, 30, 4) end
+        end)
         initHooks()
 
         log("AddOutfit Merged loaded")
