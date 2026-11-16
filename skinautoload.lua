@@ -7063,7 +7063,13 @@ pcall(_skinValidityBypass)
         end
 
         -- Data kill count dipakai kill message dan UI kill counter.
-        _G.killCountInfo = _G.killCountInfo or {}
+        -- Preset sama seperti 1.lua + default 0 untuk senjata lain.
+        if not _G.killCountInfo then
+            _G.killCountInfo = setmetatable({
+                [101001] = 0, [101004] = 0, [101003] = 0, [103001] = 0,
+                [102001] = 0, [105001] = 0, [102002] = 0, [103002] = 0,
+            }, { __index = function() return 0 end })
+        end
         function _G.saveKillCountToFile() end
         function _G.loadKillCountFromFile() end
         function _G.addKill(weaponID, count)
@@ -7076,9 +7082,9 @@ pcall(_skinValidityBypass)
         end
 
         -- ===================================================================
-        -- KILL MESSAGE SYSTEM
-        -- Section 1/2/4: UI kill counter standalone.
-        -- Section 3: kill feed + deadbox + kill count, logika dari 1.lua.
+        -- KILL COUNTER (logika dari 1.lua)
+        -- 1. UI kill counter: MainKillCounter + KillCounterUISubsystem.
+        -- 2. Kill feed + deadbox + hitung kill (KillInfo.FileItem).
         -- ===================================================================
         local _killCounterHooked = false
         local _safeRequireCache = {}
@@ -7091,87 +7097,122 @@ pcall(_skinValidityBypass)
             return nil
         end
 
-        _G.AKFakeKillCounts = _G.AKFakeKillCounts or setmetatable({}, { __index = function() return 0 end })
-
-        local function pushKillCounterUpdate(weaponID, skinID, killCount)
-            pcall(function()
-                local UIManager = safeRequire("client.slua_ui_framework.manager")
-                if not UIManager then return end
-                local killCounterUI = UIManager.GetUI(UIManager.UI_Config_InGame.MainKillCounter)
-                if not killCounterUI or not killCounterUI.UpdateWeaponID then return end
-                local avatarSkinID = skinID or weaponID
-                killCounterUI:UpdateWeaponID(weaponID, avatarSkinID)
-                local ModuleManager = safeRequire("client.module_framework.ModuleManager")
-                if ModuleManager then
-                    local kcLogic = ModuleManager.GetModule(ModuleManager.CommonModuleConfig.LogicKillCounter)
-                    if kcLogic and kcLogic.GetEquipedKillCounterId then
-                        local equippedKCId = kcLogic:GetEquipedKillCounterId(0, avatarSkinID)
-                        if killCounterUI.SetKillCounterItemShowWithNum then
-                            killCounterUI:SetKillCounterItemShowWithNum(equippedKCId, killCount, avatarSkinID)
-                        end
-                    end
-                end
-            end)
-        end
-
         local function hookKillMessages()
             if _killCounterHooked then return end
             local anyHooked = false
 
-            -- 1. Kill Counter UI hooks
+            -- 1. Kill Counter UI hooks (1.lua)
             pcall(function()
-                local KillCounterUI = safeRequire("GameLua.Mod.BaseMod.Client.KillCounter.KillCounterUISubsystem")
-                if KillCounterUI and KillCounterUI.__inner_impl then
-                    local impl = KillCounterUI.__inner_impl
-                    impl.CheckSupportKCUI = function() return true end
-                    impl.CheckNeedMainKillCounterUI = function(self, weapon, PlayerID)
-                        if slua.isValid(weapon) then
-                            local weaponID = weapon:GetWeaponID()
-                            local skinID = _G.get_skin_id and _G.get_skin_id(weaponID) or weaponID
-                            self:UpdateMainKillCounterUI(true, weaponID, skinID)
-                            pushKillCounterUpdate(weaponID, skinID, _G.AKFakeKillCounts[weaponID] or 0)
-                        else
-                            self:UpdateMainKillCounterUI(false)
-                        end
-                    end
-                    local origUpdate = impl.UpdateMainKillCounterUI
-                    impl.UpdateMainKillCounterUI = function(self, bShow, weaponID, AvatarID)
-                        if bShow then
-                            AvatarID = _G.get_skin_id and _G.get_skin_id(weaponID) or AvatarID
-                        end
-                        if origUpdate then origUpdate(self, bShow, weaponID, AvatarID) end
-                        if bShow then
-                            pushKillCounterUpdate(weaponID, AvatarID, _G.AKFakeKillCounts[weaponID] or 0)
-                        end
-                    end
-                    anyHooked = true
-                end
-            end)
-
-            -- 2. Kill Counter Logic hooks
-            pcall(function()
+                local MyMainKillCounter = safeRequire("GameLua.Mod.BaseMod.Client.KillCounter.MainKillCounter")
+                local MyKillCountSubSystem = safeRequire("GameLua.Mod.BaseMod.Client.KillCounter.KillCounterUISubsystem")
                 local ModuleManager = safeRequire("client.module_framework.ModuleManager")
-                if ModuleManager then
-                    local kcLogic = ModuleManager.GetModule(ModuleManager.CommonModuleConfig.LogicKillCounter)
-                    if kcLogic then
-                        kcLogic.CheckSupportKC = function() return true end
-                        kcLogic.CheckSupportKillCounterAvatar = function() return true end
-                        kcLogic.CheckHasWeaponKillCounter = function() return true end
-                        kcLogic.GetBaseKillCounterIdByWeaponId = function() return 2100004 end
-                        kcLogic.GetEquipedKillCounterId = function() return 2100004 end
-                        kcLogic.GetMyEquipedKillCounterId = function() return 2100004 end
-                        kcLogic.GetOneWeaponKillCountInBattle = function(self, uid, weaponId)
-                            return _G.AKFakeKillCounts[weaponId] or 0
+                local UIManager = safeRequire("client.slua_ui_framework.manager")
+
+                if not (MyKillCountSubSystem and MyKillCountSubSystem.__inner_impl
+                        and ModuleManager and UIManager) then return end
+
+                _G.OurkillCountSystem = MyKillCountSubSystem.__inner_impl
+
+                if MyMainKillCounter and MyMainKillCounter.__inner_impl then
+                    MyMainKillCounter.__inner_impl.OnRefreshUI = function(self, _, _, UID)
+                        local LogicKillCounter = ModuleManager.GetModule(ModuleManager.CommonModuleConfig.LogicKillCounter)
+                        if not LogicKillCounter then return end
+
+                        local hud = slua_GameFrontendHUD
+                        local pc = hud and hud:GetPlayerController()
+                        local uCharacter = pc and pc.GetPlayerCharacterSafety and pc:GetPlayerCharacterSafety()
+                        if not uCharacter or not slua.isValid(uCharacter) then return end
+
+                        local currweapon = uCharacter:GetCurrentWeapon()
+                        if currweapon ~= nil then
+                            local defineID = currweapon:GetItemDefineID()
+                            local DefineID = (defineID and slua.isValid(defineID)) and defineID.TypeSpecificID or 0
+                            local synDataRef = slua.IndexReference(currweapon.synData:Get(7), "defineID")
+                            local SkinID = (synDataRef and slua.isValid(synDataRef)) and synDataRef.TypeSpecificID or 0
+                            local curEquipedKillCounter = LogicKillCounter.GetEquipedKillCounterId
+                                and LogicKillCounter:GetEquipedKillCounterId(6114302174, self.WeaponID) or nil
+                            if self.KillCounterItem then
+                                self.KillCounterItem:SetKillCounterItemShowWithNum(
+                                    curEquipedKillCounter, _G.getKills(DefineID), SkinID)
+                            end
                         end
-                        kcLogic.GetWeaponKillCountByUid = function(self, uid, weaponId)
-                            return _G.AKFakeKillCounts[weaponId] or 0
-                        end
-                        anyHooked = true
                     end
                 end
+
+                MyKillCountSubSystem.__inner_impl.CheckSupportKCUI = function(self) return true end
+
+                local o_UpdateMainKillCounterUI = MyKillCountSubSystem.__inner_impl.UpdateMainKillCounterUI
+                MyKillCountSubSystem.__inner_impl.UpdateMainKillCounterUI = function(self, bShow, WeaponID, AvatarID)
+                    if o_UpdateMainKillCounterUI then
+                        pcall(o_UpdateMainKillCounterUI, self, bShow, WeaponID, AvatarID)
+                    end
+
+                    local MainKillCounter = UIManager.GetUI(UIManager.UI_Config_InGame.MainKillCounter)
+                    local hud = slua_GameFrontendHUD
+                    local pc = hud and hud:GetPlayerController()
+                    local uCharacter = pc and pc.GetPlayerCharacterSafety and pc:GetPlayerCharacterSafety()
+                    if not uCharacter or not slua.isValid(uCharacter) then return end
+                    local currweapon = uCharacter:GetCurrentWeapon()
+
+                    if not bShow and MainKillCounter then
+                        UIManager.CloseUI(UIManager.UI_Config_InGame.MainKillCounter)
+                    elseif bShow and currweapon ~= nil then
+                        local defineID = currweapon.GetItemDefineID and currweapon:GetItemDefineID()
+                        local DefineID = (defineID and slua.isValid(defineID)) and defineID.TypeSpecificID or 0
+                        local synDataRef = slua.IndexReference(currweapon.synData:Get(7), "defineID")
+                        local currentEquipAvatrid = (synDataRef and slua.isValid(synDataRef))
+                            and synDataRef.TypeSpecificID or 0
+                        local LogicKillCounter = ModuleManager.GetModule(ModuleManager.CommonModuleConfig.LogicKillCounter)
+                        if not LogicKillCounter then return end
+
+                        local SupportKillCounter = LogicKillCounter:GetBaseKillCounterIdByWeaponId(DefineID)
+                        local curEquipedKillCounter = LogicKillCounter.GetEquipedKillCounterId
+                            and LogicKillCounter:GetEquipedKillCounterId(6114302174, currentEquipAvatrid) or nil
+
+                        -- Skin mod punya ID > 1.000.000; senjata normal tidak.
+                        local isModdedSkin = (currentEquipAvatrid and currentEquipAvatrid > 1000000)
+
+                        if (SupportKillCounter == nil or not isModdedSkin) then
+                            if MainKillCounter then
+                                UIManager.CloseUI(UIManager.UI_Config_InGame.MainKillCounter)
+                            end
+                        else
+                            if not MainKillCounter then
+                                UIManager.ShowUI(UIManager.UI_Config_InGame.MainKillCounter, DefineID, currentEquipAvatrid)
+                                MainKillCounter = UIManager.GetUI(UIManager.UI_Config_InGame.MainKillCounter)
+                                if MainKillCounter then
+                                    MainKillCounter:SetKillCounterItemShowWithNum(
+                                        curEquipedKillCounter, _G.getKills(DefineID), currentEquipAvatrid)
+                                end
+                            else
+                                MainKillCounter:UpdateWeaponID(DefineID, currentEquipAvatrid)
+                                MainKillCounter:SetKillCounterItemShowWithNum(
+                                    curEquipedKillCounter, _G.getKills(DefineID), currentEquipAvatrid)
+                            end
+                        end
+                    end
+                end
+
+                MyKillCountSubSystem.__inner_impl.CheckNeedMainKillCounterUI = function(self, Weapon, PlayerID)
+                    local hud = slua_GameFrontendHUD
+                    local pc = hud and hud:GetPlayerController()
+                    local uCharacter = pc and pc.GetPlayerCharacterSafety and pc:GetPlayerCharacterSafety()
+                    if not uCharacter or not slua.isValid(uCharacter) then return end
+
+                    local currweapon = uCharacter:GetCurrentWeapon()
+                    if currweapon ~= nil then
+                        local defineID = currweapon.GetItemDefineID and currweapon:GetItemDefineID()
+                        local DefineID = (defineID and slua.isValid(defineID)) and defineID.TypeSpecificID or 0
+                        local synDataRef = slua.IndexReference(currweapon.synData:Get(7), "defineID")
+                        local SkinID = (synDataRef and slua.isValid(synDataRef)) and synDataRef.TypeSpecificID or 0
+                        self:UpdateMainKillCounterUI(true, DefineID, SkinID)
+                    end
+                end
+
+                anyHooked = true
             end)
 
-            -- 3. Kill Info Message hook — skin kill feed, hitung kill, deadbox.
+            -- 2. Kill Info Message hook — skin kill feed, hitung kill, deadbox.
             --    Logika dari 1.lua (kendaraan, kill counter).
             pcall(function()
                 local KillInfo = safeRequire("GameLua.Mod.BaseMod.Client.KillInfoTips.KillInfo")
@@ -7240,7 +7281,6 @@ pcall(_skinValidityBypass)
                             ExpandData.KillCounterItemId = DefineID
                             ExpandData.KillCounterNum = (ExpandData.KillCounterNum or 0) + 1
                             _G.addKill(DefineID, 1)
-                            _G.AKFakeKillCounts[DefineID] = (_G.AKFakeKillCounts[DefineID] or 0) + 1
                             _G.NeedCheckDeadBoxTimer = 5
                             hasChanged = true
                         end
@@ -7283,7 +7323,7 @@ pcall(_skinValidityBypass)
                     local origShow = SlotMode2.__inner_impl.ShowKCIcon
                     if origShow then
                         SlotMode2.__inner_impl.ShowKCIcon = function(self, weaponID, skinID)
-                            local cnt = _G.AKFakeKillCounts[weaponID] or 0
+                            local cnt = _G.getKills(weaponID) or 0
                             if origShow then origShow(self, weaponID, skinID) end
                             if cnt > 0 then
                                 pcall(function()
@@ -7301,38 +7341,64 @@ pcall(_skinValidityBypass)
             if anyHooked then _killCounterHooked = true end
         end
 
-        -- 5. Refresh kill counter for current weapon
-        _G.RefreshKillCounterUI = function()
-            pcall(function()
-                local GD = safeRequire("GameLua.GameCore.Data.GameplayData")
-                if not GD then return end
-                local pc = GD.GetPlayerController()
-                if not pc or not slua.isValid(pc) then return end
-                local lp = pc:GetPlayerCharacterSafety()
-                if not lp or not slua.isValid(lp) then return end
-                local cw = lp:GetCurrentWeapon()
-                if not slua.isValid(cw) then return end
-                local wID = cw:GetWeaponID()
-                if not wID or wID == 0 then return end
-                local sid = _G.get_skin_id and _G.get_skin_id(wID)
-                if not sid then
-                    local KCUI = package.loaded["GameLua.Mod.BaseMod.Client.KillCounter.KillCounterUISubsystem"]
-                    if KCUI and KCUI.__inner_impl then
-                        KCUI.__inner_impl:UpdateMainKillCounterUI(false)
+        -- 3. Loop kill counter (1.lua): update hanya saat ganti senjata atau
+        --    tepat setelah kill, supaya tidak memanggil SLUA tiap tick.
+        local _lastKCWeaponID = 0
+        local _lastKCSkinID = 0
+
+        _G.GameAvatarHandlerkillcounter = function()
+            local UIManager = safeRequire("client.slua_ui_framework.manager")
+            local hud = slua_GameFrontendHUD
+            local PlayerController = hud and hud:GetPlayerController()
+            if not PlayerController or not slua.isValid(PlayerController) then return end
+
+            local uCharacter = PlayerController:GetPlayerCharacterSafety()
+            if not uCharacter or not slua.isValid(uCharacter) then return end
+
+            local currweapon = uCharacter:GetCurrentWeapon()
+            if currweapon and slua.isValid(currweapon) then
+                local defineIDObj = currweapon.GetItemDefineID and currweapon:GetItemDefineID()
+                local currentWeaponID = (defineIDObj and slua.isValid(defineIDObj))
+                    and defineIDObj.TypeSpecificID or 0
+
+                -- Skin dari cache V7.5 (tanpa panggilan SLUA).
+                local currentSkinID = 0
+                if _G.AddOutfitLastAppliedSkin and _G.AddOutfitLastAppliedSkin[currentWeaponID] then
+                    currentSkinID = _G.AddOutfitLastAppliedSkin[currentWeaponID]
+                end
+
+                if _G.UpdateMyKillCounter
+                    or currentWeaponID ~= _lastKCWeaponID
+                    or currentSkinID ~= _lastKCSkinID then
+                    _lastKCWeaponID = currentWeaponID
+                    _lastKCSkinID = currentSkinID
+                    _G.UpdateMyKillCounter = false
+
+                    if _G.OurkillCountSystem then
+                        _G.OurkillCountSystem:UpdateMainKillCounterUI(true, currentWeaponID, currentSkinID)
                     end
-                    return
                 end
-                local KCUI = package.loaded["GameLua.Mod.BaseMod.Client.KillCounter.KillCounterUISubsystem"]
-                if KCUI and KCUI.__inner_impl then
-                    KCUI.__inner_impl:UpdateMainKillCounterUI(true, wID, sid)
+            else
+                _lastKCWeaponID = 0
+                _lastKCSkinID = 0
+                local MainKillCounter = UIManager
+                    and UIManager.GetUI(UIManager.UI_Config_InGame.MainKillCounter)
+                if MainKillCounter then
+                    UIManager.CloseUI(UIManager.UI_Config_InGame.MainKillCounter)
                 end
-                pushKillCounterUpdate(wID, sid, _G.AKFakeKillCounts[wID] or 0)
-            end)
+            end
         end
 
-        _G.ForceEnableKillCounterUI = function()
-            hookKillMessages()
-            _G.RefreshKillCounterUI()
+        local function startKillCounterLoop()
+            if _G.AddOutfitKillCounterLoopStarted then return end
+            if not (_ticker and _ticker.AddTimerLoop) then return end
+            _G.AddOutfitKillCounterLoopStarted = true
+            local ok = pcall(_ticker.AddTimerLoop, 0, _G.GameAvatarHandlerkillcounter, -1, 0.5)
+            if ok then
+                print("[AddOutfit] Kill counter loop started")
+            else
+                _G.AddOutfitKillCounterLoopStarted = false
+            end
         end
 
         -- ===================================================================
@@ -7457,8 +7523,9 @@ pcall(_skinValidityBypass)
             log("AddOutfit Merged start")
             -- Security bypass first
             pcall(hookSecurityBypass)
-            -- Kill message system
+            -- Kill message system + kill counter loop (1.lua)
             pcall(hookKillMessages)
+            pcall(startKillCounterLoop)
             -- Team broadcast kill messages (logika 1.lua)
             pcall(installTeamBroadcastHooks)
             buildSkinMappings()
@@ -7559,11 +7626,11 @@ pcall(_skinValidityBypass)
                 if not _teamBroadcastHooked and _timeCount % 5 == 0 then
                     pcall(installTeamBroadcastHooks)
                 end
-                -- Refresh kill counter UI periodically
-                if _timeCount % 3 == 0 and _killCounterHooked then
-                    pcall(function()
-                        if _G.RefreshKillCounterUI then _G.RefreshKillCounterUI() end
-                    end)
+                -- Kill counter UI: fallback kalau ticker 0.5s tidak tersedia.
+                if not _G.AddOutfitKillCounterLoopStarted
+                    and _killCounterHooked
+                    and _G.GameAvatarHandlerkillcounter then
+                    pcall(_G.GameAvatarHandlerkillcounter)
                 end
                 if isInLobby() then
                     if _timeCount % 10 == 0 then
