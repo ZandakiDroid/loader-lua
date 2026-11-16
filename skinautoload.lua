@@ -30,305 +30,580 @@ local function _skinValidityBypass()
 end
 pcall(_skinValidityBypass)
 
-    local _outfitSavePathCache = nil
-    local function _getOutfitSavePath()
-        if _outfitSavePathCache then return _outfitSavePathCache end
-        local pid = "default"
+    -- =====================================================================
+    -- PERSISTENSI OUTFIT — format sama dengan 1.lua (rapzhang_outfit.json)
+    -- Disimpan di folder Paks game, berisi slot pakaian, senjata, lemparan,
+    -- kendaraan, emote/rolewear, dan tema lobby.
+    -- =====================================================================
+    local RAPZHANG_CONFIG_FILE = "rapzhang_outfit.json"
+
+    local function _getOutfitConfigPaths(fileName)
+        local paths = {
+            "//storage/emulated/0/Android/data/com.tencent.ig/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. fileName,
+            "//storage/emulated/0/Android/data/com.tencent.igfit/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. fileName,
+            "//storage/emulated/0/Android/data/com.vng.pubgmobile/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. fileName,
+            "//storage/emulated/0/Android/data/com.pubg.krmobile/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. fileName,
+            "//storage/emulated/0/Android/data/com.rekoo.pubgm/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. fileName,
+            "//storage/emulated/0/Android/data/com.pubg.imobile/files/UE4Game/ShadowTrackerExtra/ShadowTrackerExtra/Saved/Paks/" .. fileName,
+            "/Documents/ShadowTrackerExtra/Saved/Paks/" .. fileName,
+            "/Documents/ShadowTrackerExtra/Saved/Paks/puffer_temp/" .. fileName,
+            "ShadowTrackerExtra/Saved/Paks/" .. fileName,
+            "../../ShadowTrackerExtra/Saved/Paks/" .. fileName,
+        }
         pcall(function()
-            local Subsystem = require("GameLua.GameCore.Module.Subsystem.SubsystemMgr")
-            local AccountSubsystem = Subsystem:Get("AccountSubsystem")
-            if AccountSubsystem and AccountSubsystem.GetAccountUID then
-                local uid = AccountSubsystem:GetAccountUID()
-                if uid and uid ~= 0 then pid = tostring(uid) end
+            if os and os.getenv then
+                local homeDir = os.getenv("HOME")
+                if homeDir and homeDir ~= "" then
+                    table.insert(paths, 1, homeDir .. "/Documents/ShadowTrackerExtra/Saved/Paks/" .. fileName)
+                end
             end
         end)
-        local fileName = "AddOutfit_Save_" .. pid .. ".txt"
-        local possibleDirs = {
-            '/storage/emulated/0/Android/data/com.pubg.imobile/files/',
-            '/storage/emulated/0/Android/data/com.pubg.krmobile/files/',
-            '/storage/emulated/0/Android/data/com.vng.pubgmobile/files/',
-            '/storage/emulated/0/Android/data/com.rekoo.pubgm/files/'
+        return paths
+    end
+
+    local CONFIG_PATHS = _getOutfitConfigPaths(RAPZHANG_CONFIG_FILE)
+    local _configActivePath = nil
+
+    local function _getOutfitSavePath()
+        if _configActivePath then return _configActivePath end
+        for _, p in ipairs(CONFIG_PATHS) do
+            local f
+            pcall(function() f = io.open(p, "r") end)
+            if f then
+                f:close()
+                _configActivePath = p
+                return p
+            end
+        end
+        _configActivePath = CONFIG_PATHS[1]
+        return _configActivePath
+    end
+
+    local function _configWrite(txt)
+        local function tryWrite(path)
+            local f
+            pcall(function() f = io.open(path, "w") end)
+            if not f then
+                pcall(function()
+                    local dir = path:match("^(.*)/[^/]+$")
+                    if dir and os and os.execute then os.execute('mkdir -p "' .. dir .. '"') end
+                end)
+                pcall(function() f = io.open(path, "w") end)
+            end
+            if not f then return false end
+            local ok = pcall(function() f:write(txt) end)
+            pcall(function() f:close() end)
+            return ok
+        end
+        if _configActivePath and tryWrite(_configActivePath) then return true end
+        for _, p in ipairs(CONFIG_PATHS) do
+            if tryWrite(p) then
+                _configActivePath = p
+                return true
+            end
+        end
+        return false
+    end
+
+    local function _numID(n)
+        n = tonumber(n)
+        if not n or n ~= n then return 0 end
+        return math.floor(n + 0.5)
+    end
+
+    -- Slot yang disimpan sebagai angka tunggal di JSON (seperti 1.lua).
+    local OUTFIT_SLOTS = {
+        { "outfit", "outfitRes", "outfitIns", "AddOutfitLastLobbyOutfitRes" },
+        { "tshirt", "tshirtRes", "tshirtIns", "AddOutfitLastLobbyTshirtRes" },
+        { "pants",  "pantsRes",  "pantsIns",  "AddOutfitLastLobbyPantsRes"  },
+        { "shoes",  "shoesRes",  "shoesIns",  "AddOutfitLastLobbyShoesRes"  },
+        { "hat",    "hatRes",    "hatIns",    "AddOutfitLastLobbyHatRes"    },
+        { "mask",   "maskRes",   "maskIns",   "AddOutfitLastLobbyMaskRes"   },
+        { "glass",  "glassRes",  "glassIns",  "AddOutfitLastLobbyGlassRes"  },
+        { "gloves", "glovesRes", "glovesIns", "AddOutfitLastLobbyGlovesRes" },
+    }
+    local EQUIP_SLOTS = { "bag", "helmet", "armor", "parachute", "glider" }
+
+    local function _itemConf(resID)
+        local getter = CDataTable and CDataTable.GetTableData
+        if not getter then return nil end
+        local ok, c = pcall(getter, "Item", tonumber(resID))
+        if ok then return c end
+        return nil
+    end
+
+    local _CLOTH_SLOT_SUBTYPE = {
+        [401] = "hat", [402] = "mask", [404] = "pants",
+        [405] = "shoes", [407] = "glass", [452] = "gloves",
+    }
+
+    -- Klasifikasi resID pakaian ke nama slot JSON.
+    local function _clothSlotOf(resID)
+        resID = tonumber(resID)
+        if not resID or resID <= 0 then return nil end
+        local c = _itemConf(resID)
+        if not c then return nil end
+        local st = tonumber(c.ItemSubType or c.itemSubType) or 0
+        local slot = _CLOTH_SLOT_SUBTYPE[st]
+        if slot then return slot end
+        if st == 403 then
+            local tab = tonumber(c.WardrobeTab or c.wardrobeTab) or 0
+            if tab == 3 then return "tshirt" end
+            return "outfit"
+        end
+        return nil
+    end
+
+    local WEAPON_NAMES = {
+        [101001]="AKM", [101002]="M16A4", [101003]="SCAR-L", [101004]="M416",
+        [101005]="Groza", [101006]="AUG", [101007]="QBZ", [101008]="M762",
+        [101009]="G36C", [101010]="Mk47", [101012]="Honey Badger", [101100]="FAMAS",
+        [101101]="ACE32", [101102]="ASM Abakan", [102001]="UZI", [102002]="UMP45",
+        [102003]="Vector", [102004]="Tommy Gun", [102005]="Bizon", [102007]="MP5K",
+        [102008]="PP-19", [102105]="P90", [103001]="Kar98K", [103002]="M24",
+        [103003]="AWM", [103004]="SKS", [103005]="VSS", [103006]="Mini14",
+        [103007]="Mk14", [103008]="QBU", [103009]="SLR", [103010]="Win94",
+        [103011]="Mosin-Nagant", [103012]="AMR", [103100]="Mk12", [103101]="QBU-Variant",
+        [103102]="DSR", [103103]="M1 Garand", [104001]="S686", [104002]="S1897",
+        [104003]="S12K", [104004]="DBS", [104101]="NS2000", [104102]="S1897-Variant",
+        [105001]="M249", [105002]="DP-28", [105010]="MG3", [106001]="P92",
+        [106002]="P1911", [106003]="R1895", [106004]="P18C", [106005]="Desert Eagle",
+        [106006]="Scorpion", [107001]="Crossbow", [107007]="Tactical Crossbow",
+        [107008]="MGL", [108]="Melee",
+    }
+    local WEAPON_IDS_BY_NAME = {}
+    for wid, name in pairs(WEAPON_NAMES) do WEAPON_IDS_BY_NAME[name] = wid end
+    WEAPON_IDS_BY_NAME["Pan"] = 108
+    WEAPON_IDS_BY_NAME["Dagger"] = 108
+    WEAPON_IDS_BY_NAME["Machete"] = 108
+    WEAPON_IDS_BY_NAME["Melee"] = 108
+    WEAPON_IDS_BY_NAME["pan"] = 108
+    WEAPON_IDS_BY_NAME["dagger"] = 108
+    WEAPON_IDS_BY_NAME["machete"] = 108
+
+    -- Bangun isi rapzhang_outfit.json dari cache runtime.
+    local function _encodeOutfitConfig()
+        local cch = _G.AddOutfitEquippedCache or {}
+        local parts = {}
+        local slots = {}
+
+        local function setSlot(name, res)
+            res = tonumber(res)
+            if res and res > 0 and not slots[name] then slots[name] = _numID(res) end
+        end
+
+        setSlot("outfit", cch.outfitRes)
+        for _, s in ipairs(OUTFIT_SLOTS) do
+            setSlot(s[1], cch[s[2]])
+        end
+        for resID in pairs(cch.clothes or {}) do
+            local name = _clothSlotOf(resID)
+            if name then setSlot(name, resID) end
+        end
+        for _, s in ipairs(OUTFIT_SLOTS) do
+            local res = slots[s[1]]
+            if res then parts[#parts + 1] = string.format('  "%s": %d', s[1], res) end
+        end
+
+        local eq = cch.equip or {}
+        for _, slot in ipairs(EQUIP_SLOTS) do
+            local res = tonumber(eq[slot])
+            if res and res > 0 then
+                parts[#parts + 1] = string.format('  "%s": %d', slot, _numID(res))
+            end
+        end
+
+        local throwParts = {}
+        for st, info in pairs(cch.throwObjects or {}) do
+            local res = info and tonumber(info.resID)
+            local stN = tonumber(st)
+            if stN and res and res > 0 then
+                throwParts[#throwParts + 1] = string.format('    "%d": %d', stN, _numID(res))
+            end
+        end
+        table.sort(throwParts)
+        parts[#parts + 1] = '  "throwObjects": {\n' .. table.concat(throwParts, ",\n") .. '\n  }'
+
+        local weaponParts = {}
+        local meleeParts = {}
+        for wid, w in pairs(cch.weapons or {}) do
+            local widN = tonumber(wid)
+            local res = w and tonumber(w.resID)
+            if widN and res and res > 0 then
+                if widN == 108 then
+                    meleeParts[#meleeParts + 1] = string.format('    "pan": %d', _numID(res))
+                else
+                    weaponParts[#weaponParts + 1] = string.format('    "%s": %d',
+                        WEAPON_NAMES[widN] or tostring(widN), _numID(res))
+                end
+            end
+        end
+        table.sort(weaponParts)
+        table.sort(meleeParts)
+        parts[#parts + 1] = '  "weapons": {\n' .. table.concat(weaponParts, ",\n") .. '\n  }'
+        parts[#parts + 1] = '  "melee": {\n' .. table.concat(meleeParts, ",\n") .. '\n  }'
+
+        local vehicleParts = {}
+        pcall(function()
+            local RR = _G.AddOutfit_R
+            if not (DataMgr and DataMgr.VehicleSlotList) then return end
+            for subType, list in pairs(DataMgr.VehicleSlotList) do
+                local stN = tonumber(subType)
+                local sparts = {}
+                if stN and type(list) == "table" then
+                    for idx, val in pairs(list) do
+                        local ins = _numID(type(val) == "table" and (val.insID or val.instid) or val)
+                        local res = _numID(type(val) == "table" and val.resID
+                            or (RR and RR.insToRes and RR.insToRes[ins]))
+                        local idxN = tonumber(idx)
+                        if idxN and ins > 0 and res > 0 then
+                            sparts[#sparts + 1] = string.format('      "%d": %d', idxN, res)
+                        end
+                    end
+                end
+                if #sparts > 0 then
+                    table.sort(sparts)
+                    vehicleParts[#vehicleParts + 1] = string.format('    "%d": {\n%s\n    }',
+                        stN, table.concat(sparts, ",\n"))
+                end
+            end
+        end)
+        table.sort(vehicleParts)
+        parts[#parts + 1] = '  "vehicleSlots": {\n' .. table.concat(vehicleParts, ",\n") .. '\n  }'
+
+        local hallRes, hallIns = 0, 0
+        pcall(function()
+            local HT = require("client.logic.lobby.hall_theme_utils")
+            hallIns = _numID(HT.GetThemeInstId and HT.GetThemeInstId() or 0)
+            hallRes = _numID(HT.homeThemeItemId or 0)
+            if hallRes <= 0 and hallIns > 0 then
+                local RR = _G.AddOutfit_R
+                hallRes = _numID(RR and RR.insToRes and RR.insToRes[hallIns])
+            end
+        end)
+        if hallRes > 0 then parts[#parts + 1] = string.format('  "hallTheme": %d', hallRes) end
+        if hallIns > 0 then parts[#parts + 1] = string.format('  "hallThemeIns": %d', hallIns) end
+
+        -- Data tambahan standalone supaya tidak hilang saat game restart.
+        local clothes = {}
+        for resID in pairs(cch.clothes or {}) do
+            local n = _numID(resID)
+            if n > 0 then clothes[#clothes + 1] = n end
+        end
+        table.sort(clothes)
+        parts[#parts + 1] = '  "clothes": [' .. table.concat(clothes, ", ") .. ']'
+
+        local motion = {}
+        pcall(function()
+            if DataMgr and DataMgr.MotionSlotList then
+                for _, ins in ipairs(DataMgr.MotionSlotList) do
+                    local n = _numID(ins)
+                    if n > 0 then motion[#motion + 1] = n end
+                end
+            end
+        end)
+        parts[#parts + 1] = '  "motion": [' .. table.concat(motion, ", ") .. ']'
+
+        local rolewear = {}
+        pcall(function()
+            local AvatarData = require("client.logic.data.AvatarData")
+            if AvatarData.GetRoleWear then
+                for _, ins in pairs(AvatarData.GetRoleWear()) do
+                    local n = _numID(ins)
+                    if n > 0 then rolewear[#rolewear + 1] = n end
+                end
+            end
+        end)
+        table.sort(rolewear)
+        parts[#parts + 1] = '  "rolewear": [' .. table.concat(rolewear, ", ") .. ']'
+
+        local equipIns = {}
+        pcall(function()
+            if DataMgr and DataMgr.equipmentSkinInsIDTable then
+                for st, ins in pairs(DataMgr.equipmentSkinInsIDTable) do
+                    local stN, insN = tonumber(st), _numID(ins)
+                    if stN and insN > 0 then
+                        equipIns[#equipIns + 1] = string.format('    "%d": %d', stN, insN)
+                    end
+                end
+            end
+        end)
+        table.sort(equipIns)
+        parts[#parts + 1] = '  "equipIns": {\n' .. table.concat(equipIns, ",\n") .. '\n  }'
+
+        local vst = 0
+        pcall(function()
+            if DataMgr then vst = _numID(DataMgr.vst_skin) end
+        end)
+        if vst > 0 then parts[#parts + 1] = string.format('  "vstSkin": %d', vst) end
+
+        local garage = {}
+        pcall(function()
+            local GTS = ModuleManager and ModuleManager.GetModule
+                and ModuleManager.GetModule(ModuleManager.LobbyModuleConfig.GarageThemeSystem)
+            if GTS and GTS.GarageVehicleInfo then
+                for slot, info in pairs(GTS.GarageVehicleInfo) do
+                    local ins = _numID(info and info.inst_id)
+                    local res = _numID(info and info.res_id)
+                    if ins > 0 then
+                        garage[#garage + 1] = string.format(
+                            '    "%d": { "inst_id": %d, "res_id": %d }', _numID(slot), ins, res)
+                    end
+                end
+            end
+        end)
+        table.sort(garage)
+        parts[#parts + 1] = '  "garage": {\n' .. table.concat(garage, ",\n") .. '\n  }'
+
+        return "{\n" .. table.concat(parts, ",\n") .. "\n}\n"
+    end
+
+    -- Baca JSON (json.decode; kalau tidak ada, fallback regex sederhana).
+    local function _decodeOutfitConfig(txt)
+        local out = {
+            weapons = {}, melee = {}, throwObjects = {}, vehicleSlots = {},
+            clothes = {}, garage = {}, equipIns = {}, motion = {}, rolewear = {},
         }
-        for _, dir in ipairs(possibleDirs) do
-            local f = io.open(dir .. fileName, 'r')
-            if f then f:close(); _outfitSavePathCache = dir .. fileName; return _outfitSavePathCache end
+        if not txt or txt == "" then return out end
+        local parsed = false
+        pcall(function()
+            local J = rawget(_G, "json")
+            local t = J and J.decode and J.decode(txt)
+            if type(t) ~= "table" then return end
+            for k, v in pairs(t) do
+                if k == "weapons" and type(v) == "table" then
+                    for wk, wv in pairs(v) do
+                        local wid = tonumber(wk) or WEAPON_IDS_BY_NAME[tostring(wk)]
+                        local res = tonumber(wv)
+                        if wid and res and res > 0 then out.weapons[wid] = res end
+                    end
+                elseif k == "melee" and type(v) == "table" then
+                    for mk, mv in pairs(v) do
+                        local res = tonumber(mv)
+                        if (mk == "pan" or mk == "dagger" or mk == "machete") and res and res > 0 then
+                            out.melee[mk] = res
+                        end
+                    end
+                elseif k == "throwObjects" and type(v) == "table" then
+                    for stk, rv in pairs(v) do
+                        local st, res = tonumber(stk), tonumber(rv)
+                        if st and res and res > 0 then out.throwObjects[st] = res end
+                    end
+                elseif k == "vehicleSlots" and type(v) == "table" then
+                    for stk, slotMap in pairs(v) do
+                        local st = tonumber(stk)
+                        if st and type(slotMap) == "table" then
+                            out.vehicleSlots[st] = {}
+                            for idx, res in pairs(slotMap) do
+                                local i, r = tonumber(idx), tonumber(res)
+                                if i and r and r > 0 then out.vehicleSlots[st][i] = r end
+                            end
+                        end
+                    end
+                elseif k == "clothes" and type(v) == "table" then
+                    for _, r in ipairs(v) do
+                        r = tonumber(r)
+                        if r and r > 0 then out.clothes[r] = true end
+                    end
+                elseif k == "garage" and type(v) == "table" then
+                    for slot, info in pairs(v) do
+                        if type(info) == "table" then
+                            local ins = tonumber(info.inst_id)
+                            if ins and ins > 0 then
+                                out.garage[tonumber(slot) or slot] = {
+                                    inst_id = ins, res_id = tonumber(info.res_id) or 0,
+                                }
+                            end
+                        end
+                    end
+                elseif k == "equipIns" and type(v) == "table" then
+                    for stk, iv in pairs(v) do
+                        local st, ins = tonumber(stk), tonumber(iv)
+                        if st and ins and ins > 0 then out.equipIns[st] = ins end
+                    end
+                elseif (k == "motion" or k == "rolewear") and type(v) == "table" then
+                    out[k] = {}
+                    for _, iv in ipairs(v) do
+                        local ins = tonumber(iv)
+                        if ins and ins > 0 then out[k][#out[k] + 1] = ins end
+                    end
+                else
+                    local n = tonumber(v)
+                    if n and n > 0 then out[k] = n end
+                end
+            end
+            parsed = true
+        end)
+        if not parsed then
+            local function parseArray(key)
+                local list = {}
+                local block = txt:match('"' .. key .. '"%s*:%s*%[([^%]]*)%]')
+                if block then
+                    for v in block:gmatch('(%d+)') do
+                        local n = tonumber(v)
+                        if n and n > 0 then list[#list + 1] = n end
+                    end
+                end
+                return list
+            end
+            out.motion = parseArray("motion")
+            out.rolewear = parseArray("rolewear")
+            for _, r in ipairs(parseArray("clothes")) do out.clothes[r] = true end
+            for k, v in txt:gmatch('"([%w_]+)"%s*:%s*(%d+)') do
+                local n = tonumber(v)
+                if n and n > 0 then
+                    if k == "pan" or k == "dagger" or k == "machete" then
+                        out.melee[k] = n
+                    else
+                        local wid = WEAPON_IDS_BY_NAME[k]
+                        if wid then out.weapons[wid] = n else out[k] = n end
+                    end
+                end
+            end
+            local throwBlock = txt:match('"throwObjects"%s*:%s*{([^}]*)}')
+            if throwBlock then
+                for stKey, resValue in throwBlock:gmatch('"(%d+)"%s*:%s*(%d+)') do
+                    local st, res = tonumber(stKey), tonumber(resValue)
+                    if st and res and res > 0 then out.throwObjects[st] = res end
+                end
+            end
+            local eiBlock = txt:match('"equipIns"%s*:%s*{([^}]*)}')
+            if eiBlock then
+                for stKey, insValue in eiBlock:gmatch('"(%d+)"%s*:%s*(%d+)') do
+                    local st, ins = tonumber(stKey), tonumber(insValue)
+                    if st and ins and ins > 0 then out.equipIns[st] = ins end
+                end
+            end
+            local gStart = txt:find('"garage"', 1, true)
+            if gStart then
+                for slotKey, body in txt:sub(gStart):gmatch('"(%d+)"%s*:%s*{([^}]*)}') do
+                    local slot = tonumber(slotKey)
+                    local ins = tonumber(body:match('"inst_id"%s*:%s*(%d+)'))
+                    local res = tonumber(body:match('"res_id"%s*:%s*(%d+)'))
+                    if slot and ins and ins > 0 then
+                        out.garage[slot] = { inst_id = ins, res_id = res or 0 }
+                    end
+                end
+            end
+            local vsStart = txt:find('"vehicleSlots"', 1, true)
+            if vsStart then
+                for stKey, body in txt:sub(vsStart):gmatch('"(%-?%d+)"%s*:%s*{([^}]*)}') do
+                    local st = tonumber(stKey)
+                    if st then
+                        local slotMap = {}
+                        for idx, res in body:gmatch('"(%-?%d+)"%s*:%s*(%d+)') do
+                            local i, r = tonumber(idx), tonumber(res)
+                            if i and r and r > 0 then slotMap[i] = r end
+                        end
+                        if next(slotMap) then out.vehicleSlots[st] = slotMap end
+                    end
+                end
+            end
         end
-        for _, dir in ipairs(possibleDirs) do
-            local f = io.open(dir .. "config.ini", 'r')
-            if f then f:close(); _outfitSavePathCache = dir .. fileName; return _outfitSavePathCache end
-        end
-        _outfitSavePathCache = possibleDirs[1] .. fileName
-        return _outfitSavePathCache
+        return out
     end
 
     local function _saveEquippedCache()
         pcall(function()
-            local cch = _G.AddOutfitEquippedCache
-            if not cch then return end
-            local path = _getOutfitSavePath()
-            local lines = {}
-            if cch.outfitRes then lines[#lines + 1] = "outfitRes=" .. tostring(cch.outfitRes) end
-            if cch.outfitIns then lines[#lines + 1] = "outfitIns=" .. tostring(cch.outfitIns) end
-            local clothIds = {}
-            for resID in pairs(cch.clothes or {}) do
-                clothIds[#clothIds + 1] = tostring(resID)
-            end
-            if #clothIds > 0 then
-                lines[#lines + 1] = "clothes=" .. table.concat(clothIds, ",")
-            end
-            local eq = cch.equip or {}
-            if eq.bag then lines[#lines + 1] = "equip_bag=" .. tostring(eq.bag) end
-            if eq.helmet then lines[#lines + 1] = "equip_helmet=" .. tostring(eq.helmet) end
-            if eq.armor then lines[#lines + 1] = "equip_armor=" .. tostring(eq.armor) end
-            if eq.parachute then lines[#lines + 1] = "equip_parachute=" .. tostring(eq.parachute) end
-            if eq.glider then lines[#lines + 1] = "equip_glider=" .. tostring(eq.glider) end
-            if eq.bagIns then lines[#lines + 1] = "equip_bagIns=" .. tostring(eq.bagIns) end
-            if eq.helmetIns then lines[#lines + 1] = "equip_helmetIns=" .. tostring(eq.helmetIns) end
-            if eq.armorIns then lines[#lines + 1] = "equip_armorIns=" .. tostring(eq.armorIns) end
-            if eq.parachuteIns then lines[#lines + 1] = "equip_parachuteIns=" .. tostring(eq.parachuteIns) end
-            if eq.gliderIns then lines[#lines + 1] = "equip_gliderIns=" .. tostring(eq.gliderIns) end
-            for wid, w in pairs(cch.weapons or {}) do
-                lines[#lines + 1] = "weapon_" .. tostring(wid) .. "=" .. tostring(w.resID) .. ":" .. tostring(w.insID or 0)
-            end
-            pcall(function()
-                if DataMgr and DataMgr.MotionSlotList then
-                    local parts = {}
-                    for _, ins in ipairs(DataMgr.MotionSlotList) do
-                        ins = tonumber(ins)
-                        if ins and ins > 0 then parts[#parts + 1] = tostring(ins) end
-                    end
-                    if #parts > 0 then lines[#lines + 1] = "motion=" .. table.concat(parts, ",") end
-                end
-            end)
-            pcall(function()
-                local AvatarData = require("client.logic.data.AvatarData")
-                local parts = {}
-                for _, ins in pairs(AvatarData.GetRoleWear()) do
-                    ins = tonumber(ins)
-                    if ins and ins > 0 then parts[#parts + 1] = tostring(ins) end
-                end
-                if #parts > 0 then lines[#lines + 1] = "rolewear=" .. table.concat(parts, ",") end
-            end)
-            pcall(function()
-                if DataMgr and DataMgr.equipmentSkinInsIDTable then
-                    for subType, ins in pairs(DataMgr.equipmentSkinInsIDTable) do
-                        ins = tonumber(ins)
-                        if ins and ins > 0 then
-                            lines[#lines + 1] = "equipins_" .. tostring(subType) .. "=" .. tostring(ins)
-                        end
-                    end
-                end
-            end)
-            pcall(function()
-                if DataMgr and DataMgr.vst_skin then
-                    local ins = tonumber(DataMgr.vst_skin)
-                    if ins and ins > 0 then lines[#lines + 1] = "vst_skin=" .. tostring(ins) end
-                end
-            end)
-            pcall(function()
-                local HT = require("client.logic.lobby.hall_theme_utils")
-                local ins = tonumber(HT.GetThemeInstId and HT.GetThemeInstId()) or 0
-                if ins > 0 then
-                    lines[#lines + 1] = "hall_theme_ins=" .. tostring(ins)
-                    local res = tonumber(HT.homeThemeItemId) or 0
-                    if res <= 0 and _G.AddOutfit_R and _G.AddOutfit_R.insToRes then
-                        res = tonumber(_G.AddOutfit_R.insToRes[ins]) or 0
-                    end
-                    if res > 0 then lines[#lines + 1] = "hall_theme_res=" .. tostring(res) end
-                end
-            end)
-            pcall(function()
-                if DataMgr and DataMgr.VehicleSlotList then
-                    for subType, insList in pairs(DataMgr.VehicleSlotList) do
-                        if insList and type(insList) == "table" then
-                            local parts = {}
-                            for _, ins in ipairs(insList) do
-                                ins = tonumber(ins)
-                                if ins and ins > 0 then parts[#parts + 1] = tostring(ins) end
-                            end
-                            if #parts > 0 then
-                                lines[#lines + 1] = "vehicle_" .. tostring(subType) .. "=" .. table.concat(parts, ",")
-                            end
-                        end
-                    end
-                end
-            end)
-            pcall(function()
-                local GTS = ModuleManager and ModuleManager.GetModule
-                    and ModuleManager.GetModule(ModuleManager.LobbyModuleConfig.GarageThemeSystem)
-                if GTS and GTS.GarageVehicleInfo then
-                    for slot, info in pairs(GTS.GarageVehicleInfo) do
-                        if info and info.inst_id then
-                            lines[#lines + 1] = "garage_" .. tostring(slot) .. "="
-                                .. tostring(info.inst_id) .. ":" .. tostring(info.res_id or 0)
-                        end
-                    end
-                end
-            end)
-            pcall(function()
-                local cch2 = _G.AddOutfitEquippedCache
-                if cch2 and cch2.throwObjects then
-                    for st, info in pairs(cch2.throwObjects) do
-                        if info.resID and info.resID > 0 then
-                            lines[#lines + 1] = "throw_" .. tostring(st) .. "=" .. tostring(info.resID) .. ":" .. tostring(info.insID or 0)
-                        end
-                    end
-                end
-            end)
-            local file = io.open(path, 'w+')
-            if not file then return end
-            file:write(table.concat(lines, "\n"))
-            file:close()
+            if not (io and io.open) then return end
+            _configWrite(_encodeOutfitConfig())
         end)
     end
 
     local function _loadEquippedCache()
+        if not (io and io.open) then return end
         pcall(function()
-            local path = _getOutfitSavePath()
-            local file = io.open(path, 'r')
-            if not file then return end
-            local content = file:read('*a')
-            file:close()
-            if not content or content == "" then return end
+            for _, path in ipairs(CONFIG_PATHS) do
+                local f
+                pcall(function() f = io.open(path, "r") end)
+                if f then
+                    local txt = f:read("*a")
+                    f:close()
+                    if not txt or txt == "" then return end
+                    local saved = _decodeOutfitConfig(txt)
+                    _configActivePath = path
 
-            _G._savedOutfitClothes = {}
-            _G._savedOutfitRes = nil
-            _G._savedOutfitIns = nil
-            _G._savedOutfitEquip = {}
-            _G._savedVehicleSlotList = {}
-            _G._savedGarageVehicles = {}
-            _G._savedMotionList = {}
-            _G._savedRoleWearList = {}
-            _G._savedEquipIns = {}
-            _G._savedVstSkin = nil
-            _G._savedHallThemeIns = nil
-            _G._savedHallThemeRes = nil
-            _G._savedThrowObjects = {}
+                    _G._savedOutfitClothes = {}
+                    _G._savedOutfitRes = nil
+                    _G._savedOutfitIns = nil
+                    _G._savedOutfitEquip = {}
+                    _G._savedVehicleSlotList = {}
+                    _G._savedVehicleResSlots = saved.vehicleSlots
+                    _G._savedGarageVehicles = saved.garage or {}
+                    _G._savedMotionList = saved.motion or {}
+                    _G._savedRoleWearList = saved.rolewear or {}
+                    _G._savedEquipIns = saved.equipIns or {}
+                    _G._savedVstSkin = tonumber(saved.vstSkin)
+                    _G._savedHallThemeIns = tonumber(saved.hallThemeIns)
+                    _G._savedHallThemeRes = tonumber(saved.hallTheme)
+                    _G._savedThrowObjects = {}
 
-            for line in content:gmatch("[^\n]+") do
-                local key, val = line:match("^(.-)=(.+)$")
-                if key and val then
-                    if key == "outfitRes" then _G._savedOutfitRes = tonumber(val)
-                    elseif key == "outfitIns" then _G._savedOutfitIns = tonumber(val)
-                    elseif key == "clothes" then
-                        for id in val:gmatch("([^,]+)") do
-                            _G._savedOutfitClothes[tonumber(id)] = true
-                        end
-                    elseif key == "equip_bag" then _G._savedOutfitEquip.bag = tonumber(val)
-                    elseif key == "equip_helmet" then _G._savedOutfitEquip.helmet = tonumber(val)
-                    elseif key == "equip_armor" then _G._savedOutfitEquip.armor = tonumber(val)
-                    elseif key == "equip_parachute" then _G._savedOutfitEquip.parachute = tonumber(val)
-                    elseif key == "equip_glider" then _G._savedOutfitEquip.glider = tonumber(val)
-                    elseif key == "equip_bagIns" then _G._savedOutfitEquip.bagIns = tonumber(val)
-                    elseif key == "equip_helmetIns" then _G._savedOutfitEquip.helmetIns = tonumber(val)
-                    elseif key == "equip_armorIns" then _G._savedOutfitEquip.armorIns = tonumber(val)
-                    elseif key == "equip_parachuteIns" then _G._savedOutfitEquip.parachuteIns = tonumber(val)
-                    elseif key == "equip_gliderIns" then _G._savedOutfitEquip.gliderIns = tonumber(val)
-                    elseif key == "motion" then
-                        for ins in val:gmatch("([^,]+)") do
-                            ins = tonumber(ins)
-                            if ins and ins > 0 then _G._savedMotionList[#_G._savedMotionList + 1] = ins end
-                        end
-                    elseif key == "rolewear" then
-                        for ins in val:gmatch("([^,]+)") do
-                            ins = tonumber(ins)
-                            if ins and ins > 0 then _G._savedRoleWearList[#_G._savedRoleWearList + 1] = ins end
-                        end
-                    elseif key:match("^equipins_(%d+)$") then
-                        local subType = tonumber(key:match("^equipins_(%d+)$"))
-                        if subType then _G._savedEquipIns[subType] = tonumber(val) end
-                    elseif key == "vst_skin" then _G._savedVstSkin = tonumber(val)
-                    elseif key == "hall_theme_ins" then _G._savedHallThemeIns = tonumber(val)
-                    elseif key == "hall_theme_res" then _G._savedHallThemeRes = tonumber(val)
-                    elseif key:match("^weapon_(.+)$") then
-                        local wid = tonumber(key:match("^weapon_(.+)$"))
-                        local resID, insID = val:match("^(.-):(.+)$")
-                        if wid and resID then
-                            _G._savedOutfitEquip["weapon_" .. wid] = { resID = tonumber(resID), insID = tonumber(insID) or 0 }
-                        end
-                    elseif key:match("^vehicle_(%d+)$") then
-                        local subType = tonumber(key:match("^vehicle_(%d+)$"))
-                        if subType then
-                            local list = {}
-                            for ins in val:gmatch("([^,]+)") do
-                                ins = tonumber(ins)
-                                if ins and ins > 0 then list[#list + 1] = ins end
-                            end
-                            if #list > 0 then _G._savedVehicleSlotList[subType] = list end
-                        end
-                    elseif key:match("^garage_(%d+)$") then
-                        local slot = tonumber(key:match("^garage_(%d+)$"))
-                        local insID, resID = val:match("^(.-):(.+)$")
-                        if slot and insID then
-                            _G._savedGarageVehicles[slot] = {
-                                inst_id = tonumber(insID),
-                                res_id = tonumber(resID) or 0,
-                            }
-                        end
-                    elseif key:match("^throw_(%d+)$") then
-                        local st = tonumber(key:match("^throw_(%d+)$"))
-                        if st then
-                            local resID, insID = val:match("^(.-):(.+)$")
-                            _G._savedThrowObjects[st] = { resID = tonumber(resID), insID = tonumber(insID) or 0 }
+                    local cch = _G.AddOutfitEquippedCache
+                    if not cch then
+                        cch = { clothes = {}, equip = {}, weapons = {} }
+                        _G.AddOutfitEquippedCache = cch
+                    end
+                    cch.clothes = cch.clothes or {}
+                    cch.equip = cch.equip or {}
+                    cch.weapons = cch.weapons or {}
+                    cch.throwObjects = cch.throwObjects or {}
+
+                    local outfitRes = tonumber(saved.outfit)
+                    if outfitRes and outfitRes > 0 then
+                        cch.outfitRes = outfitRes
+                        _G.AddOutfitLastLobbyOutfitRes = outfitRes
+                        _G._savedOutfitRes = outfitRes
+                    end
+
+                    for _, key in ipairs({ "tshirt", "pants", "shoes", "hat", "mask", "glass", "gloves" }) do
+                        local res = tonumber(saved[key])
+                        if res and res > 0 then
+                            cch.clothes[res] = true
+                            _G._savedOutfitClothes[res] = true
                         end
                     end
-                end
-            end
-
-            if not _G.AddOutfitEquippedCache then
-                _G.AddOutfitEquippedCache = {
-                    outfitRes = nil, outfitIns = nil,
-                    clothes = {}, equip = {}, weapons = {},
-                }
-            end
-            local cch = _G.AddOutfitEquippedCache
-            cch.clothes = cch.clothes or {}
-            cch.equip = cch.equip or {}
-            cch.weapons = cch.weapons or {}
-
-            if _G._savedOutfitRes then
-                cch.outfitRes = _G._savedOutfitRes
-                cch.outfitIns = _G._savedOutfitIns
-            end
-            if not _G._addOutfitPersistLoaded and _G._savedOutfitClothes then
-                for resID in pairs(_G._savedOutfitClothes) do
-                    cch.clothes[resID] = true
-                end
-            end
-
-            if _G._savedOutfitEquip then
-                for k, v in pairs(_G._savedOutfitEquip) do
-                    if k == "bag" then cch.equip.bag = v
-                    elseif k == "helmet" then cch.equip.helmet = v
-                    elseif k == "armor" then cch.equip.armor = v
-                    elseif k == "parachute" then cch.equip.parachute = v
-                    elseif k == "glider" then cch.equip.glider = v
-                    elseif k == "bagIns" then cch.equip.bagIns = v
-                    elseif k == "helmetIns" then cch.equip.helmetIns = v
-                    elseif k == "armorIns" then cch.equip.armorIns = v
-                    elseif k == "parachuteIns" then cch.equip.parachuteIns = v
-                    elseif k == "gliderIns" then cch.equip.gliderIns = v
-                    elseif type(k) == "string" and k:match("^weapon_(.+)$") then
-                        local wid = tonumber(k:match("^weapon_(.+)$"))
-                        if wid then cch.weapons[wid] = v end
+                    for res in pairs(saved.clothes) do
+                        -- Jangan masukkan skin senjata/equip ke daftar pakaian.
+                        if not _itemConf(res) or _clothSlotOf(res) then
+                            cch.clothes[res] = true
+                            _G._savedOutfitClothes[res] = true
+                        end
                     end
-                end
-            end
--- by @RAHMANYVI
-            if _G._savedThrowObjects then
-                cch.throwObjects = cch.throwObjects or {}
-                for st, info in pairs(_G._savedThrowObjects) do
-                    if info.resID and info.resID > 0 then
-                        cch.throwObjects[st] = info
-                    end
-                end
-            end
 
-            _G._addOutfitPersistLoaded = true
-            _lastSnapshot = _snapshotCache()
-            print("[AddOutfit] Loaded saved IDs from file:", path)
+                    for _, slot in ipairs(EQUIP_SLOTS) do
+                        local res = tonumber(saved[slot])
+                        if res and res > 0 then
+                            cch.equip[slot] = res
+                            _G._savedOutfitEquip[slot] = res
+                        end
+                    end
+
+                    for wid, res in pairs(saved.weapons) do
+                        cch.weapons[wid] = { resID = res, insID = 0 }
+                        _G._savedOutfitEquip["weapon_" .. tostring(wid)] = { resID = res, insID = 0 }
+                    end
+                    local meleeRes = tonumber(saved.melee and (saved.melee.pan or saved.melee.dagger or saved.melee.machete))
+                    if meleeRes and meleeRes > 0 then
+                        cch.weapons[108] = cch.weapons[108] or { resID = meleeRes, insID = 0 }
+                        _G._savedOutfitEquip["weapon_108"] = cch.weapons[108]
+                    end
+
+                    for st, res in pairs(saved.throwObjects) do
+                        cch.throwObjects[st] = { resID = res, insID = 0 }
+                        _G._savedThrowObjects[st] = { resID = res, insID = 0 }
+                    end
+
+                    _G.AddOutfitPendingPersist = saved
+                    _G._addOutfitPersistLoaded = true
+                    print("[AddOutfit] Loaded rapzhang_outfit.json:", path)
+                    return
+                end
+            end
         end)
     end
+
+    _G.AddOutfitEncodeConfig = function() return _encodeOutfitConfig() end
+    _G.AddOutfitDecodeConfig = function(txt) return _decodeOutfitConfig(txt) end
 
     local function _snapshotCache()
         local cch = _G.AddOutfitEquippedCache
@@ -7565,6 +7840,8 @@ pcall(_skinValidityBypass)
 
             if injectAllSources() then
                 refreshWardrobe()
+                -- Peta res->ins baru terisi sekarang; resolve persistensi.
+                pcall(applyLoadedOutfitFromDisk)
                 later(1.0, reapplyLobbyEquipped)
             else
                 local tries = 0
@@ -7572,6 +7849,7 @@ pcall(_skinValidityBypass)
                     tries = tries + 1
                     if injectAllSources() then
                         refreshWardrobe()
+                        pcall(applyLoadedOutfitFromDisk)
                         later(1.0, reapplyLobbyEquipped)
                         return
                     end
@@ -7602,7 +7880,148 @@ pcall(_skinValidityBypass)
         hookEliminationKingEffect()
         hookFinalKillEffect()
         pcall(_loadEquippedCache)
+        -- Terapkan isi rapzhang_outfit.json ke cache runtime. Dipanggil sebelum
+        -- start() dan diulang berkala: peta res->ins baru lengkap setelah
+        -- injectAllSources(), jadi ins yang belum ketemu di-resolve lagi.
+        local _persistAppliedOnce = false
+        local function applyLoadedOutfitFromDisk()
+            local saved = _G.AddOutfitPendingPersist
+            if type(saved) ~= "table" then return false end
+            local cch = cache()
+            cch.clothes = cch.clothes or {}
+            cch.equip = cch.equip or {}
+            cch.weapons = cch.weapons or {}
+            cch.throwObjects = cch.throwObjects or {}
+            local RR = _G.AddOutfit_R
+
+            -- Sekali di awal: JSON jadi sumber kebenaran untuk cache runtime.
+            if not _persistAppliedOnce then
+                local outfitRes = tonumber(saved.outfit)
+                if outfitRes and outfitRes > 0 then
+                    cch.outfitRes = outfitRes
+                    _G.AddOutfitLastLobbyOutfitRes = outfitRes
+                end
+                for _, key in ipairs({ "tshirt", "pants", "shoes", "hat", "mask", "glass", "gloves" }) do
+                    local res = tonumber(saved[key])
+                    if res and res > 0 then cch.clothes[res] = true end
+                end
+                for res in pairs(saved.clothes or {}) do
+                    local n = tonumber(res)
+                    if n and n > 0 and (not _itemConf(n) or _clothSlotOf(n)) then
+                        cch.clothes[n] = true
+                    end
+                end
+                for _, slot in ipairs(EQUIP_SLOTS) do
+                    local res = tonumber(saved[slot])
+                    if res and res > 0 then cch.equip[slot] = res end
+                end
+                for wid, res in pairs(saved.weapons or {}) do
+                    local widN, resN = tonumber(wid), tonumber(res)
+                    if widN and resN and resN > 0 then
+                        local entry = cch.weapons[widN]
+                        if type(entry) ~= "table" then entry = {}; cch.weapons[widN] = entry end
+                        entry.resID = resN
+                    end
+                end
+                local meleeRes = tonumber(saved.melee
+                    and (saved.melee.pan or saved.melee.dagger or saved.melee.machete))
+                if meleeRes and meleeRes > 0 then
+                    cch.weapons[108] = cch.weapons[108] or {}
+                    cch.weapons[108].resID = meleeRes
+                end
+                for st, res in pairs(saved.throwObjects or {}) do
+                    local stN, resN = tonumber(st), tonumber(res)
+                    if stN and resN and resN > 0 then
+                        local entry = cch.throwObjects[stN]
+                        if type(entry) ~= "table" then entry = {}; cch.throwObjects[stN] = entry end
+                        entry.resID = resN
+                    end
+                end
+            end
+
+            local function insFor(res)
+                res = tonumber(res)
+                if not res or res <= 0 then return nil end
+                local ins = R.resToIns[res] or (RR and RR.resToIns and RR.resToIns[res])
+                ins = tonumber(ins)
+                if ins and ins > 0 then
+                    R.resToIns[res] = ins
+                    R.insToRes[ins] = res
+                    if RR then
+                        RR.resToIns[res] = ins
+                        RR.insToRes[ins] = res
+                    end
+                    return ins
+                end
+                return nil
+            end
+
+            if cch.outfitRes and cch.outfitRes > 0
+                and (not cch.outfitIns or cch.outfitIns <= 0) then
+                local ins = insFor(cch.outfitRes)
+                if ins then cch.outfitIns = ins end
+            end
+            for resID in pairs(cch.clothes or {}) do
+                insFor(resID)
+            end
+            for _, slot in ipairs(EQUIP_SLOTS) do
+                local res = tonumber(cch.equip and cch.equip[slot])
+                if res and res > 0 then
+                    if not cch.equip[slot .. "Ins"] or cch.equip[slot .. "Ins"] <= 0 then
+                        local ins = insFor(res)
+                        if ins then cch.equip[slot .. "Ins"] = ins end
+                    end
+                end
+            end
+            for _, w in pairs(cch.weapons or {}) do
+                local res = tonumber(w and w.resID)
+                if res and res > 0 and (not w.insID or w.insID <= 0) then
+                    local ins = insFor(res)
+                    if ins then w.insID = ins end
+                end
+            end
+            for _, info in pairs(cch.throwObjects or {}) do
+                local res = tonumber(info and info.resID)
+                if res and res > 0 and (not info.insID or info.insID <= 0) then
+                    local ins = insFor(res)
+                    if ins then info.insID = ins end
+                end
+            end
+
+            local vehSaved = saved.vehicleSlots
+            if type(vehSaved) == "table" and not _G.AddOutfitVehicleSlotsApplied then
+                local resolved = {}
+                for st, slotMap in pairs(vehSaved) do
+                    local stN = tonumber(st)
+                    local list = {}
+                    if stN and type(slotMap) == "table" then
+                        for idx, res in pairs(slotMap) do
+                            local ins = insFor(res)
+                            if ins then list[tonumber(idx) or (#list + 1)] = ins end
+                        end
+                        if next(list) then
+                            resolved[stN] = list
+                            if DataMgr then
+                                DataMgr.VehicleSlotList = DataMgr.VehicleSlotList or {}
+                                DataMgr.VehicleSlotList[stN] = list
+                            end
+                        end
+                    end
+                end
+                if next(resolved) then
+                    _G._savedVehicleSlotList = resolved
+                    _G.AddOutfitVehicleSlotsApplied = true
+                end
+            end
+
+            syncMatchConfigFromCache()
+            _persistAppliedOnce = true
+            return true
+        end
+        _G.AddOutfitApplyPersist = applyLoadedOutfitFromDisk
+        pcall(applyLoadedOutfitFromDisk)
         start()
+
         pcall(hookVehicleSkinAndMusicPanel)
 
         -- Time-based application loop (replaces frame-based tick listener)
@@ -7610,6 +8029,43 @@ pcall(_skinValidityBypass)
         local _lastTickTime = os.clock()
         local _timeCount = 0
         
+        -- Cek apakah outfit yang menempel di karakter masih sesuai JSON.
+        -- Kalau game menimpanya dengan item asli, apply ulang.
+        local function matchOutfitNeedsReapply(char)
+            local okCall, need = pcall(function()
+                if not char or not slua.isValid(char) then return false end
+                local cch = cache()
+                local desired = {}
+                local function want(res, slot)
+                    res = tonumber(res)
+                    if res and res > 0 then desired[slot] = res end
+                end
+                want(cch.outfitRes, 5) -- ClothesEquipemtSlot
+                for resID in pairs(cch.clothes or {}) do
+                    local st = subType(cfg(resID))
+                    if st == 401 then want(resID, 3)
+                    elseif st == 402 then want(resID, 4)
+                    elseif st == 403 and not (tonumber(cch.outfitRes) and cch.outfitRes > 0) then want(resID, 5)
+                    elseif st == 404 then want(resID, 6)
+                    elseif st == 405 then want(resID, 7)
+                    elseif st == 407 then want(resID, 12)
+                    elseif st == 452 then want(resID, 16) end
+                end
+                local checked, matched = 0, 0
+                for slotID, resID in pairs(desired) do
+                    local cur = getCharEquipLevel(char, slotID)
+                    if cur and cur > 0 then
+                        checked = checked + 1
+                        if cur == resID then matched = matched + 1 end
+                    end
+                end
+                if next(desired) == nil then return false end
+                if checked == 0 then return true end
+                return matched < checked
+            end)
+            return okCall and need == true
+        end
+
         -- Periodic application functions with different rates
         local function fastApplyLoop()
             pcall(function()
@@ -7640,6 +8096,9 @@ pcall(_skinValidityBypass)
                         pcall(_G.AddOutfitTryFlushSave)
                     end
                 end
+                if _timeCount % 5 == 0 and _G.AddOutfitPendingPersist then
+                    pcall(applyLoadedOutfitFromDisk)
+                end
                 if isInGamePlay() then
                     local char = getLocalChar()
                     local charValid = char and slua.isValid(char)
@@ -7653,8 +8112,10 @@ pcall(_skinValidityBypass)
                                 applySkinToWeaponRef(curWeapon)
                             end
                             equip_weapon_avatar(char)
-                            if not _S.matchOutfitDone then
-                                _S.matchOutfitDone = matchApplyOutfit(char)
+                            -- Game bisa mengembalikan outfit asli saat respawn;
+                            -- cek slot dulu, lalu tulis ulang kalau beda.
+                            if not _S.matchOutfitDone or matchOutfitNeedsReapply(char) then
+                                _S.matchOutfitDone = matchApplyOutfit(char) or _S.matchOutfitDone
                             end
                             matchApplyEquipSkins(char)
                             applyGrenadeSkinsToController()
