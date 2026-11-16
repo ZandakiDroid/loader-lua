@@ -6969,8 +6969,116 @@ pcall(_skinValidityBypass)
         end
 
         -- ===================================================================
-        -- KILL MESSAGE SYSTEM (from 2.lua Section 17)
-        -- Injects weapon skin + outfit skin + golden color into kill feed
+        -- DEATHBOX / CORPSE BOX (logika dari 1.lua)
+        -- Kotak kematian memakai skin senjata / kendaraan yang dipakai.
+        -- ===================================================================
+        local cached_GameplayStatics = nil
+        local cached_PlayerTombBox = nil
+        local cached_ActorClass = nil
+        _G.NeedCheckDeadBoxTimer = _G.NeedCheckDeadBoxTimer or 0
+
+        local function currentSuitSkinID()
+            local cch = _G.AddOutfitEquippedCache
+            local res = cch and tonumber(cch.outfitRes) or 0
+            if res and res > 0 then return res end
+            return tonumber(_G._savedOutfitRes) or 0
+        end
+
+        _G.DeadBox_TemperRequest = function(PlayerController)
+            if (_G.NeedCheckDeadBoxTimer or 0) <= 0 then return end
+
+            local curTime = os.clock()
+            if _G.LastCheckDeadBoxTime and (curTime - _G.LastCheckDeadBoxTime) < 2.0 then return end
+            _G.LastCheckDeadBoxTime = curTime
+            _G.NeedCheckDeadBoxTimer = _G.NeedCheckDeadBoxTimer - 1
+
+            local PlayerCharacter = PlayerController:GetPlayerCharacterSafety()
+            if not slua.isValid(PlayerCharacter) then return end
+
+            if not cached_GameplayStatics then
+                cached_GameplayStatics = import("GameplayStatics")
+                cached_ActorClass = import("Actor")
+                cached_PlayerTombBox = import("PlayerTombBox")
+            end
+
+            if not _G.CachedActorArray_DB then
+                _G.CachedActorArray_DB = slua.Array(UEnums.EPropertyClass.Object, cached_ActorClass)
+            end
+
+            local UI_Util = require("client.common.ui_util")
+            local GameInstance = UI_Util and UI_Util.GetGameInstance()
+            if not GameInstance or not cached_GameplayStatics then return end
+
+            local myPlayerKey = PlayerController.PlayerKey
+            local currentBoxSkinId = 0
+            pcall(function()
+                local curVeh = PlayerCharacter.CurrentVehicle
+                    or (type(PlayerCharacter.GetCurrentVehicle) == "function" and PlayerCharacter:GetCurrentVehicle())
+                if slua.isValid(curVeh) then
+                    local vehSkin = getVehicleSkinID(curVeh)
+                    if vehSkin and vehSkin > 0 then
+                        currentBoxSkinId = tonumber(tostring(vehSkin) .. "1") or 0
+                    end
+                else
+                    local curWeapon = PlayerCharacter.GetCurrentWeapon and PlayerCharacter:GetCurrentWeapon()
+                        or PlayerCharacter.CurrentWeapon
+                    if slua.isValid(curWeapon) then
+                        local defineIDObj = curWeapon.GetItemDefineID and curWeapon:GetItemDefineID()
+                        local curWeaponID = (defineIDObj and slua.isValid(defineIDObj)) and defineIDObj.TypeSpecificID or 0
+                        if curWeaponID > 0 and _G.AddOutfitLastAppliedSkin
+                            and _G.AddOutfitLastAppliedSkin[curWeaponID] then
+                            local skinID = _G.AddOutfitLastAppliedSkin[curWeaponID]
+                            if skinID and skinID > 1000000 then
+                                currentBoxSkinId = skinID
+                            end
+                        end
+                    end
+                end
+            end)
+
+            if currentBoxSkinId == 0 then return end
+
+            local deadBoxes = cached_GameplayStatics.GetAllActorsOfClass(
+                GameInstance, cached_PlayerTombBox, _G.CachedActorArray_DB)
+            if not deadBoxes then return end
+
+            local count = type(deadBoxes.Num) == "function" and deadBoxes:Num() or #deadBoxes
+            for i = 1, count do
+                local deadBoxActor = type(deadBoxes.Get) == "function" and deadBoxes:Get(i - 1) or deadBoxes[i]
+                if slua.isValid(deadBoxActor) and not deadBoxActor.bIsTDSkinApplied then
+                    local damageCauser = deadBoxActor.DamageCauser
+                    if slua.isValid(damageCauser) and damageCauser.PlayerKey == myPlayerKey then
+                        local DeadBoxAvatarComponent = deadBoxActor.DeadBoxAvatarComponent_BP
+                        if slua.isValid(DeadBoxAvatarComponent) then
+                            pcall(function()
+                                DeadBoxAvatarComponent:ResetItemAvatar()
+                                DeadBoxAvatarComponent:PreChangeItemAvatar(currentBoxSkinId)
+                                DeadBoxAvatarComponent:SyncChangeItemAvatar(currentBoxSkinId)
+                            end)
+                            deadBoxActor.bIsTDSkinApplied = true
+                        end
+                    end
+                end
+            end
+        end
+
+        -- Data kill count dipakai kill message dan UI kill counter.
+        _G.killCountInfo = _G.killCountInfo or {}
+        function _G.saveKillCountToFile() end
+        function _G.loadKillCountFromFile() end
+        function _G.addKill(weaponID, count)
+            if not weaponID or not count then return end
+            _G.killCountInfo[weaponID] = (_G.killCountInfo[weaponID] or 0) + count
+            _G.saveKillCountToFile()
+        end
+        function _G.getKills(weaponID)
+            return weaponID and _G.killCountInfo[weaponID] or 0
+        end
+
+        -- ===================================================================
+        -- KILL MESSAGE SYSTEM
+        -- Section 1/2/4: UI kill counter standalone.
+        -- Section 3: kill feed + deadbox + kill count, logika dari 1.lua.
         -- ===================================================================
         local _killCounterHooked = false
         local _safeRequireCache = {}
@@ -7063,44 +7171,102 @@ pcall(_skinValidityBypass)
                 end
             end)
 
-            -- 3. Kill Info Message hook (inject skin + color into kill feed)
+            -- 3. Kill Info Message hook — skin kill feed, hitung kill, deadbox.
+            --    Logika dari 1.lua (kendaraan, kill counter).
             pcall(function()
                 local KillInfo = safeRequire("GameLua.Mod.BaseMod.Client.KillInfoTips.KillInfo")
-                if KillInfo and KillInfo.__inner_impl then
-                    local origFileItem = KillInfo.__inner_impl.FileItem
-                    KillInfo.__inner_impl.FileItem = function(self, DamageRecordData)
+                if not (KillInfo and KillInfo.__inner_impl and KillInfo.__inner_impl.FileItem) then return end
+
+                local ModuleManager = safeRequire("client.module_framework.ModuleManager")
+                local ECharacterHealthStatus = import("ECharacterHealthStatus")
+                local o_FileItem = KillInfo.__inner_impl.FileItem
+
+                local function patchKillRecord(self, DamageRecordData)
+                    local LogicKillCounter = ModuleManager
+                        and ModuleManager.GetModule(ModuleManager.CommonModuleConfig.LogicKillCounter)
+                    if not LogicKillCounter then return end
+
+                    local uCharacter = slua_GameFrontendHUD
+                        and slua_GameFrontendHUD:GetPlayerController()
+                        and slua_GameFrontendHUD:GetPlayerController():GetPlayerCharacterSafety()
+                    if not uCharacter or not slua.isValid(uCharacter) then return end
+
+                    local SelfName = uCharacter:GetPlayerNameSafety()
+                    if DamageRecordData.Causer ~= SelfName then return end
+
+                    if DamageRecordData.DamageType == UEnums.DamageType.VehicleDamage then
+                        local carSkinID = 0
                         pcall(function()
-                            local GD = safeRequire("GameLua.GameCore.Data.GameplayData")
-                            if not GD then return end
-                            local playerChar = GD.GetPlayerCharacter()
-                            if not playerChar or not slua.isValid(playerChar) then return end
-                            -- Only modify YOUR kill messages
-                            if DamageRecordData.Causer ~= playerChar:GetPlayerNameSafety() then return end
-                            local currentWeapon = playerChar:GetCurrentWeapon()
-                            if not slua.isValid(currentWeapon) then return end
-                            local weaponID = currentWeapon:GetWeaponID()
-                            local skinID = _G.get_skin_id and _G.get_skin_id(weaponID) or weaponID
-                            -- Inject weapon skin into kill message
-                            if skinID then
-                                DamageRecordData.CauserWeaponAvatarID = skinID
-                            end
-                            -- Inject outfit skin into kill message
-                            if _G.SuitSkin and _G.SuitSkin ~= 0 then
-                                DamageRecordData.CauserClothAvatarID = _G.SuitSkin
-                            end
-                            -- Golden name color
-                            DamageRecordData.IsUseColor = true
-                            DamageRecordData.UseColor = import("LinearColor")(1.0, 0.8, 0.0, 1.0)
-                            -- Track kill count
-                            if DamageRecordData.ResultHealthStatus == 2 then
-                                _G.AKFakeKillCounts[weaponID] = (_G.AKFakeKillCounts[weaponID] or 0) + 1
-                                pushKillCounterUpdate(weaponID, skinID, _G.AKFakeKillCounts[weaponID])
+                            local curVeh = uCharacter.CurrentVehicle
+                                or (type(uCharacter.GetCurrentVehicle) == "function" and uCharacter:GetCurrentVehicle())
+                            if slua.isValid(curVeh) then
+                                carSkinID = getVehicleSkinID(curVeh) or 0
                             end
                         end)
-                        if origFileItem then return origFileItem(self, DamageRecordData) end
+                        if carSkinID ~= 0 then
+                            local ExpandData = slua.LuaArchiverDecode(LuaStateWrapper, DamageRecordData.ExpandDataContent) or {}
+                            ExpandData.CauserVehicleSkinID = carSkinID
+                            pcall(function() self:ChangeInfoBgByWeaponAvatarIDLua(carSkinID) end)
+                            DamageRecordData.CauserWeaponAvatarID = carSkinID
+                            DamageRecordData.CauserClothAvatarID = currentSuitSkinID()
+                            DamageRecordData.ExpandDataContent = slua.LuaArchiverEncode(LuaStateWrapper, ExpandData)
+                        end
+                        return
                     end
-                    anyHooked = true
+
+                    if DamageRecordData.CauserWeaponAvatarID == 69
+                        or DamageRecordData.CauserClothAvatarID == 69 then
+                        return
+                    end
+
+                    local currWeapon = uCharacter:GetCurrentWeapon()
+                    if not currWeapon or not slua.isValid(currWeapon) then return end
+
+                    local defineID = currWeapon:GetItemDefineID()
+                    local DefineID = defineID and slua.isValid(defineID) and defineID.TypeSpecificID or 0
+                    if DefineID == 0 then return end
+
+                    local ExpandData = slua.LuaArchiverDecode(LuaStateWrapper, DamageRecordData.ExpandDataContent) or {}
+                    local hasChanged = false
+
+                    local SupportKillCounter = LogicKillCounter:GetBaseKillCounterIdByWeaponId(DefineID)
+                    if SupportKillCounter
+                        and DamageRecordData.ResultHealthStatus == ECharacterHealthStatus.FinishedLastBreath then
+                        local synDataRef = slua.IndexReference(currWeapon.synData:Get(7), "defineID")
+                        local SkinID = synDataRef and slua.isValid(synDataRef) and synDataRef.TypeSpecificID or 0
+
+                        -- Hanya skin VIP/mod (ID > 1.000.000) yang dihitung.
+                        if SkinID > 1000000 then
+                            ExpandData.KillCounterItemId = DefineID
+                            ExpandData.KillCounterNum = (ExpandData.KillCounterNum or 0) + 1
+                            _G.addKill(DefineID, 1)
+                            _G.AKFakeKillCounts[DefineID] = (_G.AKFakeKillCounts[DefineID] or 0) + 1
+                            _G.NeedCheckDeadBoxTimer = 5
+                            hasChanged = true
+                        end
+                    end
+
+                    _G.UpdateMyKillCounter = true
+                    local synData = currWeapon.synData
+                    if synData and slua.isValid(synData) then
+                        local weaponDefineID = slua.IndexReference(synData:Get(7), "defineID")
+                        if weaponDefineID and slua.isValid(weaponDefineID) then
+                            DamageRecordData.CauserWeaponAvatarID = weaponDefineID.TypeSpecificID
+                        end
+                    end
+                    DamageRecordData.CauserClothAvatarID = currentSuitSkinID()
+                    DamageRecordData.ExpandDataContent = slua.LuaArchiverEncode(LuaStateWrapper, ExpandData)
+                    if hasChanged then _G.UpdateMyKillCounter = true end
                 end
+
+                KillInfo.__inner_impl.FileItem = function(self, DamageRecordData)
+                    if not self or not DamageRecordData then
+                        return o_FileItem(self, DamageRecordData)
+                    end
+                    pcall(patchKillRecord, self, DamageRecordData)
+                    return o_FileItem(self, DamageRecordData)
+                end
+                anyHooked = true
             end)
 
             -- 4. Weapon Slot Mode 2 - Kill Counter Icon
@@ -7170,58 +7336,122 @@ pcall(_skinValidityBypass)
         end
 
         -- ===================================================================
-        -- TEAM BROADCAST KILL MESSAGES (v1.1)
-        -- Shows weapon skin / vehicle skin in team kill notifications
+        -- TEAM BROADCAST KILL MESSAGES (logika dari 1.lua)
+        -- Menampilkan skin senjata/kendaraan di notifikasi kill tim.
         -- ===================================================================
         local _teamBroadcastHooked = false
-        local function hookTeamBroadcast()
-            if _teamBroadcastHooked then return end
-            pcall(function()
-                local BattleKillBroadcastSubSystem = require("GameLua.Mod.BaseMod.Client.BattleKillBroadcast.BattleKillBroadcastSubSystem")
-                if not BattleKillBroadcastSubSystem then return end
-                local O_CopyKillOrPutDownMessageDataUserDataToLuaTable = BattleKillBroadcastSubSystem.CopyKillOrPutDownMessageDataUserDataToLuaTable
-                if not O_CopyKillOrPutDownMessageDataUserDataToLuaTable then return end
-                BattleKillBroadcastSubSystem.CopyKillOrPutDownMessageDataUserDataToLuaTable = function(self, messageData)
-                    local msgData = O_CopyKillOrPutDownMessageDataUserDataToLuaTable(self, messageData)
-                    if not msgData or not msgData.bIamCauser then return msgData end
-                    pcall(function()
-                        local pc = slua_GameFrontendHUD and slua_GameFrontendHUD:GetPlayerController()
-                        if not pc then return end
-                        local uCharacter = pc:GetPlayerCharacterSafety()
-                        if not uCharacter or not slua.isValid(uCharacter) then return end
-                        if msgData.DamageType == UEnums.DamageType.VehicleDamage then
-                            -- Vehicle kill: inject vehicle skin
-                            local carSkinID = _G.CurrentEquipVehicleID
-                            if carSkinID and carSkinID ~= 0 then
-                                local ExpandData = slua.LuaArchiverDecode(LuaStateWrapper, msgData.ExpandDataContent) or {}
-                                ExpandData.CauserVehicleSkinID = carSkinID
-                                ExpandData.CauserWeaponAvatarID = carSkinID
-                                msgData.ExpandDataContent = slua.LuaArchiverEncode(LuaStateWrapper, ExpandData)
-                            end
-                        else
-                            -- Weapon kill: inject weapon skin
-                            local currWeapon = uCharacter:GetCurrentWeapon()
-                            if currWeapon and slua.isValid(currWeapon) then
-                                local synData = currWeapon.synData
-                                if synData and slua.isValid(synData) then
-                                    local weaponDefineID = slua.IndexReference(synData:Get(7), "defineID")
-                                    if weaponDefineID and slua.isValid(weaponDefineID) then
-                                        local ExpandData = slua.LuaArchiverDecode(LuaStateWrapper, msgData.ExpandDataContent) or {}
-                                        ExpandData.CauserWeaponAvatarID = weaponDefineID.TypeSpecificID
-                                        msgData.ExpandDataContent = slua.LuaArchiverEncode(LuaStateWrapper, ExpandData)
-                                    end
-                                end
-                            end
-                        end
-                    end)
-                    return msgData
+        local _cachedMyName = nil
+        local _downloadedAssetsCache = {}
+
+        local function isMyBroadcast(data)
+            if not data then return false end
+            if data.bIamCauser then return true end
+            if not _cachedMyName then
+                local hud = slua_GameFrontendHUD
+                if hud then
+                    local pc = hud:GetPlayerController()
+                    if slua.isValid(pc) then
+                        local ch = pc:GetPlayerCharacterSafety()
+                        if slua.isValid(ch) then _cachedMyName = ch:GetPlayerNameSafety() end
+                    end
                 end
-                _teamBroadcastHooked = true
-                print("[AddOutfit] Team broadcast kill messages hooked")
+            end
+            if not _cachedMyName or _cachedMyName == "" then return false end
+            return data.Causer == _cachedMyName
+                or data.CauserRealPlayerName == _cachedMyName
+                or data.CauserPlayerName == _cachedMyName
+        end
+
+        local function getCurrentWeaponSkinID()
+            local hud = slua_GameFrontendHUD
+            if not hud then return 0 end
+            local pc = hud:GetPlayerController()
+            if not slua.isValid(pc) then return 0 end
+            local ch = pc:GetPlayerCharacterSafety()
+            if not slua.isValid(ch) then return 0 end
+
+            local currWeapon = ch:GetCurrentWeapon()
+            if slua.isValid(currWeapon) and currWeapon.synData then
+                local currentSkinID = 0
+                pcall(function()
+                    local synDataRef = slua.IndexReference(currWeapon.synData:Get(7), "defineID")
+                    local skinID = synDataRef and slua.isValid(synDataRef) and synDataRef.TypeSpecificID or 0
+                    if skinID > 1000000 then currentSkinID = skinID end
+                end)
+                return currentSkinID
+            end
+            return 0
+        end
+
+        local function downloadTeamAssets(skinID)
+            if not skinID or skinID == 0 or skinID == 69 then return end
+            if _downloadedAssetsCache[skinID] then return end
+            _downloadedAssetsCache[skinID] = true
+
+            pcall(function()
+                local PufferManager = require("client.slua.logic.download.puffer.puffer_manager")
+                local PufferConst = require("client.slua.logic.download.puffer_const")
+                PufferManager.Download(PufferConst.ENUM_DownloadType.ODPAK, {skinID})
+
+                local cfg2 = CDataTable.GetTableData("TeamKillBroadcast", skinID)
+                if cfg2 then
+                    if cfg2.EffectPath and cfg2.EffectPath ~= "" then
+                        PufferManager.Download(PufferConst.ENUM_DownloadType.ODPAK, {cfg2.EffectPath})
+                    end
+                    if cfg2.BgPath and cfg2.BgPath ~= "" then
+                        PufferManager.Download(PufferConst.ENUM_DownloadType.ODPAK, {cfg2.BgPath})
+                    end
+                end
             end)
         end
 
-        
+        local function patchTeamKill(messageData)
+            if not messageData or not isMyBroadcast(messageData) then return messageData end
+            local currentSkinID = getCurrentWeaponSkinID()
+            if not currentSkinID or currentSkinID == 0 or currentSkinID == 69 then return messageData end
+            local broadcastCfg = CDataTable.GetTableData("TeamKillBroadcast", currentSkinID)
+            if not broadcastCfg or (not broadcastCfg.BgPath and not broadcastCfg.EffectPath) then
+                return messageData
+            end
+            pcall(function()
+                local exp = slua.LuaArchiverDecode(LuaStateWrapper, messageData.ExpandDataContent) or {}
+                exp.CauserWeaponAvatarID = currentSkinID
+                messageData.ExpandDataContent = slua.LuaArchiverEncode(LuaStateWrapper, exp)
+                messageData.bShowBottomBothSidesKillInfo = true
+                messageData.bIamCauser = true
+                downloadTeamAssets(currentSkinID)
+            end)
+            return messageData
+        end
+
+        local function installTeamBroadcastHooks()
+            local function wrapCopy(mod, tag)
+                if not mod then return end
+                local impl2 = mod.__inner_impl or mod
+                if not impl2 or not impl2.CopyKillOrPutDownMessageDataUserDataToLuaTable then return end
+                local key = "__teamKillCopy_" .. tag
+                if not impl2[key] then
+                    impl2[key] = impl2.CopyKillOrPutDownMessageDataUserDataToLuaTable
+                end
+                local O_Copy = impl2[key]
+                impl2.CopyKillOrPutDownMessageDataUserDataToLuaTable = function(self, messageData)
+                    local copied = O_Copy(self, messageData)
+                    local ok2, result = pcall(patchTeamKill, copied)
+                    if ok2 then return result end
+                    return copied
+                end
+                _teamBroadcastHooked = true
+            end
+            pcall(function()
+                wrapCopy(require("GameLua.Mod.BaseMod.Client.BattleKillBroadcast.BattleKillBroadcastSubSystem"), "base")
+            end)
+            pcall(function()
+                wrapCopy(require("GameLua.Mod.SingleTraining.Client.BattleKillBroadcast.BattleKillBroadcastSubSystem"), "training")
+            end)
+            if _teamBroadcastHooked then
+                print("[AddOutfit] Team broadcast kill messages hooked")
+            end
+        end
 
                 local function start()
             log("AddOutfit Merged start")
@@ -7229,8 +7459,8 @@ pcall(_skinValidityBypass)
             pcall(hookSecurityBypass)
             -- Kill message system
             pcall(hookKillMessages)
-            -- Team broadcast kill messages (v1.1)
-            pcall(hookTeamBroadcast)
+            -- Team broadcast kill messages (logika 1.lua)
+            pcall(installTeamBroadcastHooks)
             buildSkinMappings()
             pcall(restorePersistedVehicles)
             pcall(restorePersistedMotions)
@@ -7318,6 +7548,17 @@ pcall(_skinValidityBypass)
             pcall(function()
                 _timeCount = _timeCount + 1
                 _S.globalFrame = _timeCount
+                -- Deadbox: pakai skin senjata/kendaraan pada kotak kematian.
+                if (_G.NeedCheckDeadBoxTimer or 0) > 0 and _G.DeadBox_TemperRequest then
+                    pcall(function()
+                        local pc = getPlayerController()
+                        if pc and slua.isValid(pc) then _G.DeadBox_TemperRequest(pc) end
+                    end)
+                end
+                -- Broadcast kill tim: coba pasang lagi kalau modul belum ada.
+                if not _teamBroadcastHooked and _timeCount % 5 == 0 then
+                    pcall(installTeamBroadcastHooks)
+                end
                 -- Refresh kill counter UI periodically
                 if _timeCount % 3 == 0 and _killCounterHooked then
                     pcall(function()
