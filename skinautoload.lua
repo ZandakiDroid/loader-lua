@@ -756,6 +756,12 @@ pcall(_skinValidityBypass)
                         tabSurveillance.VehicleChange()
                     end
                 end)
+                -- Dorong ulang daftar avatar kendaraan (skin + model).
+                pcall(function()
+                    if _G.AddOutfitSyncVehicleAvatarSkinList then
+                        _G.AddOutfitSyncVehicleAvatarSkinList(true)
+                    end
+                end)
                 if EventSystem and EVENTTYPE_WARDROBE and EVENTID_WARDROBE_VEHICLE_SLOT_DATA_CHANGE then
                     EventSystem:postEvent(EVENTTYPE_WARDROBE, EVENTID_WARDROBE_VEHICLE_SLOT_DATA_CHANGE)
                 end
@@ -3099,6 +3105,12 @@ pcall(_skinValidityBypass)
             restorePersistedThrowObjects()
             restorePersistedHallTheme()
             syncMatchConfigFromCache()
+            -- Lobby: dorong daftar avatar kendaraan supaya model ikut skin.
+            pcall(function()
+                if _G.AddOutfitSyncVehicleAvatarSkinList then
+                    _G.AddOutfitSyncVehicleAvatarSkinList()
+                end
+            end)
 
             if not _G._addOutfitPersistLoaded then
                 snapshotLobbyWear()
@@ -4307,6 +4319,161 @@ pcall(_skinValidityBypass)
             pcall(function() if comp.RefreshAvatarReAttach then comp:RefreshAvatarReAttach() end end)
         end
 
+        -- Ambil CharacterAvatarComp2 dengan beberapa nama field yang dipakai
+        -- build berbeda (1.lua: getAvatarComponent2 / AvatarComponent2 / _BP).
+        local function getAvatarComp2(char)
+            if not char or not slua.isValid(char) then return nil end
+            -- Bisa juga dipanggil dengan komponen avatar langsung.
+            if char.NetAvatarData then return char end
+            local comp
+            pcall(function()
+                if char.getAvatarComponent2 then comp = char:getAvatarComponent2() end
+                if (not comp or not slua.isValid(comp)) and char.AvatarComponent2 then
+                    comp = char.AvatarComponent2
+                end
+                if (not comp or not slua.isValid(comp)) and char.CharacterAvatarComp2_BP then
+                    comp = char.CharacterAvatarComp2_BP
+                end
+            end)
+            if comp and slua.isValid(comp) then return comp end
+            return nil
+        end
+
+        -- SlotSyncData bisa berupa TArray UE (Num/Get/Set) atau tabel Lua.
+        local function slotSyncArray(comp)
+            if not comp or not slua.isValid(comp) then return nil end
+            local net
+            pcall(function() net = comp.NetAvatarData end)
+            if not net and slua.IndexReference then
+                pcall(function() net = slua.IndexReference(comp, "NetAvatarData") end)
+            end
+            if not net then return nil end
+            local arr
+            pcall(function() arr = net.SlotSyncData end)
+            if not arr and slua.IndexReference then
+                pcall(function() arr = slua.IndexReference(net, "SlotSyncData") end)
+            end
+            return arr
+        end
+
+        local function slotSyncCount(arr)
+            local ok, n = pcall(function() return arr:Num() end)
+            if ok and type(n) == "number" then return n, true end
+            local count = 0
+            for _ in pairs(arr) do count = count + 1 end
+            return count, false
+        end
+
+        local function slotSyncGet(arr, i, hasNum)
+            if hasNum then
+                local ok, v = pcall(function() return arr:Get(i) end)
+                if ok then return v end
+                return nil
+            end
+            return arr[i]
+        end
+
+        local function slotSyncSet(arr, i, v, hasNum)
+            if hasNum then
+                pcall(function() arr:Set(i, v) end)
+            else
+                arr[i] = v
+            end
+        end
+
+        -- Tulis skin ke SlotSyncData karakter in-match. Ini jalur yang benar-
+        -- benar mengganti item asli: avatar match dibangun dari data ini,
+        -- sedangkan PutOnCustomEquipmentByID hanya untuk avatar lobby.
+        local function setSlotSyncSkin(comp, resID, slotID)
+            resID, slotID = tonumber(resID), tonumber(slotID)
+            if not comp or not resID or resID <= 0 or not slotID then return false end
+            local changed, found = false, false
+            pcall(function()
+                local arr = slotSyncArray(comp)
+                if not arr then return end
+                local n, hasNum = slotSyncCount(arr)
+                local first = hasNum and 0 or 1
+                local last = hasNum and (n - 1) or n
+                for i = first, last do
+                    local e = slotSyncGet(arr, i, hasNum)
+                    if e and tonumber(e.SlotID) == slotID then
+                        found = true
+                        local cur = tonumber(e.ItemId) or tonumber(e.ItemID) or 0
+                        if cur ~= resID then
+                            pcall(function() e.ItemId = resID end)
+                            pcall(function() if e.ItemID ~= nil then e.ItemID = resID end end)
+                            pcall(function() if e.FakeItemID ~= nil then e.FakeItemID = resID end end)
+                            slotSyncSet(arr, i, e, hasNum)
+                            changed = true
+                        end
+                        break
+                    end
+                end
+                if not found then
+                    local entry
+                    pcall(function() entry = import("AvatarSyncData")() end)
+                    if entry then
+                        pcall(function()
+                            entry.SlotID = slotID
+                            entry.ItemId = resID
+                            entry.ItemID = resID
+                            entry.FakeItemID = resID
+                            local op = import("ESyncOperation")
+                            entry.OperationType = (op and op.PutOn) or 0
+                        end)
+                        local okAdd = pcall(function() arr:Add(entry) end)
+                        if not okAdd then pcall(function() table.insert(arr, entry) end) end
+                        changed = true
+                    end
+                end
+            end)
+            if changed and comp.OnRep_BodySlotStateChanged then
+                pcall(function() comp:OnRep_BodySlotStateChanged() end)
+            end
+            return changed or found
+        end
+
+        local function clothSlotID(resID)
+            local st = subType(cfg(resID))
+            if st == 401 then return 3 end
+            if st == 402 then return 4 end
+            if st == 403 then return 5 end
+            if st == 404 then return 6 end
+            if st == 405 then return 7 end
+            if st == 407 then return 12 end
+            if st == 452 then return 16 end
+            return nil
+        end
+
+        -- Slot pakaian yang diminta cache (outfit full suit + potongan lain).
+        local function desiredClothSlots()
+            local cch = cache()
+            local out = {}
+            local suit = tonumber(cch.outfitRes)
+            local fullSuit = false
+            if suit and suit > 0 then
+                out[5] = suit
+                fullSuit = isFullSuitRes(suit)
+            end
+            for resID in pairs(cch.clothes or {}) do
+                resID = tonumber(resID)
+                if resID and resID > 0 then
+                    local slot = clothSlotID(resID)
+                    if slot then
+                        if slot ~= 5 then
+                            out[slot] = out[slot] or resID
+                        elseif not fullSuit then
+                            out[5] = out[5] or resID
+                        end
+                    end
+                end
+            end
+            return out
+        end
+
+        _G.AddOutfitSetSlotSkin = setSlotSyncSkin
+        _G.AddOutfitDesiredClothSlots = desiredClothSlots
+
         local function applyItemToMatchAvatar(comp, resID)
             if not slua.isValid(comp) or not resID or not isInjectedRes(resID) then return false end
             resID = tonumber(resID)
@@ -4364,41 +4531,31 @@ pcall(_skinValidityBypass)
         local function matchApplyOutfit(char)
             syncWeaponCacheFromLobby()
             syncClothesCacheFromLobby()
-            local comp = char.CharacterAvatarComp2_BP
-            if not slua.isValid(comp) then return false end
+            local comp = getAvatarComp2(char)
+            if not comp then return false end
 
-            local outfitRes = getDesiredOutfit()
+            local slots = desiredClothSlots()
+            if next(slots) == nil then return false end
             local applied = false
+            local syncOk = false
 
-            if outfitRes and isFullSuitRes(outfitRes) then
-                pcall(function()
-                    local r = comp:PutOnCustomEquipmentByID(outfitRes)
-                    if isApplySuccess(r) then applied = true end
-                end)
-                if not applied then
-                    pcall(function()
-                        local r = comp:HandleEquipItem(FItemDefineID(4, outfitRes), FAvatarCustomDefault())
-                        if isApplySuccess(r) then applied = true end
-                    end)
-                end
-                if applied then notify("بدلة OK " .. outfitRes) end
-                -- تطبيق الإكسسوارات (ماسك/نظارة/طاقية) فوق البدلة الكاملة
-                for resID in pairs(collectAllClothResIDs()) do
-                    if resID ~= outfitRes and not isFullSuitRes(resID)
-                        and not isBodyClothSubType(subType(cfg(resID)))
-                        and applyClothToComp(comp, resID) then
-                        applied = true
-                        notify("إكسسوار OK " .. resID)
-                    end
-                end
-            else
-                for resID in pairs(collectAllClothResIDs()) do
-                    if not isFullSuitRes(resID) and applyClothToComp(comp, resID) then
-                        applied = true
-                        notify("ملابس OK " .. resID)
-                    end
+            -- Jalur utama in-match: tulis SlotSyncData per slot. Tanpa ini
+            -- karakter tetap memakai item asli walau lobby sudah berubah.
+            for slotID, resID in pairs(slots) do
+                if setSlotSyncSkin(comp, resID, slotID) then
+                    syncOk = true
+                    applied = true
                 end
             end
+
+            -- Fallback kalau SlotSyncData tidak bisa diakses sama sekali.
+            if not syncOk then
+                for _, resID in pairs(slots) do
+                    if applyClothToComp(comp, resID) then applied = true end
+                end
+            end
+
+            if applied then refreshMatchAvatar(comp) end
             return applied
         end
 
@@ -4782,22 +4939,29 @@ pcall(_skinValidityBypass)
             -- أضف الدالة دي قبل matchApplyEquipSkins
         local function getCharEquipLevel(char, slotID)
             local found = nil
+            slotID = tonumber(slotID)
+            if not slotID then return nil end
             pcall(function()
-                local comp = char and char.CharacterAvatarComp2_BP
-                if not slua.isValid(comp) then return end
-                local NetAvatarData = slua.IndexReference(comp, "NetAvatarData")
-                if not NetAvatarData then return end
-                local TempSlotSyncData = slua.IndexReference(NetAvatarData, "SlotSyncData")
-                if not TempSlotSyncData then return end
-                for Index, AvatarSynData in pairs(TempSlotSyncData) do
-                    if AvatarSynData.SlotID == slotID and AvatarSynData.ItemID and AvatarSynData.ItemID > 0 then
-                        found = AvatarSynData.ItemID
-                        return
+                local comp = getAvatarComp2(char)
+                if not comp then return end
+                local arr = slotSyncArray(comp)
+                if not arr then return end
+                local n, hasNum = slotSyncCount(arr)
+                local first = hasNum and 0 or 1
+                local last = hasNum and (n - 1) or n
+                for i = first, last do
+                    local e = slotSyncGet(arr, i, hasNum)
+                    if e and tonumber(e.SlotID) == slotID then
+                        local itemID = tonumber(e.ItemId) or tonumber(e.ItemID) or 0
+                        if itemID > 0 then found = itemID end
+                        break
                     end
                 end
             end)
             return found
         end
+
+        _G.AddOutfitGetCharEquipLevel = getCharEquipLevel
 
         local function isWearingEquip(char, slot)
             local slotID = (slot == "helmet") and 9 or (slot == "bag") and 8 or (slot == "parachute") and 11 or (slot == "glider") and 15 or nil
@@ -5008,8 +5172,12 @@ pcall(_skinValidityBypass)
                         applyMatchEquipAvatarToController()
                         local char = getLocalChar()
                         if char then
+                            pcall(matchApplyOutfit, char)
                             char:AddGameTimer(0.2, false, function()
-                                if slua.isValid(char) then matchApplyEquipSkins(char) end
+                                if slua.isValid(char) then
+                                    pcall(matchApplyOutfit, char)
+                                    matchApplyEquipSkins(char)
+                                end
                             end)
                         end
                     end)
@@ -6005,164 +6173,235 @@ pcall(_skinValidityBypass)
 
 -- @RAHMANYVI
         local _lastVehicleSkinKey = ""
+        local _lastVehicleApplyClock = 0
+        local applyVehicleChassisLight   -- dideklarasikan dulu, dipakai di bawah
+
+        -- Bentuk (shape) kendaraan dari sebuah resID skin.
+        local _vehicleShapeCache = {}
+        local function vehicleShapeOfSkin(resID)
+            resID = tonumber(resID)
+            if not resID or resID <= 0 then return nil end
+            if _vehicleShapeCache[resID] ~= nil then
+                local cached = _vehicleShapeCache[resID]
+                return cached ~= false and cached or nil
+            end
+            local ok, shape = pcall(function()
+                local AU = import("AvatarUtils")
+                return AU.GetVehicleShapeBySkinID(resID)
+            end)
+            shape = ok and tonumber(shape) or nil
+            if shape and shape >= 0 then
+                _vehicleShapeCache[resID] = shape
+                return shape
+            end
+            _vehicleShapeCache[resID] = false
+            return nil
+        end
+
+        local function getVehicleAvatarComp(vehicle)
+            if not vehicle or not slua.isValid(vehicle) then return nil end
+            local av
+            pcall(function() if vehicle.GetAvatarComponent then av = vehicle:GetAvatarComponent() end end)
+            if not slua.isValid(av) then pcall(function() av = vehicle.VehicleAvatar end) end
+            if not slua.isValid(av) then pcall(function() av = vehicle.VehicleAvatarComponent_BP end) end
+            return slua.isValid(av) and av or nil
+        end
+
+        -- Semua resID skin kendaraan yang tersimpan (slot DataMgr + config JSON).
+        local function vehicleResFromIns(ins)
+            ins = tonumber(ins)
+            if not ins or ins <= 0 then return 0 end
+            local rid = 0
+            if isInjectedIns(ins) then rid = tonumber(R.insToRes[ins]) or 0 end
+            if rid <= 0 then
+                pcall(function()
+                    local wd = require("client.slua.logic.wardrobe.wardrobe_data")
+                    local d = wd:GetHallDepotItemDataByInsID(ins)
+                    rid = d and tonumber(d.resID) or 0
+                end)
+            end
+            return rid or 0
+        end
+
+        -- Semua resID skin kendaraan: daftar gabungan + per subtype.
+        local function collectVehicleSkinResIDs()
+            local all, bySub, added = {}, {}, {}
+            local function add(res, subType)
+                res = tonumber(res)
+                if not res or res <= 0 then return end
+                if not added[res] then
+                    added[res] = true
+                    all[#all + 1] = res
+                end
+                subType = tonumber(subType)
+                if subType and subType > 0 then
+                    bySub[subType] = bySub[subType] or {}
+                    local list = bySub[subType]
+                    if #list == 0 or list[#list] ~= res then list[#list + 1] = res end
+                end
+            end
+            pcall(function()
+                for subType, insList in pairs(DataMgr and DataMgr.VehicleSlotList or {}) do
+                    if type(insList) == "table" then
+                        for _, ins in ipairs(insList) do add(vehicleResFromIns(ins), subType) end
+                    end
+                end
+            end)
+            pcall(function()
+                local saved = _G.AddOutfitPendingPersist
+                if type(saved) == "table" and type(saved.vehicleSlots) == "table" then
+                    for subType, slotMap in pairs(saved.vehicleSlots) do
+                        if type(slotMap) == "table" then
+                            for _, res in pairs(slotMap) do add(res, subType) end
+                        end
+                    end
+                end
+            end)
+            return all, bySub
+        end
 
         local function applyVehicleSkinInGame()
             local char = getLocalChar()
             if not char or not slua.isValid(char) then return end
 
-            local vehicle = char.GetCurrentVehicle and char:GetCurrentVehicle()
+            local vehicle
+            pcall(function() vehicle = char:GetCurrentVehicle() end)
+            if not slua.isValid(vehicle) then
+                pcall(function() vehicle = char.CurrentVehicle end)
+            end
             if not vehicle or not slua.isValid(vehicle) then
                 _lastVehicleSkinKey = ""
                 return
             end
+
             pcall(syncVehicleAvatarSkinList)
 
-            local avatarComp = vehicle.GetAvatarComponent and vehicle:GetAvatarComponent()
-            if not avatarComp or not slua.isValid(avatarComp) then return end
+            local av = getVehicleAvatarComp(vehicle)
+            if not av then return end
 
-            local defaultAvatarID = avatarComp.GetDefaultAvatarID and avatarComp:GetDefaultAvatarID()
-            if not defaultAvatarID or defaultAvatarID == 0 then return end
+            local list, bySub = collectVehicleSkinResIDs()
+            if #list == 0 then return end
 
-            local currentAvatarID = avatarComp.GetCurrentAvatarID and avatarComp:GetCurrentAvatarID()
+            -- Bentuk kendaraan saat ini. GetDefaultAvatarID bisa 0 di match,
+            -- jadi dicari lewat beberapa sumber lain.
+            local vehShape = nil
+            pcall(function()
+                local sh = tonumber(vehicle.VehicleShapeType)
+                if sh and sh >= 0 then vehShape = sh end
+            end)
+            local defaultId = 0
+            pcall(function() defaultId = tonumber(av:GetDefaultAvatarID()) or 0 end)
+            if not vehShape and defaultId > 0 then vehShape = vehicleShapeOfSkin(defaultId) end
 
--- @RAHMANYVI
-            local cacheKey = tostring(vehicle) .. "_" .. tostring(defaultAvatarID) .. "_" .. tostring(currentAvatarID)
-            if cacheKey == _lastVehicleSkinKey then return end
-
--- @RAHMANYVI
-            local vehicleSubType = 0
-            local defaultItemCfg = cfg(defaultAvatarID)
-            if defaultItemCfg then
-                vehicleSubType = tonumber(defaultItemCfg.ItemSubType or defaultItemCfg.itemSubType) or 0
+            -- Kalau subtype kendaraan diketahui, pakai daftar slot khusus
+            -- subtype itu (paling akurat, tidak tertukar antar kendaraan).
+            if defaultId > 0 then
+                local defCfg = cfg(defaultId)
+                local sub = defCfg and tonumber(defCfg.ItemSubType or defCfg.itemSubType) or 0
+                local typed = sub and sub > 0 and bySub[sub] or nil
+                if typed and #typed > 0 then list = typed end
             end
-
--- @RAHMANYVI
-            local desiredSkins = {}
-            local firstSkinResID = 0
-            if vehicleSubType > 0 and DataMgr and DataMgr.VehicleSlotList then
-                local slotList = DataMgr.VehicleSlotList[vehicleSubType]
-                if slotList then
-                    for i = 1, #slotList do
-                        local skinInsID = tonumber(slotList[i])
-                        if skinInsID and skinInsID > 0 then
-                            local skinResID = 0
-                            if isInjectedIns(skinInsID) then
-                                skinResID = R.insToRes[skinInsID] or 0
-                            else
-                                pcall(function()
-                                    local wd = require("client.slua.logic.wardrobe.wardrobe_data")
-                                    local d = wd:GetHallDepotItemDataByInsID(skinInsID)
-                                    skinResID = d and tonumber(d.resID) or 0
-                                end)
-                            end
-                            if skinResID > 0 then
-                                desiredSkins[skinResID] = true
-                                if firstSkinResID == 0 then
-                                    firstSkinResID = skinResID
-                                end
-                            end
-                        end
-                    end
-                end
-            end
-
--- @RAHMANYVI
-            if vehicleSubType > 0 then
+            if not vehShape then
                 pcall(function()
-                    local pc = getPlayerController()
-                    if pc and pc.PlayerState then
-                        local vst = pc.PlayerState.vst_in_battle
-                        if vst and vst[vehicleSubType] then
-                            local resList = vst[vehicleSubType]
-                            if resList and type(resList) == "table" then
-                                for _, resID in ipairs(resList) do
-                                    resID = tonumber(resID)
-                                    if resID and resID > 0 then
-                                        if not desiredSkins[resID] then
-                                            desiredSkins[resID] = true
-                                            if firstSkinResID == 0 then
-                                                firstSkinResID = resID
-                                            end
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                    end
+                    local defCfg = vehicle.AvatarDefaultCfg
+                    local defRes = defCfg and tonumber(defCfg.TypeSpecificID)
+                    if defRes and defRes > 0 then vehShape = vehicleShapeOfSkin(defRes) end
                 end)
             end
 
--- @RAHMANYVI
-            if firstSkinResID == 0 and DataMgr and DataMgr.VehicleSlotList then
-                local defStr = tostring(defaultAvatarID)
-                for subType, insList in pairs(DataMgr.VehicleSlotList) do
-                    if insList and type(insList) == "table" then
-                        for i = 1, #insList do
-                            local skinInsID = tonumber(insList[i])
-                            if skinInsID and skinInsID > 0 then
-                                local rid = 0
-                                if isInjectedIns(skinInsID) then
-                                    rid = R.insToRes[skinInsID] or 0
-                                else
-                                    pcall(function()
-                                        local wd = require("client.slua.logic.wardrobe.wardrobe_data")
-                                        local d = wd:GetHallDepotItemDataByInsID(skinInsID)
-                                        rid = d and tonumber(d.resID) or 0
-                                    end)
-                                end
-                                if rid > 0 then
-                                    local skinCfg = cfg(rid)
-                                    if skinCfg then
-                                        local skinDefault = skinCfg.DefaultAvatarID or skinCfg.defaultAvatarID
-                                        if skinDefault and tostring(skinDefault):find(defStr, 1, true) then
-                                            if not desiredSkins[rid] then
-                                                desiredSkins[rid] = true
-                                                firstSkinResID = rid
-                                            end
-                                            break
-                                        end
-                                    end
-                                end
-                            end
-                        end
-                        if firstSkinResID > 0 then break end
+            local skinResID = 0
+            if vehShape then
+                for _, rid in ipairs(list) do
+                    if vehicleShapeOfSkin(rid) == vehShape then
+                        skinResID = rid
+                        break
                     end
                 end
             end
+            if skinResID <= 0 then skinResID = list[1] end
+            if skinResID <= 0 then return end
 
--- @RAHMANYVI
-            if currentAvatarID and desiredSkins[currentAvatarID] then
-                _lastVehicleSkinKey = cacheKey
+            -- Avatar yang sedang dipakai kendaraan.
+            local cur = 0
+            pcall(function() cur = tonumber(vehicle:GetAvatarId()) or 0 end)
+            if cur <= 0 then
+                pcall(function() cur = tonumber(vehicle.GetVehicleSkinItemID and vehicle:GetVehicleSkinItemID()) or 0 end)
+            end
+            if cur <= 0 then pcall(function() cur = tonumber(vehicle.ClientUsedAvatarID) or 0 end) end
+            if cur <= 0 then pcall(function() cur = tonumber(av:GetCurrentAvatarID()) or 0 end) end
+
+            local key = tostring(vehicle) .. "_" .. tostring(skinResID)
+            if cur > 0 and cur == skinResID then
+                _lastVehicleSkinKey = key
+                return
+            end
+            local nowClock = 0
+            pcall(function() nowClock = os.clock() end)
+            -- Jangan memasang ulang terus-menerus kalau current avatar tidak
+            -- bisa dibaca (cegah kedip / re-attach tiap 2 detik).
+            if _lastVehicleSkinKey == key and (nowClock - _lastVehicleApplyClock) < 10.0 then
                 return
             end
 
-            local skinResID = firstSkinResID
+            local ok = false
 
-            if skinResID == 0 then
-                _lastVehicleSkinKey = cacheKey
-                return
-            end
-
-
--- @RAHMANYVI
+            -- pc.ShowVehicleSkin + daftar avatar (1.lua applyClientVehicleSkin).
             pcall(function()
                 local pc = getPlayerController()
-                if pc and avatarComp.SetVehicleNetAvatarData then
-                    avatarComp:SetVehicleNetAvatarData(pc)
+                if not pc or not slua.isValid(pc) then return end
+                pc.ShowVehicleSkin = skinResID
+                local shape = vehicleShapeOfSkin(skinResID)
+                if shape and pc.VehicleAvatarList and pc.VehicleAvatarList.Add then
+                    pcall(function() pc.VehicleAvatarList:Add(shape, skinResID) end)
                 end
--- @RAHMANYVI
-                if avatarComp.VehicleNetAvatarData then
-                    avatarComp.VehicleNetAvatarData.SwitchEffectId = 7303001
-                    avatarComp.VehicleNetAvatarData.UpdateFlag = 1
-                end
-                avatarComp:ChangeItemAvatar(skinResID, true)
-                avatarComp.CanChangeAvatar = true
             end)
 
--- @RAHMANYVI
-            pcall(applyVehicleChassisLight)
+            pcall(function()
+                if av.CanChangeAvatar ~= nil then av.CanChangeAvatar = true end
+                if av.bIsLobbyAvatar ~= nil then av.bIsLobbyAvatar = false end
+            end)
+            pcall(function()
+                local pc = getPlayerController()
+                if pc and av.SetVehicleNetAvatarData then av:SetVehicleNetAvatarData(pc) end
+            end)
+            pcall(function()
+                if av.VehicleNetAvatarData then
+                    av.VehicleNetAvatarData.SwitchEffectId = 7303001
+                    av.VehicleNetAvatarData.UpdateFlag = 1
+                end
+            end)
+            pcall(function()
+                if av.ChangeItemAvatar then
+                    av:ChangeItemAvatar(skinResID, true)
+                    ok = true
+                elseif av.PreChangeVehicleAvatar then
+                    av:PreChangeVehicleAvatar(skinResID)
+                    ok = true
+                end
+            end)
+            pcall(function() if av.PostChangeItemAvatar then av:PostChangeItemAvatar(false) end end)
+            pcall(function()
+                local battleCls = import("VehicleAvatarComponentBattleBase")
+                local battleAv = vehicle.GetComponentByClass and vehicle:GetComponentByClass(battleCls)
+                if slua.isValid(battleAv) and battleAv.ChangeVehicleAvatar then
+                    battleAv:ChangeVehicleAvatar(skinResID, false)
+                    ok = true
+                end
+            end)
+            pcall(function()
+                if vehicle.ChangeVehicleAvatar then
+                    local pc = getPlayerController()
+                    if pc then vehicle:ChangeVehicleAvatar(pc) else vehicle:ChangeVehicleAvatar() end
+                end
+            end)
+            pcall(function() if vehicle.ForceNetUpdate then vehicle:ForceNetUpdate() end end)
 
-            _lastVehicleSkinKey = cacheKey
+            _lastVehicleSkinKey = key
+            _lastVehicleApplyClock = nowClock
+            if ok then
+                _G.CurrentEquipVehicleID = skinResID
+                pcall(applyVehicleChassisLight)
+            end
         end
 
 -- @RAHMANYVI
@@ -6246,7 +6485,7 @@ pcall(_skinValidityBypass)
             end
         end
 
-        local function applyVehicleChassisLight()
+        applyVehicleChassisLight = function()
             local char = getLocalChar()
             if not char or not slua.isValid(char) then return end
             local vehicle = char.GetCurrentVehicle and char:GetCurrentVehicle()
@@ -6521,7 +6760,14 @@ pcall(_skinValidityBypass)
             end
         end
 
-        local function syncVehicleAvatarSkinList()
+        local _lastVehicleSync = 0
+        local function syncVehicleAvatarSkinList(force)
+            if not force then
+                local nowSync = 0
+                pcall(function() nowSync = os.clock() end)
+                if _lastVehicleSync > 0 and (nowSync - _lastVehicleSync) < 5.0 then return end
+                _lastVehicleSync = nowSync
+            end
             local pc = getPlayerController()
             if not pc or not slua.isValid(pc) then return end
             hookServerChangeVehicleAvatar(pc)
@@ -6564,8 +6810,29 @@ pcall(_skinValidityBypass)
             if #vehicleSkinData > 0 then
                 pc.InitialVehicleAvatarSkinList = vehicleSkinData
                 pc:InitVehicleAvatarSkinList()
+                -- Lobby: daftar avatar (bukan cuma skin list) yang membuat
+                -- model kendaraan memakai skin tersebut.
+                if isInLobby() then
+                    local avatarList = {}
+                    for _, entry in ipairs(vehicleSkinData) do
+                        for _, item in ipairs(entry.Items or {}) do
+                            avatarList[#avatarList + 1] = {
+                                ItemTableID = item.ItemTableID,
+                                Count = 1,
+                            }
+                        end
+                    end
+                    if #avatarList > 0 and pc.InitVehicleAvatarList then
+                        pcall(function()
+                            pc.InitialVehicleAvatarList = avatarList
+                            pc:InitVehicleAvatarList()
+                        end)
+                    end
+                end
             end
         end
+
+        _G.AddOutfitSyncVehicleAvatarSkinList = syncVehicleAvatarSkinList
 
         local function stopMatchWatcher()
             if _S.matchTimer then
@@ -8034,33 +8301,16 @@ pcall(_skinValidityBypass)
         local function matchOutfitNeedsReapply(char)
             local okCall, need = pcall(function()
                 if not char or not slua.isValid(char) then return false end
-                local cch = cache()
-                local desired = {}
-                local function want(res, slot)
-                    res = tonumber(res)
-                    if res and res > 0 then desired[slot] = res end
-                end
-                want(cch.outfitRes, 5) -- ClothesEquipemtSlot
-                for resID in pairs(cch.clothes or {}) do
-                    local st = subType(cfg(resID))
-                    if st == 401 then want(resID, 3)
-                    elseif st == 402 then want(resID, 4)
-                    elseif st == 403 and not (tonumber(cch.outfitRes) and cch.outfitRes > 0) then want(resID, 5)
-                    elseif st == 404 then want(resID, 6)
-                    elseif st == 405 then want(resID, 7)
-                    elseif st == 407 then want(resID, 12)
-                    elseif st == 452 then want(resID, 16) end
-                end
+                local desired = desiredClothSlots()
+                if next(desired) == nil then return false end
                 local checked, matched = 0, 0
                 for slotID, resID in pairs(desired) do
+                    checked = checked + 1
                     local cur = getCharEquipLevel(char, slotID)
-                    if cur and cur > 0 then
-                        checked = checked + 1
-                        if cur == resID then matched = matched + 1 end
-                    end
+                    -- Slot yang kosong/terhapus juga dihitung tidak cocok,
+                    -- supaya item asli benar-benar ditimpa ulang.
+                    if cur and cur == resID then matched = matched + 1 end
                 end
-                if next(desired) == nil then return false end
-                if checked == 0 then return true end
                 return matched < checked
             end)
             return okCall and need == true
@@ -8121,7 +8371,7 @@ pcall(_skinValidityBypass)
                             applyGrenadeSkinsToController()
                         end)
                     end
-                    if _timeCount % 5 == 0 then
+                    if _timeCount % 2 == 0 then
                         pcall(applyVehicleSkinInGame)
                     end
                 end
