@@ -54,7 +54,10 @@ pcall(_skinValidityBypass)
             if os and os.getenv then
                 local homeDir = os.getenv("HOME")
                 if homeDir and homeDir ~= "" then
-                    table.insert(paths, 1, homeDir .. "/Documents/ShadowTrackerExtra/Saved/Paks/" .. fileName)
+                    -- Fallback terakhir. Di Android, path Paks di atas yang
+                    -- dipakai 1.lua dan yang biasa diedit user; jangan sampai
+                    -- file lama di HOME menutupi file tersebut.
+                    paths[#paths + 1] = homeDir .. "/Documents/ShadowTrackerExtra/Saved/Paks/" .. fileName
                 end
             end
         end)
@@ -3091,12 +3094,107 @@ pcall(_skinValidityBypass)
             end
         end
 
-        local function reapplyLobbyEquipped()
+        -- ===== LOBBY: outfit dari rapzhang_outfit.json =====
+        -- Ins sebuah res baru ada setelah injeksi depot selesai, jadi resolve
+        -- dilakukan saat eksekusi (bukan saat JSON dibaca).
+        local function persistResolveIns(resID)
+            resID = tonumber(resID)
+            if not resID or resID <= 0 then return nil end
+            local ins = tonumber(R.resToIns[resID])
+            if not ins then
+                local RR = _G.AddOutfit_R
+                if RR and RR.resToIns then ins = tonumber(RR.resToIns[resID]) end
+            end
+            if not ins and tonumber(_G._savedOutfitRes) == resID then
+                ins = tonumber(_G._savedOutfitIns)
+            end
+            if ins and ins > 0 then
+                R.resToIns[resID] = ins
+                R.insToRes[ins] = resID
+                return ins
+            end
+            return nil
+        end
+
+        -- Pasang satu res ke role wear lobby lewat jalur wardrobe asli.
+        local function applyLobbyRes(resID)
+            resID = tonumber(resID)
+            if not resID or resID <= 0 then return false end
+            local kind = getClothKind(resID)
+            if not kind and not _clothSlotOf(resID) then return false end
+            local ins = persistResolveIns(resID)
+            if not ins or not isInjectedIns(ins) then return false end
+            if kind then
+                -- putOnCloth butuh data depot; kalau belum ada, coba lagi nanti.
+                local hasData = false
+                pcall(function()
+                    local wd = require("client.slua.logic.wardrobe.wardrobe_data")
+                    hasData = wd:GetHallDepotItemDataByInsID(ins) ~= nil
+                end)
+                if not hasData then return false end
+                return pcall(putOnCloth, ins)
+            end
+            return pcall(reapplyAccessoryIns, ins)
+        end
+
+        -- Terapkan outfit + potongan pakaian tersimpan ke lobby.
+        -- Urutan: potongan badan -> full suit -> aksesori, supaya full suit
+        -- tidak langsung dibatalkan saveEquip potongan lain.
+        local function applyLobbyOutfitNow(done)
+            done = done or {}
+            local cch = cache()
+            local outfitRes = tonumber(resolveLobbyOutfitRes())
+            if outfitRes and outfitRes <= 0 then outfitRes = nil end
+            local suit = outfitRes and isFullSuitRes(outfitRes) or false
+
+            local body, acc = {}, {}
+            for resID in pairs(cch.clothes or {}) do
+                resID = tonumber(resID)
+                if resID and resID > 0 and resID ~= outfitRes and not done[resID]
+                    and (getClothKind(resID) or _clothSlotOf(resID)) then
+                    if getClothKind(resID) then
+                        body[#body + 1] = resID
+                    else
+                        acc[#acc + 1] = resID
+                    end
+                end
+            end
+            table.sort(body)
+            table.sort(acc)
+
+            local ok, tried = 0, 0
+            local function attempt(resID)
+                tried = tried + 1
+                if applyLobbyRes(resID) then
+                    done[resID] = true
+                    ok = ok + 1
+                end
+            end
+
+            if outfitRes and not done[outfitRes] then
+                if not suit then
+                    for _, resID in ipairs(body) do attempt(resID) end
+                end
+                attempt(outfitRes)
+            elseif not outfitRes then
+                for _, resID in ipairs(body) do attempt(resID) end
+            end
+            for _, resID in ipairs(acc) do attempt(resID) end
+            return ok, tried
+        end
+        _G.AddOutfitApplyLobbyOutfit = applyLobbyOutfitNow
+
+        local function reapplyLobbyEquipped(force)
             if not GameStatus or not GameStatus.IsInLobbyOrMainCity or not GameStatus.IsInLobbyOrMainCity() then
                 return
             end
-            if _S.lobbyApplied then return end
+            -- Gate 2 detik, tapi jangan sampai macet kalau timer reset tidak
+            -- pernah jalan (mis. SetTimer/ticker belum siap).
+            local nowLobby = 0
+            pcall(function() nowLobby = os.clock() end)
+            if not force and _S.lobbyApplied and (nowLobby - (_S.lobbyAppliedAt or 0)) < 2.0 then return end
             _S.lobbyApplied = true
+            _S.lobbyAppliedAt = nowLobby
             later(2.0, function() _S.lobbyApplied = false end)
 
             restorePersistedVehicles()
@@ -3136,25 +3234,40 @@ pcall(_skinValidityBypass)
             if not _G._addOutfitPersistLoaded and _G._savedRoleWearList and #_G._savedRoleWearList > 0 then
                 for _, insID in ipairs(_G._savedRoleWearList) do
                     local id = insID
-                    scheduleApply(function() reapplyInjectedIns(id) end)
-                end
-            elseif cch.outfitIns and isInjectedIns(cch.outfitIns) then
-                scheduleApply(function() putOnCloth(cch.outfitIns) end)
-            else
-                for resID in pairs(cch.clothes) do
-                    local ins = R.resToIns[resID]
-                    local rid = resID
-                    if ins and isInjectedIns(ins) then
-                        scheduleApply(function()
-                            if getClothKind(rid) then
-                                putOnCloth(ins)
-                            else
-                                reapplyAccessoryIns(ins)
-                            end
-                        end)
-                    end
+                    scheduleApply(function() pcall(reapplyInjectedIns, id) end)
                 end
             end
+
+            -- Outfit + pakaian dari rapzhang_outfit.json. Cabang lama memakai
+            -- cch.outfitIns yang masih nil sebelum injeksi depot selesai,
+            -- sehingga full suit tidak pernah terpasang di lobby.
+            scheduleApply(function()
+                local done = {}
+                local tries = 0
+                local function attempt()
+                    tries = tries + 1
+                    local ok, tried = applyLobbyOutfitNow(done)
+                    if tried > 0 and ok < tried and tries < 5 then
+                        later(0.6 + tries * 0.5, attempt)
+                    end
+                end
+                attempt()
+
+                -- Visual avatar: jalur 1.lua (SlotSyncData), tidak butuh ins.
+                -- Diulang kalau karakter lobby belum siap.
+                local function visual(attemptNo, maxAttempts)
+                    local char = getLocalChar()
+                    if char and _G.AddOutfitApplyAvatar then
+                        pcall(_G.AddOutfitApplyAvatar, char)
+                        return
+                    end
+                    if attemptNo < maxAttempts then
+                        later(0.8, function() visual(attemptNo + 1, maxAttempts) end)
+                    end
+                end
+                later(0.5, function() visual(1, 5) end)
+                later(1.6, function() visual(1, 2) end)
+            end)
             for wid, w in pairs(cch.weapons) do
                 local weaponID, entry = wid, w
                 scheduleApply(function()
@@ -3229,6 +3342,10 @@ pcall(_skinValidityBypass)
                 end
             end)
         end
+
+        -- Paksa apply ulang outfit lobby dari konsol:
+        --   _G.AddOutfitReapplyLobby()
+        _G.AddOutfitReapplyLobby = function() reapplyLobbyEquipped(true) end
 
         local function initHooks()
         local function hookLobbySwipePersistence()
@@ -4557,6 +4674,12 @@ pcall(_skinValidityBypass)
 
             if applied then refreshMatchAvatar(comp) end
             return applied
+        end
+
+        -- Jalur visual yang sama dipakai lobby (1.lua applyLobbySkins) dan
+        -- match. Tidak butuh ins/depot, hanya SlotSyncData.
+        _G.AddOutfitApplyAvatar = function(char)
+            return matchApplyOutfit(char or getLocalChar())
         end
 
         local _lastPatchTime = 0
