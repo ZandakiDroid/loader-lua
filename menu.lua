@@ -4993,6 +4993,16 @@ do
     EX.ZoneMeLoc = nil
     EX.ZoneNextTextT = -999.0
     EX.ZoneNextText = nil
+    -- Ring/label widgets live on the game map, outside EX.Labels/EX.Rings.
+    -- Collapse them and drop the per-map caches so a reload starts clean.
+    pcall(function() EX.HideZoneMap() end)
+    EX.ZoneMapShown = false
+    EX.ZoneMapLast = nil
+    EX.ZoneMapVec = nil
+    EX.ZoneMapTargets = nil
+    EX.ZoneMapT = -999.0
+    EX.ZoneRingSets = nil
+    EX.ZoneMapTexts = nil
   end
 
   -- Baca properti objek slua. Sebagian properti C++ tidak terbaca lewat
@@ -7066,16 +7076,55 @@ do
   end
 
   -- ==========================================================
-  -- Predicted zone on the in-game map
+  -- Predicted zone sequence on the in-game map
   -- ----------------------------------------------------------
   -- The game already owns a "custom blue circle" map widget
   -- (MapWidgetConfig.CustomBlueWidget -> CustomBlueCircleUI).
-  -- Instead of drawing a 3D ring in the world, send the predicted
-  -- circle to the mini-map and entire-map Lua objects.  The game
-  -- converts the world centre/radius to map space, so the circle
-  -- follows zoom/pan and looks like the built-in zone circle.
+  -- CustomBlueCircleUI is registered with isSingleton=false, so
+  -- one widget can be created per predicted ring.  Each widget
+  -- gets its own centre/radius and the game converts the world
+  -- centre/radius to map space, so every ring follows zoom/pan.
+  --
+  -- Zone 0 is the next white circle.  The smaller rings are
+  -- predicted with the shrink ratio observed between the current
+  -- blue and white circle, concentric on the white centre.  The
+  -- last ring is a small dot at that centre ("LAST ZONE 0m").
   -- ==========================================================
   EX.C_ZONE_MAP = ESPMKC(1.00, 0.82, 0.08, 1.0)
+  EX.C_ZONE_LAST = ESPMKC(1.00, 0.22, 0.22, 1.0)
+  EX.ZONE_MAX_RINGS = 7
+  EX.ZONE_TOTAL_PHASES = 8
+  EX.ZONE_DEFAULT_SHRINK = 0.60
+  -- CustomBlueCircle:ResetSize switches to Border_FullRing below 1000 cm and
+  -- that branch does not translate the widget to the circle centre.  Keep
+  -- every ring (including the final dot) above the cutoff so the positioned
+  -- Border_RingFX branch is always used.  1200 cm = 12 m.
+  EX.ZONE_MIN_RADIUS = 1200.0
+  EX.ZONE_LAST_RADIUS = EX.ZONE_MIN_RADIUS
+  EX.ZONE_RING_COLORS = {
+    ESPMKC(1.00, 1.00, 1.00, 1.0), -- Zone 0: white
+    ESPMKC(0.35, 0.95, 1.00, 1.0), -- cyan
+    ESPMKC(0.40, 1.00, 0.45, 1.0), -- green
+    ESPMKC(1.00, 0.95, 0.25, 1.0), -- yellow
+    ESPMKC(1.00, 0.60, 0.15, 1.0), -- orange
+    ESPMKC(1.00, 0.30, 0.30, 1.0), -- red
+    ESPMKC(1.00, 0.35, 0.95, 1.0), -- magenta
+  }
+
+  -- FVector factory with the same fallback used by the rest of the
+  -- ESP.  Kept local: the ring code needs one vector per ring.
+  local function zoneVec(x, y, r)
+    local Vec = rawget(_G, "FVector")
+    if type(Vec) ~= "function" and type(Vec) ~= "table" then
+      pcall(function() Vec = import("Vector") end)
+    end
+    if type(Vec) == "function" or type(Vec) == "table" then
+      local v = nil
+      pcall(function() v = Vec(x, y, r) end)
+      return v
+    end
+    return nil
+  end
 
   function EX.GetZoneMapTargets()
     local out = {}
@@ -7092,6 +7141,16 @@ do
       end
       return win
     end
+    local function normalRoot(mui, win)
+      -- The label must live inside the map widget (CommonFunctionAddPanel),
+      -- not on the window root, otherwise it would not move with the map.
+      local r = nil
+      if mui then
+        local mw = mui.MapWidgetLua
+        if mw then pcall(function() r = mw.UIRoot end) end
+      end
+      return r or (win and win.UIRoot)
+    end
     if um and cfg and cfg.EntireMapWindow then
       local win = getUI(cfg.EntireMapWindow)
       if win and type(win.GetEntireMapUIBP) == "function" then
@@ -7100,9 +7159,13 @@ do
         if bp then
           -- OB builds use the widget itself (CanvasPanel_Map) as the map
           -- root; the normal map attaches widgets to UIRoot.
-          local root = win.UIRoot
-          if type(bp.ShowCustomBlueCircle) == "function" then root = bp end
-          out[#out + 1] = { UI = bp, Root = root, Kind = "entire" }
+          local ob = type(bp.ShowCustomBlueCircle) == "function"
+          -- Normal map: CurrentMapUIBP is the Lua MapUIBase itself
+          -- (EntireMapUI/MiniMapUI), which owns MapWidgetLua.
+          local mui = (not ob) and bp or nil
+          local root = ob and bp or normalRoot(mui, win)
+          out[#out + 1] = { UI = bp, Root = root, Kind = "entire",
+                            OB = ob, MapUIBase = mui }
         end
       end
     end
@@ -7111,9 +7174,11 @@ do
     if mm == nil then mm = rawget(_G, "MiniMapWindow") end
     local bp = mm and mm.UIRoot and mm.UIRoot.CurrentMapUIBP
     if bp then
-      local root = mm.UIRoot
-      if type(bp.ShowCustomBlueCircle) == "function" then root = bp end
-      out[#out + 1] = { UI = bp, Root = root, Kind = "mini" }
+      local ob = type(bp.ShowCustomBlueCircle) == "function"
+      local mui = (not ob) and bp or nil
+      local root = ob and bp or normalRoot(mui, mm)
+      out[#out + 1] = { UI = bp, Root = root, Kind = "mini",
+                        OB = ob, MapUIBase = mui }
     end
     return out
   end
@@ -7125,6 +7190,9 @@ do
     -- creates it on CurrentMapUI (MapUIBase) via MapWidgetConfig.
     local w = nil
     pcall(function() w = ui.CustomBlueCircleUI end)
+    -- Normal map: MapUIBase:InitMapWidget stores each widget on the map UI
+    -- under its MapWidgetConfig name (CustomBlueWidget).
+    if not w then pcall(function() w = ui.CustomBlueWidget end) end
     if not w then
       local mui = nil
       pcall(function() mui = ui.CurrentMapUI end)
@@ -7174,8 +7242,7 @@ do
     return false
   end
 
-  function EX.TintZoneMapCircle(target, color)
-    local w = EX.ZoneMapCircleWidget(target)
+  function EX.TintZoneWidget(w, color)
     local root = w and w.UIRoot
     if not root then return end
     local ring = root.Border_RingFX
@@ -7192,7 +7259,14 @@ do
     if full then
       pcall(function() full:SetColorAndOpacity(color) end)
       pcall(function() full:SetBrushColor(color) end)
+      if SlateColor then
+        pcall(function() full:SetBrushTintColor(SlateColor(color)) end)
+      end
     end
+  end
+
+  function EX.TintZoneMapCircle(target, color)
+    EX.TintZoneWidget(EX.ZoneMapCircleWidget(target), color)
   end
 
   -- Absolute screen position of the rendered circle.  Used only for the
@@ -7221,10 +7295,10 @@ do
     return x + ww * 0.5, y + hh * 0.5, ww, hh
   end
 
+  -- Single-ring fallback label.  The multi-ring path builds its own
+  -- ZONE 0..LAST ZONE labels in BuildZonePlan.
   function EX.ZoneMapLabelText(circle, remain)
     local r = tonumber(circle and circle.Z) or 0
-    local title = "NEXT ZONE"
-    if r > 0 and r <= 100000.0 then title = "FINAL ZONE" end
     local parts = {}
     parts[#parts + 1] = string.format("%dm", math.floor(r / 100.0 + 0.5))
     if type(remain) == "number" then
@@ -7232,23 +7306,37 @@ do
       local sec = math.max(0, math.floor(remain + 0.5))
       parts[#parts + 1] = string.format("%d:%02d", math.floor(sec / 60), sec % 60)
     end
-    return string.format("%s (%s)", title, table.concat(parts, ", "))
+    return string.format("ZONE 0 (%s)", table.concat(parts, ", "))
   end
 
   -- TextBlock attached to the map canvas itself.  The HUD canvas sits below
   -- EntireMapWindow (zOrder 100), so a screen-space label would be hidden
   -- behind the map; this one lives in map space and follows zoom/pan.
-  function EX.ZoneMapTextWidget(target)
+  function EX.ZoneMapTextWidget(target, idx)
     local ui = target and target.UI
     if not ui then return nil end
+    idx = tonumber(idx) or 1
     local cache = EX.ZoneMapTexts
     if cache == nil then
       cache = setmetatable({}, { __mode = "k" })
       EX.ZoneMapTexts = cache
     end
-    local d = cache[ui]
+    local byIdx = cache[ui]
+    if type(byIdx) ~= "table" or byIdx.Text ~= nil then
+      -- Migrate a legacy single-label entry to the per-index table.  Collapse
+      -- the old TextBlock first so a reload cannot leave stale text on the map.
+      if type(byIdx) == "table" and byIdx.Text ~= nil then
+        if byIdx.shown == true and ESPValid(byIdx.Text) then
+          pcall(function() byIdx.Text:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
+        end
+        byIdx.shown = false
+      end
+      byIdx = {}
+      cache[ui] = byIdx
+    end
+    local d = byIdx[idx]
     if d and ESPValid(d.Text) and ESPValid(d.Panel) then return d end
-    cache[ui] = nil
+    byIdx[idx] = nil
     local root = target.Root
     local panel = nil
     if root then
@@ -7290,8 +7378,9 @@ do
     pcall(function() slot:SetAlignment(ESPV2(0.5, 0.5)) end)
     pcall(function() slot:SetPosition(ESPV2(0, 0)) end)
     pcall(function() slot:SetZOrder(50) end)
-    d = { Text = txt, Slot = slot, Panel = panel, Centered = centered }
-    cache[ui] = d
+    d = { Text = txt, Slot = slot, Panel = panel, Centered = centered,
+          Index = idx }
+    byIdx[idx] = d
     return d
   end
 
@@ -7313,25 +7402,37 @@ do
   function EX.HideZoneMapText()
     local cache = EX.ZoneMapTexts
     if not cache then return end
-    for _, d in pairs(cache) do
+    local function hide(d)
+      if type(d) ~= "table" then return end
       if d.shown == true and ESPValid(d.Text) then
         pcall(function() d.Text:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
       end
       d.shown = false
     end
+    for _, byIdx in pairs(cache) do
+      if type(byIdx) == "table" then
+        if byIdx.Text ~= nil then
+          hide(byIdx) -- legacy flat entry
+        else
+          for _, d in pairs(byIdx) do hide(d) end
+        end
+      end
+    end
   end
 
-  function EX.DrawZoneMapText(target, vec, text, color)
-    if not vec then return false end
-    local d = EX.ZoneMapTextWidget(target)
-    if not d then return false end
+  -- World point -> map-panel pixel offset (relative to the map centre).
+  -- Shared by the label draw and by the label layout that decides whether
+  -- rings are large enough to carry a label on their edge.
+  function EX.ZoneMapPoint(target, vec)
+    if not (target and vec) then return nil end
     local lib = EX.ZoneMapLib
     if lib == nil then
       pcall(function() lib = import("STExtraMapFunctionLibrary") end)
       EX.ZoneMapLib = lib or false
     end
-    if not lib or not lib.MapCenterToPointVector2D then return false end
+    if not lib or not lib.MapCenterToPointVector2D then return nil end
     local ui = target.UI
+    if not ui then return nil end
     local trans = nil
     if type(ui.ShowCustomBlueCircle) == "function" then
       local root = target.Root
@@ -7351,9 +7452,18 @@ do
         end
       end
     end
-    if not trans then return false end
+    if not trans then return nil end
     local x, y = tonumber(trans.X), tonumber(trans.Y)
-    if not x or not y then return false end
+    if not x or not y then return nil end
+    return x, y
+  end
+
+  function EX.DrawZoneMapText(target, vec, text, color, idx, dy, dx)
+    if not vec then return false end
+    local d = EX.ZoneMapTextWidget(target, idx)
+    if not d then return false end
+    local x, y = EX.ZoneMapPoint(target, vec)
+    if not x then return false end
     if not d.Centered then
       -- Slot anchors were not available; convert the centre-relative
       -- position to the panel's top-left space.
@@ -7361,9 +7471,11 @@ do
       if not size then return false end
       x, y = x + size * 0.5, y + size * 0.5
     end
-    if d.px ~= x or d.py ~= y then
-      pcall(function() d.Slot:SetPosition(ESPV2(x, y - 14.0)) end)
-      d.px, d.py = x, y
+    dy = tonumber(dy) or -14.0
+    dx = tonumber(dx) or 0.0
+    if d.px ~= x or d.py ~= y or d.pdy ~= dy or d.pdx ~= dx then
+      pcall(function() d.Slot:SetPosition(ESPV2(x + dx, y + dy)) end)
+      d.px, d.py, d.pdy, d.pdx = x, y, dy, dx
     end
     if d.lastText ~= text then
       pcall(function() d.Text:SetText(text) end)
@@ -7380,41 +7492,266 @@ do
     return true
   end
 
-  function EX.SyncZoneMap(circle, remain, now)
-    now = tonumber(now) or ESP.Now()
-    local x = tonumber(circle.X) or 0
-    local y = tonumber(circle.Y) or 0
-    local r = tonumber(circle.Z) or 0
-    local last = EX.ZoneMapLast
-    local changed = not (last and math.abs(last.X - x) < 1.0
-      and math.abs(last.Y - y) < 1.0 and math.abs(last.Z - r) < 1.0)
-    -- The map label needs a real FVector every frame; keep the last one while
-    -- the circle is not moving instead of allocating a new struct each tick.
-    if changed or EX.ZoneMapVec == nil then
-      EX.ZoneMapLast = { X = x, Y = y, Z = r }
-      local Vec = rawget(_G, "FVector")
-      if type(Vec) ~= "function" and type(Vec) ~= "table" then
-        pcall(function() Vec = import("Vector") end)
-      end
-      if type(Vec) == "function" or type(Vec) == "table" then
-        local vec = nil
-        pcall(function() vec = Vec(x, y, r) end)
-        if vec then EX.ZoneMapVec = vec end
+  -- ----------------------------------------------------------
+  -- Ring widget pool
+  -- ----------------------------------------------------------
+  -- One CustomBlueCircleUI per ring, keyed by map UI object.  The
+  -- set survives map close/reopen; widgets that became invalid are
+  -- recreated lazily by UpdateZoneRings.
+  function EX.ZoneRingSet(target)
+    local ui = target and target.UI
+    if not ui then return nil end
+    local sets = EX.ZoneRingSets
+    if sets == nil then
+      sets = setmetatable({}, { __mode = "k" })
+      EX.ZoneRingSets = sets
+    end
+    local set = sets[ui]
+    if set == nil then
+      set = { widgets = {}, count = 0, OB = target.OB == true }
+      sets[ui] = set
+    else
+      set.OB = target.OB == true
+    end
+    return set
+  end
+
+  function EX.CreateZoneRing(target, vec)
+    local um = rawget(_G, "UIManager")
+    local cfg = um and um.UI_Config_InGame and um.UI_Config_InGame.CustomBlueCircleUI
+    if not (um and cfg and type(um.ShowUI) == "function") then return nil end
+    local w = nil
+    if target.OB == true then
+      pcall(function() w = um.ShowUI(cfg, target.UI, vec, true) end)
+    else
+      local mui = target.MapUIBase
+      if not (mui and mui.MapWidgetLua) then return nil end
+      pcall(function() w = um.ShowUI(cfg) end)
+      if w then
+        pcall(function()
+          if w.BindMapUIBase then w:BindMapUIBase(mui, mui.bIsMiniMap) end
+        end)
+        pcall(function()
+          if w.InitUI then w:InitUI(mui.MapWidgetLua) end
+        end)
       end
     end
+    if not w then return nil end
+    pcall(function() w.Circle = vec end)
+    if target.OB == true then
+      pcall(function() w:ResetSizeInOB() end)
+    else
+      pcall(function() w:UpdateCircle(vec) end)
+    end
+    return w
+  end
+
+  function EX.UpdateZoneRings(target, plan)
+    if not (target and plan and plan.rings and #plan.rings > 0) then
+      return false
+    end
+    local set = EX.ZoneRingSet(target)
+    if not set then return false end
+    local n = #plan.rings
+    for i = 1, n do
+      local ring = plan.rings[i]
+      local vec = zoneVec(plan.X, plan.Y, ring.r)
+      if not vec then return false end
+      local w = set.widgets[i]
+      if not ESPValid(w) then
+        w = EX.CreateZoneRing(target, vec)
+        set.widgets[i] = w
+        if not w then
+          -- First ring failed: let the caller use the legacy
+          -- single-circle broadcast.
+          if i == 1 then return false end
+          break
+        end
+        if i > set.count then set.count = i end
+      else
+        if target.OB == true then
+          pcall(function() w.Circle = vec end)
+          pcall(function() w:ResetSizeInOB() end)
+        else
+          pcall(function() w:UpdateCircle(vec) end)
+        end
+      end
+      EX.TintZoneWidget(w, ring.color)
+    end
+    set.hidden = false
+    if n > set.count then set.count = n end
+    -- Hide rings above the current plan; the widgets stay pooled.
+    local zero = nil
+    for i = n + 1, set.count do
+      local w = set.widgets[i]
+      if w then
+        zero = zero or zoneVec(0, 0, 0)
+        if zero then
+          if target.OB == true then
+            pcall(function() w.Circle = zero end)
+            pcall(function() w:ResetSizeInOB() end)
+          else
+            pcall(function() w:UpdateCircle(zero) end)
+          end
+        end
+      end
+    end
+    return true
+  end
+
+  function EX.HideZoneRingSet(set)
+    if not set or set.hidden == true then return end
+    local zero = zoneVec(0, 0, 0)
+    if not zero then return end
+    for i = 1, set.count do
+      local w = set.widgets[i]
+      if w then
+        if set.OB == true then
+          pcall(function() w.Circle = zero end)
+          pcall(function() w:ResetSizeInOB() end)
+        else
+          pcall(function() w:UpdateCircle(zero) end)
+        end
+      end
+    end
+    set.hidden = true
+  end
+
+  function EX.HideZoneRings()
+    local sets = EX.ZoneRingSets
+    if not sets then return end
+    for _, set in pairs(sets) do EX.HideZoneRingSet(set) end
+  end
+
+  -- ----------------------------------------------------------
+  -- Zone plan
+  -- ----------------------------------------------------------
+  -- The client only exposes BlueCircle (active) and WhiteCircle
+  -- (next).  Use the white/blue radius ratio as the shrink ratio
+  -- for the following rings.  All rings are concentric on the
+  -- white centre, matching the "last zone at the centre" request.
+  function EX.ZoneShrinkRatio(outer, inner)
+    local bz = tonumber(outer and outer.Z) or 0
+    local wz = tonumber(inner and inner.Z) or 0
+    if bz > 0 and wz > 0 and wz < bz then
+      local q = wz / bz
+      if q >= 0.40 and q <= 0.80 then return q end
+    end
+    return EX.ZONE_DEFAULT_SHRINK
+  end
+
+  function EX.BuildZonePlan(data, outer, inner, now)
+    local base = inner or outer
+    if not base then return nil end
+    local cx = tonumber(base.X)
+    local cy = tonumber(base.Y)
+    local r0 = tonumber(base.Z)
+    if not cx or not cy or not r0 or r0 <= 0 then return nil end
+    local q = EX.ZoneShrinkRatio(outer, inner)
+    local wave = tonumber(data and data.wave) or 0
+    local count = EX.ZONE_TOTAL_PHASES - wave + 1
+    if count < 3 then count = 3 end
+    if count > EX.ZONE_MAX_RINGS then count = EX.ZONE_MAX_RINGS end
+    local remain = data and data.remain
+    if r0 < EX.ZONE_MIN_RADIUS then
+      -- Next zone is already below the positioned-ring cutoff; the game
+      -- would render Border_FullRing instead of a circle at the centre.
+      -- Show only the final dot so nothing is drawn at a wrong position.
+      return {
+        X = cx, Y = cy, baseR = r0, q = q, wave = wave,
+        rings = { { r = EX.ZONE_LAST_RADIUS, zone = 0,
+                    color = EX.C_ZONE_LAST, label = "LAST ZONE (0m)",
+                    last = true } },
+        count = 1, remain = remain,
+        sig = string.format("1:%.0f:%.0f:%.0f:%.3f", cx, cy, r0, q),
+      }
+    end
+    local rings = {}
+    local prev = nil
+    for i = 0, count - 2 do
+      local r = r0 * (q ^ i)
+      if i > 0 and r < EX.ZONE_MIN_RADIUS then break end
+      local meters = math.floor(r / 100.0 + 0.5)
+      local text
+      if i == 0 then
+        local parts = { string.format("%dm", meters) }
+        if type(remain) == "number" then
+          local sec = math.max(0, math.floor(remain + 0.5))
+          parts[#parts + 1] = string.format("%d:%02d",
+            math.floor(sec / 60), sec % 60)
+        end
+        text = string.format("ZONE 0 (%s)", table.concat(parts, ", "))
+      else
+        local delta = math.max(0, math.floor((prev - r) / 100.0 + 0.5))
+        text = string.format("ZONE %d (%dm, -%dm)", i, meters, delta)
+      end
+      rings[#rings + 1] = {
+        r = r,
+        zone = i,
+        color = EX.ZONE_RING_COLORS[(i % #EX.ZONE_RING_COLORS) + 1],
+        label = text,
+        last = false,
+      }
+      prev = r
+    end
+    -- A predicted ring that lands on the final-dot radius would overlap the
+    -- red LAST ZONE dot exactly; drop it so the sequence stays strictly
+    -- decreasing (and a 12 m next zone collapses to the dot alone).
+    while #rings > 0 and rings[#rings].r <= EX.ZONE_MIN_RADIUS + 1.0 do
+      rings[#rings] = nil
+    end
+    rings[#rings + 1] = {
+      r = EX.ZONE_LAST_RADIUS,
+      zone = #rings,
+      color = EX.C_ZONE_LAST,
+      label = "LAST ZONE (0m)",
+      last = true,
+    }
+    return {
+      X = cx, Y = cy, baseR = r0, q = q, wave = wave,
+      rings = rings, count = #rings, remain = remain,
+      sig = string.format("%d:%.0f:%.0f:%.0f:%.3f",
+        #rings, cx, cy, r0, q),
+    }
+  end
+
+  function EX.SyncZoneMap(circle, remain, now, plan)
+    now = tonumber(now) or ESP.Now()
+    local x = tonumber(circle and circle.X) or 0
+    local y = tonumber(circle and circle.Y) or 0
+    local r = tonumber(circle and circle.Z) or 0
+    local sig = plan and plan.sig or string.format("%.0f:%.0f:%.0f", x, y, r)
+    local last = EX.ZoneMapLast
+    local changed = not (last and last.sig == sig
+      and math.abs(last.X - x) < 1.0
+      and math.abs(last.Y - y) < 1.0
+      and math.abs(last.Z - r) < 1.0)
+    EX.ZoneMapLast = { X = x, Y = y, Z = r, sig = sig }
     if not changed and EX.ZoneMapShown == true
       and (now - (EX.ZoneMapT or -999.0)) < 0.35 then
       return
     end
     EX.ZoneMapT = now
-    local vec = EX.ZoneMapVec
-    if not vec then return end
     local targets = EX.GetZoneMapTargets()
     EX.ZoneMapTargets = targets
+    local vec = nil
     for i = 1, #targets do
       local t = targets[i]
-      EX.ZoneMapBroadcast(t, vec)
-      EX.TintZoneMapCircle(t, EX.C_ZONE_MAP)
+      local okRing = plan and EX.UpdateZoneRings(t, plan)
+      if not okRing then
+        -- Legacy single-circle path for this target, also used when
+        -- the UI manager cannot create extra CustomBlueCircleUI
+        -- instances (or when plan is nil).  Collapse this target's pooled
+        -- rings first so they cannot stack on the broadcast circle.
+        local sets = EX.ZoneRingSets
+        if sets then EX.HideZoneRingSet(sets[t.UI]) end
+        vec = vec or zoneVec(x, y, r)
+        if vec then
+          EX.ZoneMapVec = vec
+          EX.ZoneMapBroadcast(t, vec)
+          EX.TintZoneMapCircle(t, EX.C_ZONE_MAP)
+        end
+      end
     end
     EX.ZoneMapShown = true
   end
@@ -7426,12 +7763,100 @@ do
         EX.ZoneMapBroadcast(targets[i], nil)
       end
     end
+    EX.HideZoneRings()
     EX.ZoneMapShown = false
     EX.ZoneMapLast = nil
     EX.ZoneMapVec = nil
     EX.ZoneMapTargets = nil
     EX.HideZoneMapText()
     EX.HideLabel("zone_map_text")
+  end
+
+  -- Hide cached labels above `idx` for one map target.  Used instead of a
+  -- full HideZoneMapText on every frame so steady-state drawing only updates
+  -- position/text and never toggles visibility.
+  function EX.HideZoneMapTextAfter(target, idx)
+    local ui = target and target.UI
+    local cache = EX.ZoneMapTexts
+    if not (ui and cache) then return end
+    local byIdx = cache[ui]
+    if type(byIdx) ~= "table" then return end
+    if byIdx.Text ~= nil then
+      -- Legacy flat entry: nothing to keep when idx < 1.
+      if idx < 1 then
+        if byIdx.shown == true and ESPValid(byIdx.Text) then
+          pcall(function() byIdx.Text:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
+        end
+        byIdx.shown = false
+      end
+      return
+    end
+    for k, d in pairs(byIdx) do
+      if type(k) == "number" and k > idx and type(d) == "table" then
+        if d.shown == true and ESPValid(d.Text) then
+          pcall(function() d.Text:SetWidgetVisibility(UEnums.ESlateVisibility.Collapsed) end)
+        end
+        d.shown = false
+      end
+    end
+  end
+
+  function EX.DrawZoneRingLabels(plan)
+    local targets = EX.ZoneMapTargets or {}
+    if not (plan and plan.rings) then
+      EX.HideZoneMapText()
+      return
+    end
+    local drawn = false
+    for i = 1, #targets do
+      local t = targets[i]
+      if t.Kind == "entire" and t.UI and t.UI.bIsShow ~= false then
+        -- Pixel radius of the outermost ring.  On the entire map an endgame
+        -- circle can be only a few pixels wide, so edge labels would overlap;
+        -- in that case the labels are stacked as a colour-coded legend next
+        -- to the centre instead.
+        local rpx = 0
+        local cvec = zoneVec(plan.X, plan.Y, 0)
+        local tvec = zoneVec(plan.X, plan.Y - plan.rings[1].r, 0)
+        local cx, cy = EX.ZoneMapPoint(t, cvec)
+        local tx, ty = EX.ZoneMapPoint(t, tvec)
+        if cx and tx then
+          rpx = math.sqrt((tx - cx) * (tx - cx) + (ty - cy) * (ty - cy))
+        end
+        local stacked = rpx < 56.0
+        local n = #plan.rings
+        local used = 0
+        for k = 1, n do
+          local ring = plan.rings[k]
+          local wx, wy = plan.X, plan.Y
+          local dx, dy = 0.0, 12.0
+          if stacked then
+            -- 13 px per row, centred on the circle; to the right so the
+            -- labels do not cover the dot itself.
+            dx = 10.0
+            dy = (k - 1 - (n - 1) * 0.5) * 13.0
+          elseif not ring.last then
+            -- Spread labels around the rings so the small inner
+            -- circles do not stack on top of each other.
+            local ang = math.rad(90.0 - (k - 1) * 22.0)
+            wx = plan.X + ring.r * math.cos(ang)
+            -- Map Y grows downward, so subtract sin() to start at the top.
+            wy = plan.Y - ring.r * math.sin(ang)
+            dy = -9.0
+          end
+          local vec = zoneVec(wx, wy, 0)
+          if vec and EX.DrawZoneMapText(t, vec, ring.label, ring.color, k, dy, dx) then
+            drawn = true
+            used = k
+          end
+        end
+        EX.HideZoneMapTextAfter(t, used)
+      end
+    end
+    if not drawn then
+      EX.HideLabel("zone_map_text")
+      EX.HideZoneMapText()
+    end
   end
 
   function EX.DrawZoneMapLabel(target, text, color)
@@ -7503,30 +7928,17 @@ do
     else
       EX.HideLabel("zone_text")
     end
-    -- Predicted zone is rendered by the game map widget, not as a 3D ring.
-    -- Sync to the mini-map and entire map every 0.35 s (or immediately when
-    -- the circle changes).  The old 3D keys are hidden so a previous build's
-    -- ring cannot linger after the update.
-    if showNext and nextOK then
-      EX.SyncZoneMap(nextCircle, data.remain, now)
-      local text = EX.ZoneMapLabelText(nextCircle, data.remain)
-      local drawn = false
-      local targets = EX.ZoneMapTargets or {}
-      for i = 1, #targets do
-        local t = targets[i]
-        local ui = t.UI
-        if t.Kind == "entire" and ui and ui.bIsShow ~= false then
-          if EX.DrawZoneMapText(t, EX.ZoneMapVec, text, EX.C_ZONE_MAP) then
-            drawn = true
-          elseif EX.DrawZoneMapLabel(t, text, EX.C_ZONE_MAP) then
-            drawn = true
-          end
-        end
-      end
-      if not drawn then
-        EX.HideLabel("zone_map_text")
-        EX.HideZoneMapText()
-      end
+    -- Predicted zone sequence is rendered by the game map widgets, not as a
+    -- 3D ring.  Sync to the mini-map and entire map every 0.35 s (or
+    -- immediately when the circles change).  The old 3D keys are hidden so a
+    -- previous build's ring cannot linger after the update.
+    local plan = nil
+    if showNext then
+      plan = EX.BuildZonePlan(data, outer, nextCircle, now)
+    end
+    if plan then
+      EX.SyncZoneMap(nextCircle or outer, data.remain, now, plan)
+      EX.DrawZoneRingLabels(plan)
     else
       EX.HideZoneMap()
     end
