@@ -5001,7 +5001,8 @@ do
     EX.ZoneMapVec = nil
     EX.ZoneMapTargets = nil
     EX.ZoneMapT = -999.0
-    EX.ZoneRingSets = nil
+    EX.ZoneLineSets = nil
+    EX.ZoneLinesT = -999.0
     EX.ZoneMapTexts = nil
   end
 
@@ -7095,10 +7096,10 @@ do
   EX.ZONE_MAX_RINGS = 7
   EX.ZONE_TOTAL_PHASES = 8
   EX.ZONE_DEFAULT_SHRINK = 0.60
-  -- CustomBlueCircle:ResetSize switches to Border_FullRing below 1000 cm and
-  -- that branch does not translate the widget to the circle centre.  Keep
-  -- every ring (including the final dot) above the cutoff so the positioned
-  -- Border_RingFX branch is always used.  1200 cm = 12 m.
+  -- Minimum predicted ring radius.  The legacy CustomBlueCircleUI switches
+  -- to Border_FullRing below 1000 cm and does not translate that branch to
+  -- the circle centre, so 1200 cm stays the floor for any ring that is
+  -- actually drawn.  LAST ZONE itself is a fixed 7 px dot, not a ring.
   EX.ZONE_MIN_RADIUS = 1200.0
   EX.ZONE_LAST_RADIUS = EX.ZONE_MIN_RADIUS
   EX.ZONE_RING_COLORS = {
@@ -7493,134 +7494,247 @@ do
   end
 
   -- ----------------------------------------------------------
-  -- Ring widget pool
+  -- Zone rings drawn as line segments on the map canvas
   -- ----------------------------------------------------------
-  -- One CustomBlueCircleUI per ring, keyed by map UI object.  The
-  -- set survives map close/reopen; widgets that became invalid are
-  -- recreated lazily by UpdateZoneRings.
-  function EX.ZoneRingSet(target)
+  -- Border_RingFX can render as a filled square when its ring material is
+  -- missing (seen on 4.7 mobile), so the predicted rings are drawn by the
+  -- mod itself: one 2x2 CanvasPanel whose top-left sits on the map centre
+  -- plus short Border segments approximating each circle.  Coordinates use the same
+  -- MapCenterToPointVector2D transform as the labels, so the rings follow
+  -- map zoom/pan on both the entire map and the mini-map.
+  EX.ZONE_LINE_SEGMENTS = 24
+  EX.ZONE_LINE_SEGMENTS_MINI = 16
+  EX.ZONE_LINE_THICKNESS = 2.0
+  EX.ZONE_DOT_SIZE = 7.0
+
+  function EX.ZoneLineSet(target)
     local ui = target and target.UI
     if not ui then return nil end
-    local sets = EX.ZoneRingSets
+    local sets = EX.ZoneLineSets
     if sets == nil then
       sets = setmetatable({}, { __mode = "k" })
-      EX.ZoneRingSets = sets
+      EX.ZoneLineSets = sets
     end
     local set = sets[ui]
-    if set == nil then
-      set = { widgets = {}, count = 0, OB = target.OB == true }
-      sets[ui] = set
-    else
-      set.OB = target.OB == true
+    if set and ESPValid(set.Container) and set.Root == target.Root then
+      return set
     end
+    if set and ESPValid(set.Container) then
+      pcall(function() set.Container:RemoveFromParent() end)
+    end
+    local root = target.Root
+    local panel = nil
+    if root then
+      pcall(function() panel = root.CommonFunctionAddPanel end)
+      if not ESPValid(panel) then
+        pcall(function() panel = root.CanvasPanel_Map end)
+      end
+    end
+    if not ESPValid(panel) then return nil end
+    local container = nil
+    pcall(function()
+      container = CGame:NewObjectFromPath("/Script/UMG.CanvasPanel", panel)
+    end)
+    if not ESPValid(container) then return nil end
+    local slot = nil
+    pcall(function() slot = panel:AddChildToCanvas(container) end)
+    if not slot then pcall(function() slot = panel:AddChild(container) end) end
+    if not slot or type(slot.SetPosition) ~= "function" then
+      pcall(function() container:RemoveFromParent() end)
+      return nil
+    end
+    pcall(function()
+      container:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
+      slot:SetAutoSize(false)
+      slot:SetSize(ESPV2(2.0, 2.0))
+      slot:SetZOrder(46)
+      -- 2x2 with a (1,1) offset keeps the container's top-left exactly on
+      -- the map centre (anchor + offset - alignment * size).
+      local centered = false
+      local FAnchors = rawget(_G, "FAnchors")
+      if FAnchors then
+        pcall(function()
+          slot:SetAnchors(FAnchors(0.5, 0.5, 0.5, 0.5))
+          slot:SetAlignment(ESPV2(0.5, 0.5))
+          slot:SetPosition(ESPV2(1.0, 1.0))
+          centered = true
+        end)
+      end
+      if not centered then
+        -- Builds without FAnchors use top-left anchors; place the container
+        -- top-left at the panel centre using the map extent instead.
+        local size = EX.ZoneMapTextSize(target)
+        pcall(function()
+          slot:SetAlignment(ESPV2(0.0, 0.0))
+          if size then
+            slot:SetPosition(ESPV2(size * 0.5, size * 0.5))
+          else
+            slot:SetPosition(ESPV2(0.0, 0.0))
+          end
+        end)
+      end
+    end)
+    set = { Container = container, Slot = slot, Lines = {},
+            count = 0, Root = root, Panel = panel, hidden = false }
+    sets[ui] = set
     return set
   end
 
-  function EX.CreateZoneRing(target, vec)
-    local um = rawget(_G, "UIManager")
-    local cfg = um and um.UI_Config_InGame and um.UI_Config_InGame.CustomBlueCircleUI
-    if not (um and cfg and type(um.ShowUI) == "function") then return nil end
-    local w = nil
-    if target.OB == true then
-      pcall(function() w = um.ShowUI(cfg, target.UI, vec, true) end)
-    else
-      local mui = target.MapUIBase
-      if not (mui and mui.MapWidgetLua) then return nil end
-      pcall(function() w = um.ShowUI(cfg) end)
-      if w then
-        pcall(function()
-          if w.BindMapUIBase then w:BindMapUIBase(mui, mui.bIsMiniMap) end
-        end)
-        pcall(function()
-          if w.InitUI then w:InitUI(mui.MapWidgetLua) end
-        end)
-      end
+  function EX.NewZoneLine(set, color)
+    local border = nil
+    pcall(function()
+      border = CGame:NewObjectFromPath("/Script/UMG.Border", set.Container)
+    end)
+    if not ESPValid(border) then return nil end
+    pcall(function()
+      border:SetBrushColor(color)
+      border:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
+      border:SetRenderTransformPivot(ESPV2(0.0, 0.5))
+    end)
+    local slot = nil
+    pcall(function() slot = set.Container:AddChildToCanvas(border) end)
+    if not slot then
+      pcall(function() border:RemoveFromParent() end)
+      return nil
     end
-    if not w then return nil end
-    pcall(function() w.Circle = vec end)
-    if target.OB == true then
-      pcall(function() w:ResetSizeInOB() end)
-    else
-      pcall(function() w:UpdateCircle(vec) end)
-    end
-    return w
+    pcall(function()
+      slot:SetAutoSize(false)
+      slot:SetZOrder(5)
+    end)
+    return { Widget = border, Slot = slot, color = color, kind = "line" }
   end
 
-  function EX.UpdateZoneRings(target, plan)
+  function EX.ZoneLine(set, idx, color)
+    local line = set.Lines[idx]
+    if not (line and ESPValid(line.Widget) and ESPValid(line.Slot)) then
+      line = EX.NewZoneLine(set, color)
+      if not line then return nil end
+      set.Lines[idx] = line
+    end
+    if color ~= nil and line.color ~= color then
+      pcall(function() line.Widget:SetBrushColor(color) end)
+      line.color = color
+    end
+    return line
+  end
+
+  function EX.DrawZoneCircle(set, idx, cx, cy, r, color, segments, thickness)
+    if not set or r < 1.0 then return idx end
+    local step = (math.pi * 2.0) / segments
+    local used = idx
+    for s = 0, segments - 1 do
+      local a1 = step * s
+      local a2 = step * (s + 1)
+      used = used + 1
+      local line = EX.ZoneLine(set, used, color)
+      if line then
+        if line.kind ~= "line" then
+          pcall(function()
+            line.Widget:SetRenderTransformPivot(ESPV2(0.0, 0.5))
+            line.Widget:SetRenderAngle(0.0)
+            line.Slot:SetAlignment(ESPV2(0.0, 0.0))
+          end)
+          line.kind = "line"
+          line.lx1, line.ly1, line.lx2, line.ly2 = nil, nil, nil, nil
+        end
+        ESP.DrawLine(line,
+          cx + r * math.cos(a1), cy + r * math.sin(a1),
+          cx + r * math.cos(a2), cy + r * math.sin(a2), thickness)
+      end
+    end
+    return used
+  end
+
+  function EX.DrawZoneDot(set, idx, cx, cy, color, size)
+    local line = EX.ZoneLine(set, idx, color)
+    if not line then return idx end
+    if line.kind ~= "dot" then
+      pcall(function()
+        line.Widget:SetRenderTransformPivot(ESPV2(0.5, 0.5))
+        line.Widget:SetRenderAngle(0.0)
+        line.Slot:SetAlignment(ESPV2(0.5, 0.5))
+      end)
+      line.kind = "dot"
+      line.lx1, line.ly1, line.lx2, line.ly2 = nil, nil, nil, nil
+    end
+    pcall(function()
+      line.Slot:SetPosition(ESPV2(cx, cy))
+      line.Slot:SetSize(ESPV2(size, size))
+      line.Widget:SetWidgetVisibility(UEnums.ESlateVisibility.SelfHitTestInvisible)
+    end)
+    line.hidden = false
+    return idx
+  end
+
+  function EX.UpdateZoneLines(target, plan)
     if not (target and plan and plan.rings and #plan.rings > 0) then
       return false
     end
-    local set = EX.ZoneRingSet(target)
+    local set = EX.ZoneLineSet(target)
     if not set then return false end
-    local n = #plan.rings
-    for i = 1, n do
-      local ring = plan.rings[i]
-      local vec = zoneVec(plan.X, plan.Y, ring.r)
-      if not vec then return false end
-      local w = set.widgets[i]
-      if not ESPValid(w) then
-        w = EX.CreateZoneRing(target, vec)
-        set.widgets[i] = w
-        if not w then
-          -- First ring failed: let the caller use the legacy
-          -- single-circle broadcast.
-          if i == 1 then return false end
-          break
-        end
-        if i > set.count then set.count = i end
+    local cvec = zoneVec(plan.X, plan.Y, 0)
+    local cx, cy = EX.ZoneMapPoint(target, cvec)
+    if not cx then return false end
+    local first = plan.rings[1]
+    local evec = zoneVec(plan.X, plan.Y + first.r, 0)
+    local ex, ey = EX.ZoneMapPoint(target, evec)
+    if not ex then return false end
+    local dx, dy = ex - cx, ey - cy
+    local r0px = math.sqrt(dx * dx + dy * dy)
+    if r0px < 1.0 then
+      -- Zoomed far out: every ring is sub-pixel.  Keep the line path (no
+      -- legacy CustomBlueCircleUI fallback, which can render as a square).
+      EX.HideZoneLineSet(set)
+      return true
+    end
+    local perCm = r0px / first.r
+    local segments = (target.Kind == "mini")
+      and EX.ZONE_LINE_SEGMENTS_MINI or EX.ZONE_LINE_SEGMENTS
+    local idx = 0
+    for k = 1, #plan.rings do
+      local ring = plan.rings[k]
+      if ring.last then
+        idx = idx + 1
+        EX.DrawZoneDot(set, idx, cx, cy, ring.color, EX.ZONE_DOT_SIZE)
       else
-        if target.OB == true then
-          pcall(function() w.Circle = vec end)
-          pcall(function() w:ResetSizeInOB() end)
-        else
-          pcall(function() w:UpdateCircle(vec) end)
+        local rpx = ring.r * perCm
+        if rpx >= 2.0 then
+          local n = segments
+          if rpx < 20.0 then n = 12
+          elseif rpx < 48.0 then n = 16 end
+          idx = EX.DrawZoneCircle(set, idx, cx, cy, rpx,
+            ring.color, n, EX.ZONE_LINE_THICKNESS)
         end
       end
-      EX.TintZoneWidget(w, ring.color)
     end
+    for i = idx + 1, set.count do
+      local line = set.Lines[i]
+      if line and line.hidden ~= true then
+        ESP.Hide(line)
+        line.hidden = true
+      end
+    end
+    if idx > set.count then set.count = idx end
     set.hidden = false
-    if n > set.count then set.count = n end
-    -- Hide rings above the current plan; the widgets stay pooled.
-    local zero = nil
-    for i = n + 1, set.count do
-      local w = set.widgets[i]
-      if w then
-        zero = zero or zoneVec(0, 0, 0)
-        if zero then
-          if target.OB == true then
-            pcall(function() w.Circle = zero end)
-            pcall(function() w:ResetSizeInOB() end)
-          else
-            pcall(function() w:UpdateCircle(zero) end)
-          end
-        end
-      end
-    end
     return true
   end
 
-  function EX.HideZoneRingSet(set)
+  function EX.HideZoneLineSet(set)
     if not set or set.hidden == true then return end
-    local zero = zoneVec(0, 0, 0)
-    if not zero then return end
     for i = 1, set.count do
-      local w = set.widgets[i]
-      if w then
-        if set.OB == true then
-          pcall(function() w.Circle = zero end)
-          pcall(function() w:ResetSizeInOB() end)
-        else
-          pcall(function() w:UpdateCircle(zero) end)
-        end
+      local line = set.Lines[i]
+      if line and line.hidden ~= true then
+        ESP.Hide(line)
+        line.hidden = true
       end
     end
     set.hidden = true
   end
 
-  function EX.HideZoneRings()
-    local sets = EX.ZoneRingSets
+  function EX.HideZoneLines()
+    local sets = EX.ZoneLineSets
     if not sets then return end
-    for _, set in pairs(sets) do EX.HideZoneRingSet(set) end
+    for _, set in pairs(sets) do EX.HideZoneLineSet(set) end
   end
 
   -- ----------------------------------------------------------
@@ -7737,14 +7851,14 @@ do
     local vec = nil
     for i = 1, #targets do
       local t = targets[i]
-      local okRing = plan and EX.UpdateZoneRings(t, plan)
+      local okRing = plan and EX.UpdateZoneLines(t, plan)
       if not okRing then
         -- Legacy single-circle path for this target, also used when
         -- the UI manager cannot create extra CustomBlueCircleUI
         -- instances (or when plan is nil).  Collapse this target's pooled
         -- rings first so they cannot stack on the broadcast circle.
-        local sets = EX.ZoneRingSets
-        if sets then EX.HideZoneRingSet(sets[t.UI]) end
+        local sets = EX.ZoneLineSets
+        if sets then EX.HideZoneLineSet(sets[t.UI]) end
         vec = vec or zoneVec(x, y, r)
         if vec then
           EX.ZoneMapVec = vec
@@ -7763,11 +7877,12 @@ do
         EX.ZoneMapBroadcast(targets[i], nil)
       end
     end
-    EX.HideZoneRings()
+    EX.HideZoneLines()
     EX.ZoneMapShown = false
     EX.ZoneMapLast = nil
     EX.ZoneMapVec = nil
     EX.ZoneMapTargets = nil
+    EX.ZoneLinesT = -999.0
     EX.HideZoneMapText()
     EX.HideLabel("zone_map_text")
   end
@@ -7938,6 +8053,13 @@ do
     end
     if plan then
       EX.SyncZoneMap(nextCircle or outer, data.remain, now, plan)
+      -- Redraw the line circles at 10 Hz so map zoom/pan stays smooth
+      -- without rebuilding hundreds of Border widgets every frame.
+      if (now - (EX.ZoneLinesT or -999.0)) >= 0.10 then
+        EX.ZoneLinesT = now
+        local targets = EX.ZoneMapTargets or {}
+        for i = 1, #targets do EX.UpdateZoneLines(targets[i], plan) end
+      end
       EX.DrawZoneRingLabels(plan)
     else
       EX.HideZoneMap()
